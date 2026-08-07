@@ -246,8 +246,9 @@ The action is also available as `M-x teams-propose-new-time`. It sends an
 Outlook tentative response with the proposed interval. It does not locally move
 the organizer's event: until the organizer accepts and updates the meeting, the
 original interval remains the event's sort key and the reader shows the pending
-proposal separately. Organizer-owned, cancelled, and proposal-disabled events
-fail explicitly.
+proposal separately. A later event refresh recovers that pending interval from
+the signed-in attendee's Graph metadata, without a local proposal store.
+Organizer-owned, cancelled, and proposal-disabled events fail explicitly.
 
 ```elisp
 (setq teams4e-meeting-enrichment-limit 32

@@ -147,11 +147,13 @@ traffic, and diagnostic logging redacts the comment.
 
 Successful proposal state is merged into `meetingContext.proposal` on the
 existing chat. The reader banner and meeting status can therefore react
-immediately without a proposal database or second calendar object. The linked
-event's original start/end remain authoritative for meeting sorting until the
-organizer changes the event. Sending requires delegated `Calendars.ReadWrite`;
-organizer-owned, cancelled, and proposal-disabled events are rejected before
-the mutation.
+immediately without a proposal database or second calendar object. On later
+event reads, the same display derives the pending interval from the signed-in
+attendee's `proposedNewTime`, so refresh and restart do not require local
+persistence. The linked event's original start/end remain authoritative for
+meeting sorting until the organizer changes the event. Sending requires
+delegated `Calendars.ReadWrite`; organizer-owned, cancelled, and
+proposal-disabled events are rejected before the mutation.
 
 ## Documentation Assets
 

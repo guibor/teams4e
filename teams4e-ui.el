@@ -2898,8 +2898,17 @@ When DATE-ONLY is non-nil, omit the time of day."
     (intern (downcase response))))
 
 (defun teams4e--meeting-proposal (chat)
-  "Return the new-time proposal attached to meeting CHAT in this session."
-  (teams4e--get (teams4e--get chat 'meetingContext) 'proposal))
+  "Return the current account's new-time proposal for meeting CHAT."
+  (or (teams4e--get (teams4e--get chat 'meetingContext) 'proposal)
+      (let ((wanted (and (stringp teams4e--connected-as)
+                         (downcase teams4e--connected-as))))
+        (seq-some
+         (lambda (attendee)
+           (let ((address (teams4e--dig attendee 'emailAddress 'address)))
+             (when (and wanted (stringp address)
+                        (string-equal wanted (downcase address)))
+               (teams4e--get attendee 'proposedNewTime))))
+         (teams4e--get (teams4e--meeting-event chat) 'attendees)))))
 
 (defun teams4e--meeting-status-label (chat)
   "Return a concise calendar status label for meeting CHAT."

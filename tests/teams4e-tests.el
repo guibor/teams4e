@@ -2849,6 +2849,7 @@
          (teams4e-mock-mode t)
          (teams4e-mock-state-file (expand-file-name "tenant.json" directory))
          (teams4e-cache-file (expand-file-name "cache.sqlite3" directory))
+         (teams4e--connected-as "user@example.test")
          (teams4e--member-cache (make-hash-table :test #'equal))
          chats context meeting suggestions proposal)
     (unwind-protect
@@ -2895,8 +2896,7 @@
               (lambda (value) (setq proposal value))))
             (teams4e--apply-meeting-context
              meeting
-             `((event . ,(teams4e--get proposal 'event))
-               (proposal . ,(teams4e--get proposal 'proposal)))))
+             `((event . ,(teams4e--get proposal 'event)))))
           (with-temp-buffer
             (teams4e-chat-mode)
             (setq teams4e--chat meeting
