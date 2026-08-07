@@ -35,6 +35,7 @@
 (declare-function teams4e-toggle-visible-selections "advanced")
 (declare-function teams4e-toggle-unread-filter "advanced")
 (declare-function teams4e--refresh-current-view "advanced")
+(declare-function teams4e--meeting-view-p "advanced")
 (declare-function teams4e--render-channel-thread "advanced")
 (declare-function teams4e-thread-next "advanced")
 (declare-function teams4e-thread-previous "advanced")
@@ -154,10 +155,18 @@
    ("Message time" 16 t)
    ("Type" 8 t)
    ("Conversation" 28 t)
+   ("Star" 4 nil)
+   ("Last message" 0 nil)]
+  "Aligned columns used by message-oriented Teams views.")
+(defconst teams4e--meeting-recent-format
+  [("Status" 6 nil)
+   ("Message time" 16 t)
+   ("Type" 8 t)
+   ("Conversation" 28 t)
    ("Meeting" 38 t)
    ("Star" 4 nil)
    ("Last message" 0 nil)]
-  "Aligned columns used by the native Teams inbox.")
+  "Aligned columns used by meeting-only Teams views.")
 
 (defvar-local teams4e--process nil)
 (defvar-local teams4e--chat nil)
@@ -1628,33 +1637,51 @@ Return non-nil when a linked reader exists, even when it already matches."
         (teams4e--cancel-preview-timer)
       (teams4e--schedule-preview))))
 
-(defun teams4e--recent-entry (chat)
-  "Build one tabulated-list entry for CHAT."
+(defun teams4e--meeting-column-visible-p ()
+  "Return non-nil when the active headers view is meeting-only."
+  (and (fboundp 'teams4e--meeting-view-p)
+       (teams4e--meeting-view-p)))
+
+(defun teams4e--current-recent-format ()
+  "Return the headers format appropriate for the active Teams view."
+  (if (teams4e--meeting-column-visible-p)
+      teams4e--meeting-recent-format
+    teams4e--recent-format))
+
+(defun teams4e--recent-columns (chat status)
+  "Build the view-sensitive headers columns for CHAT with STATUS."
   (let* ((unread (teams4e--unread-p chat))
          (face (teams4e--row-face unread))
          (type-face
           (teams4e--row-face
-           unread (teams4e--chat-type-face chat))))
-    (list
-     (teams4e--chat-id chat)
-     (vector
-      ""
-      (propertize
-       (teams4e--format-date
-        (teams4e--last-message-date-time chat) t)
-       'face face)
-      (propertize (teams4e--chat-type-label chat) 'face type-face)
-      (propertize (teams4e--chat-label chat) 'face face)
-      (propertize (or (teams4e--meeting-row-label chat) "")
-                  'face face)
-      (if (teams4e--favorite-p chat) "*" "")
-      (propertize (teams4e--chat-preview chat) 'face face)))))
+           unread (teams4e--chat-type-face chat)))
+         (date
+          (propertize
+           (teams4e--format-date
+            (teams4e--last-message-date-time chat) t)
+           'face face))
+         (type (propertize (teams4e--chat-type-label chat) 'face type-face))
+         (label (propertize (teams4e--chat-label chat) 'face face))
+         (star (if (teams4e--favorite-p chat) "*" ""))
+         (preview (propertize (teams4e--chat-preview chat) 'face face)))
+    (if (teams4e--meeting-column-visible-p)
+        (vector status date type label
+                (propertize (or (teams4e--meeting-row-label chat) "")
+                            'face face)
+                star preview)
+      (vector status date type label star preview))))
+
+(defun teams4e--recent-entry (chat)
+  "Build one tabulated-list entry for CHAT."
+  (list (teams4e--chat-id chat)
+        (teams4e--recent-columns chat "")))
 
 (defun teams4e--configure-recent-format ()
   "Install the current Teams inbox columns, including after a live reload."
-  (unless (equal tabulated-list-format teams4e--recent-format)
-    (setq tabulated-list-format (copy-sequence teams4e--recent-format))
-    (tabulated-list-init-header)))
+  (let ((format (teams4e--current-recent-format)))
+    (unless (equal tabulated-list-format format)
+      (setq tabulated-list-format (copy-sequence format))
+      (tabulated-list-init-header))))
 
 (defun teams4e--render-recent ()
   "Render cached chats in the current recent-chat buffer."
@@ -1825,7 +1852,8 @@ one conversation representation even while meeting metadata arrives later."
 
 (define-derived-mode teams4e-recent-mode tabulated-list-mode "Teams-Recent"
   "Major mode for recent Microsoft Teams chats."
-  (setq tabulated-list-format (copy-sequence teams4e--recent-format))
+  (setq tabulated-list-format
+        (copy-sequence (teams4e--current-recent-format)))
   (setq tabulated-list-padding 1
         tabulated-list-sort-key nil)
   (add-hook 'kill-buffer-hook #'teams4e--cancel-buffer-process nil t)

@@ -13,7 +13,8 @@
 - Inline images, attachments, Org capture, complete Markdown export, and
   optional `agent-shell` analysis.
 - Linked calendar event metadata and an upcoming-meetings view.
-- Message views now order by the actual last-message timestamp; meeting-only
-  views order by event start and show complete start/end intervals.
+- Message views now order by the actual last-message timestamp and omit the
+  meeting interval column; meeting-only views add that column, order by event
+  start, and show complete start/end intervals.
 - Lowercase `r` and `i` both queue mark-read; reply remains uppercase `R`.
 - Added a minimal chat/cursor logo and an account-free Moe Dark README demo.

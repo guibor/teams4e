@@ -589,25 +589,8 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
 
 (defun teams4e--recent-entry-advanced (chat)
   "Build an inbox row for CHAT including deferred marks."
-  (let* ((unread (teams4e--unread-p chat))
-         (face (teams4e--row-face unread))
-         (type-face
-          (teams4e--row-face
-           unread (teams4e--chat-type-face chat))))
-    (list
-     (teams4e--chat-id chat)
-     (vector
-      (teams4e--mark-character chat)
-      (propertize
-       (teams4e--format-date
-        (teams4e--last-message-date-time chat) t)
-       'face face)
-      (propertize (teams4e--chat-type-label chat) 'face type-face)
-      (propertize (teams4e--chat-label chat) 'face face)
-      (propertize (or (teams4e--meeting-row-label chat) "")
-                  'face face)
-      (if (teams4e--favorite-p chat) "*" "")
-      (propertize (teams4e--chat-preview chat) 'face face)))))
+  (list (teams4e--chat-id chat)
+        (teams4e--recent-columns chat (teams4e--mark-character chat))))
 
 (defun teams4e--render-recent ()
   "Render the active saved/built-in inbox view and preserve selection."

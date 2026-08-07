@@ -118,11 +118,13 @@ Graph chat data may include `onlineMeetingInfo.calendarEventId`. The adapter
 fetches `/me/events/{id}` with a narrow field selection and returns the event
 beside the chat id. Emacs merges the result into `meetingContext.event`.
 
-The inbox schedule column, meeting predicates/sort, and reader banner all read
-this same attachment. Message-oriented views display and sort descending by
-`lastMessagePreview` time, so calendar-only changes do not reorder the inbox.
-Meeting-only views sort ascending by event start and display the complete
-start/end interval. Rows with no known start follow rows with calendar data.
+The meeting-only schedule column, meeting predicates/sort, and reader banner
+all read this same attachment. Message-oriented views use the compact headers
+schema without a meeting column and sort descending by `lastMessagePreview`
+time, so calendar-only changes neither consume inbox width nor reorder the
+inbox. Meeting-only views switch the schema and row projection together, sort
+ascending by event start, and display the complete start/end interval. Rows
+with no known start follow rows with calendar data.
 
 A calendar permission failure is soft: the conversation and participants
 remain available and the event is omitted.

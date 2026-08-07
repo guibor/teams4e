@@ -1661,25 +1661,27 @@
          (teams4e--selections (make-hash-table :test #'equal))
          (teams4e--favorites (make-hash-table :test #'equal))
          (teams4e--read-overrides (make-hash-table :test #'equal))
+         (teams4e--active-view 'inbox)
+         (teams4e--active-query nil)
          (teams4e-status-style 'symbols)
          (teams4e--state-loaded t)
          (columns (cadr (teams4e--recent-entry-advanced chat))))
-    (should (equal '("Status" "Message time" "Type" "Conversation" "Meeting"
+    (should (equal '("Status" "Message time" "Type" "Conversation"
                      "Star" "Last message")
                    (mapcar #'car
                            (append teams4e--recent-format nil))))
+    (should (= 6 (length columns)))
     (should (equal "" (aref columns 0)))
     (should (string-prefix-p "2026-08-01"
                              (substring-no-properties (aref columns 1))))
     (should (equal "Meeting" (substring-no-properties (aref columns 2))))
     (should (equal "Architecture review"
                    (substring-no-properties (aref columns 3))))
-    (should (string-match-p "Aug 10.*Video room 4"
-                            (substring-no-properties (aref columns 4))))
-    (should (string-match-p
-             "[0-9][0-9]:[0-9][0-9]-[0-9][0-9]:[0-9][0-9]"
-             (substring-no-properties (aref columns 4))))
-    (should (equal "" (aref columns 5)))
+    (should (equal "" (aref columns 4)))
+    (should-not
+     (string-match-p "Video room 4"
+                     (mapconcat #'substring-no-properties
+                                (append columns nil) " ")))
     (puthash "chat-header" 'refile teams4e--marks)
     (setq columns (cadr (teams4e--recent-entry-advanced chat)))
     (should (equal "↦" (substring-no-properties (aref columns 0))))
@@ -1690,13 +1692,37 @@
     (should (memq 'teams4e-unread
                   (get-text-property 0 'face (aref columns 3))))
     (should (string-match-p "Meeting started"
-                            (substring-no-properties (aref columns 6))))
+                            (substring-no-properties (aref columns 5))))
     (with-temp-buffer
       (tabulated-list-mode)
       (setq tabulated-list-format [("Old" 1 nil)])
       (teams4e--configure-recent-format)
       (should (equal teams4e--recent-format
-                     tabulated-list-format)))))
+                     tabulated-list-format))
+      (let ((teams4e--active-view 'meeting))
+        (teams4e--configure-recent-format)
+        (should (equal teams4e--meeting-recent-format
+                       tabulated-list-format)))
+      (teams4e--configure-recent-format)
+      (should (equal teams4e--recent-format
+                     tabulated-list-format)))
+    (let* ((teams4e--active-view 'meeting)
+           (meeting-columns (cadr (teams4e--recent-entry-advanced chat))))
+      (should (equal '("Status" "Message time" "Type" "Conversation"
+                       "Meeting" "Star" "Last message")
+                     (mapcar #'car
+                             (append teams4e--meeting-recent-format nil))))
+      (should (= 7 (length meeting-columns)))
+      (should (string-match-p "Aug 10.*Video room 4"
+                              (substring-no-properties
+                               (aref meeting-columns 4))))
+      (should (string-match-p
+               "[0-9][0-9]:[0-9][0-9]-[0-9][0-9]:[0-9][0-9]"
+               (substring-no-properties (aref meeting-columns 4))))
+      (should (equal "" (aref meeting-columns 5)))
+      (should (string-match-p "Meeting started"
+                              (substring-no-properties
+                               (aref meeting-columns 6)))))))
 
 (ert-deftest teams4e-status-column-has-sober-symbol-and-letter-styles ()
   (should (eq 'symbols (default-value 'teams4e-status-style)))

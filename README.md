@@ -219,14 +219,15 @@ calendar inbox or synchronized copies.
 
 Message-oriented views derive their date and sort key from
 `lastMessagePreview`; a calendar update does not make a quiet conversation
-jump to the top. Meeting-only views instead sort by the linked event start and
-show the complete start/end interval. Meetings without calendar permission
-fall back behind meetings with known start times.
+jump to the top, and these views omit the meeting interval column. Meeting-only
+views instead add that column, sort by the linked event start, and show the
+complete start/end interval. Meetings without calendar permission fall back
+behind meetings with known start times.
 
 Graph chat data may expose `onlineMeetingInfo.calendarEventId`. The backend
 resolves that event with bounded concurrency and merges it into the existing
-chat alist. The headers schedule column and reader banner both render from
-that one attachment.
+chat alist. The meeting-only headers schedule column and reader banner both
+render from that one attachment.
 
 ```elisp
 (setq teams4e-meeting-enrichment-limit 32
