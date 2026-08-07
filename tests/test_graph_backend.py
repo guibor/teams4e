@@ -361,7 +361,7 @@ class GraphBackendTests(unittest.TestCase):
     }
     self.assertEqual({
         "grace@example.test": "required",
-        "ada@example.test": "optional",
+        "ada@example.test": "required",
         "room4@example.test": "resource",
     }, attendees)
     self.assertNotIn("user@example.test", attendees)

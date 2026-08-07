@@ -829,9 +829,9 @@ def meeting_suggestion_attendees(
     if key in self_addresses or key in seen:
       continue
     seen.add(key)
-    attendee_type = str(person.get("type") or "required").lower()
-    if attendee_type not in {"required", "optional", "resource"}:
-      attendee_type = "required"
+    # findMeetingTimes treats every person as required; only resources retain
+    # a distinct request type, regardless of the source event attendee role.
+    attendee_type = "resource" if person.get("type") == "resource" else "required"
     result.append({
         "type": attendee_type,
         "emailAddress": {
