@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small deterministic stand-in for the msteams Graph backend."""
+"""Small deterministic stand-in for the teams4e Graph backend."""
 
 import json
 import os
@@ -76,7 +76,7 @@ def main() -> int:
   if command[:5] == ["teams", "chat", "message", "send", "--chatId"] or (
       command[:5] == ["teams", "chat", "message", "send", "--userEmails"]
   ):
-    log_path = os.environ.get("MSTEAMS_TEST_LOG")
+    log_path = os.environ.get("TEAMS4E_TEST_LOG")
     if log_path:
       Path(log_path).write_text(json.dumps(args), encoding="utf-8")
     sys.stdout.write("{}")
@@ -86,7 +86,7 @@ def main() -> int:
       ["teams", "chat", "mark", "read"],
       ["teams", "chat", "mark", "unread"],
   ):
-    log_path = os.environ.get("MSTEAMS_TEST_LOG")
+    log_path = os.environ.get("TEAMS4E_TEST_LOG")
     if log_path:
       Path(log_path).write_text(json.dumps(args), encoding="utf-8")
     sys.stdout.write("{}")

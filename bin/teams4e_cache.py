@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Private SQLite cache for the msteams Teams backend."""
+"""Private SQLite cache for the teams4e Teams backend."""
 
 from __future__ import annotations
 
@@ -16,11 +16,11 @@ SCHEMA_VERSION = "1"
 
 def default_cache_path() -> Path:
   """Return the configured cache path without creating it."""
-  configured = os.environ.get("MSTEAMS_CACHE")
+  configured = os.environ.get("TEAMS4E_CACHE")
   if configured:
     return Path(configured).expanduser()
   root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-  return root / "msteams" / "teams.sqlite3"
+  return root / "teams4e" / "teams.sqlite3"
 
 
 def _message_text(message: dict[str, Any]) -> str:

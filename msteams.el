@@ -1,25 +1,35 @@
-;;; msteams.el --- A keyboard-driven Microsoft Teams client -*- lexical-binding: t; -*-
+;;; msteams.el --- Compatibility entry point for teams4e -*- lexical-binding: t; -*-
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-
-;; Author: guibor
-;; Maintainer: guibor
-;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: comm, tools
-;; URL: https://github.com/guibor/msteams.el
 
 ;;; Commentary:
 
-;; msteams provides a mu4e-inspired inbox and singleton reader for Microsoft
-;; Teams chats and channels.  It delegates Microsoft Graph OAuth to an external
-;; token provider and bundles a standard-library-only Python Graph adapter.
+;; The package was called msteams before its first public release.  Requiring
+;; this file loads teams4e and aliases the former Lisp namespace so private
+;; configurations can migrate without a flag day.
 
 ;;; Code:
 
-(require 'msteams-config)
-(require 'msteams-ui)
-(require 'msteams-advanced)
-(require 'msteams-evil)
+(require 'teams4e)
+
+(defun teams4e--install-legacy-aliases ()
+  "Alias the former msteams namespace to the current teams4e namespace."
+  (mapatoms
+   (lambda (new)
+     (let ((name (symbol-name new)))
+       (when (string-prefix-p "teams4e-" name)
+         (let* ((old-name (concat "msteams-" (substring name 8)))
+                (old (intern old-name)))
+           (when (fboundp new)
+             (defalias old new))
+           (when (boundp new)
+             (let ((old-bound (boundp old))
+                   (old-value (and (boundp old) (symbol-value old))))
+               (when old-bound (makunbound old))
+               (defvaralias old new)
+               (when old-bound (set old old-value))))))))))
+
+(teams4e--install-legacy-aliases)
+(defalias 'msteams #'teams4e)
 
 (provide 'msteams)
 

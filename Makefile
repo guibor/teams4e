@@ -7,15 +7,15 @@ test: test-elisp test-python
 
 test-elisp:
 	$(EMACS) -Q --batch -L . -L tests \
-		-l tests/msteams-tests.el -f ert-run-tests-batch-and-exit
+		-l tests/teams4e-tests.el -f ert-run-tests-batch-and-exit
 
 test-python:
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py' -v
 
 compile:
 	$(EMACS) -Q --batch -L . -f batch-byte-compile \
-		msteams-config.el msteams-ui.el msteams-advanced.el \
-		msteams-evil.el msteams.el
+		teams4e-config.el teams4e-ui.el teams4e-advanced.el \
+		teams4e-evil.el teams4e.el
 
 clean:
 	find . -name '*.elc' -delete

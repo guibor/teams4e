@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Microsoft Graph backend for the msteams Emacs package."""
+"""Microsoft Graph backend for the teams4e Emacs package."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from msteams_cache import TeamsCache
-from msteams_mock import MockTenant, mock_enabled
+from teams4e_cache import TeamsCache
+from teams4e_mock import MockTenant, mock_enabled
 
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
@@ -45,33 +45,33 @@ class BackendError(RuntimeError):
 
 def credentials_path() -> Path:
   """Return the configured read-only Graph credential store path."""
-  configured = os.environ.get("MSTEAMS_CREDENTIALS")
+  configured = os.environ.get("TEAMS4E_CREDENTIALS")
   if configured:
     return Path(configured).expanduser()
   config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-  return config_home / "msteams" / "credentials.json"
+  return config_home / "teams4e" / "credentials.json"
 
 
 def credential_server_name() -> str:
   """Return the credential-entry server-name selector."""
-  return os.environ.get("MSTEAMS_CREDENTIAL_SERVER_NAME", SERVER_NAME)
+  return os.environ.get("TEAMS4E_CREDENTIAL_SERVER_NAME", SERVER_NAME)
 
 
 def credential_server_url() -> str | None:
   """Return the optional exact credential-entry server URL selector."""
-  return os.environ.get("MSTEAMS_CREDENTIAL_SERVER_URL") or SERVER_URL
+  return os.environ.get("TEAMS4E_CREDENTIAL_SERVER_URL") or SERVER_URL
 
 
 def resolve_token_command() -> list[str] | None:
   """Return the configured shell-free external token command."""
-  raw = os.environ.get("MSTEAMS_TOKEN_COMMAND")
+  raw = os.environ.get("TEAMS4E_TOKEN_COMMAND")
   if not raw:
     return None
   try:
     command = json.loads(raw)
   except json.JSONDecodeError as exception:
     raise BackendError(
-        "MSTEAMS_TOKEN_COMMAND must be a JSON argv array"
+        "TEAMS4E_TOKEN_COMMAND must be a JSON argv array"
     ) from exception
   if not (
       isinstance(command, list)
@@ -79,7 +79,7 @@ def resolve_token_command() -> list[str] | None:
       and all(isinstance(argument, str) and argument for argument in command)
   ):
     raise BackendError(
-        "MSTEAMS_TOKEN_COMMAND must be a nonempty JSON argv array"
+        "TEAMS4E_TOKEN_COMMAND must be a nonempty JSON argv array"
     )
   return command
 
@@ -157,7 +157,7 @@ def graph_token_is_fresh(entry: dict[str, Any]) -> bool:
 
 def resolve_bootstrap_command() -> str | None:
   """Resolve the optional external credential refresh helper."""
-  configured = os.environ.get("MSTEAMS_BOOTSTRAP_COMMAND")
+  configured = os.environ.get("TEAMS4E_BOOTSTRAP_COMMAND")
   if not configured:
     return None
   expanded = str(Path(configured).expanduser()) if "/" in configured else configured
@@ -174,8 +174,8 @@ def run_bootstrap(path: Path, *, interactive: bool = False) -> None:
   program = resolve_bootstrap_command()
   if not program:
     raise BackendError(
-        "No Graph token provider is configured; set msteams-token-command or "
-        "msteams-bootstrap-program"
+        "No Graph token provider is configured; set teams4e-token-command or "
+        "teams4e-bootstrap-program"
     )
   command = [
       program,
@@ -512,7 +512,7 @@ def graph_upload_file(path: Path, access_token: str) -> dict[str, Any]:
     raise BackendError(f"Attachment is not a file: {path}")
   if path.stat().st_size > 250 * 1024 * 1024:
     raise BackendError("Graph simple upload supports attachments up to 250 MB")
-  remote_name = f"msteams-{time.time_ns()}-{path.name}"
+  remote_name = f"teams4e-{time.time_ns()}-{path.name}"
   encoded_name = urllib.parse.quote(remote_name, safe="")
   url = (
       f"{GRAPH_ROOT}/me/drive/root:/Microsoft%20Teams%20Chat%20Files/"
@@ -2068,7 +2068,7 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
         days=integer_option(args, "--days", 7, minimum=1),
     )
   else:
-    raise BackendError(f"Unsupported msteams backend command: {args!r}")
+    raise BackendError(f"Unsupported teams4e backend command: {args!r}")
 
   return result, output
 

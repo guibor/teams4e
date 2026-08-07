@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>teams4e README demo</title>
+  <style>
+    :root {
+      --ink: #20262d;
+      --muted: #6b737b;
+      --paper: #f7f8f8;
+      --panel: #ffffff;
+      --line: #d9dee2;
+      --teal: #187b75;
+      --violet: #665ca7;
+      --magenta: #9a3d68;
+      --gold: #916b16;
+      --select: #dcefed;
+      --select-line: #23837c;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 1200px;
+      height: 720px;
+      margin: 0;
+      overflow: hidden;
+      background: #e9edef;
+      color: var(--ink);
+      font-family: "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+
+    .window {
+      width: 1160px;
+      height: 680px;
+      margin: 20px;
+      display: grid;
+      grid-template-rows: 44px 1fr 30px;
+      overflow: hidden;
+      background: var(--panel);
+      border: 1px solid #aeb6bc;
+      border-radius: 7px;
+    }
+
+    .titlebar {
+      display: grid;
+      grid-template-columns: 90px 1fr 90px;
+      align-items: center;
+      padding: 0 14px;
+      color: #fff;
+      background: #242c33;
+      border-bottom: 1px solid #151a1f;
+    }
+
+    .traffic { display: flex; gap: 8px; }
+    .traffic span { width: 11px; height: 11px; border-radius: 50%; }
+    .traffic span:nth-child(1) { background: #e15b55; }
+    .traffic span:nth-child(2) { background: #d8aa3f; }
+    .traffic span:nth-child(3) { background: #4aa86d; }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      min-width: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .brand img { width: 27px; height: 27px; border-radius: 4px; }
+    .brand small { color: #b9c2c8; font-size: 12px; font-weight: 500; }
+
+    .workspace { display: flex; min-height: 0; background: var(--paper); }
+    .index { flex: 1 1 auto; min-width: 0; background: var(--panel); }
+
+    body[data-state="chat"] .index,
+    body[data-state="meeting"] .index { width: 49%; flex: 0 0 49%; }
+
+    .index-head {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      background: #eef2f3;
+      border-bottom: 1px solid var(--line);
+      color: #3d4850;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .view-name::before { content: "Inbox"; }
+    .view-count::before { content: "3 shown / 1 unread"; }
+    body[data-state="meeting"] .view-name::before { content: "Upcoming meetings"; }
+    body[data-state="meeting"] .view-count::before { content: "1 shown / sorted by start"; }
+
+    .columns, .row {
+      display: grid;
+      grid-template-columns: 24px 142px 76px minmax(160px, 1fr) minmax(250px, 1.25fr) 26px minmax(240px, 1.3fr);
+      align-items: center;
+      column-gap: 10px;
+    }
+
+    body[data-state="chat"] .columns,
+    body[data-state="chat"] .row,
+    body[data-state="meeting"] .columns,
+    body[data-state="meeting"] .row {
+      grid-template-columns: 20px 106px 68px minmax(145px, 1fr) minmax(205px, 1.25fr);
+    }
+
+    body[data-state="chat"] .star,
+    body[data-state="chat"] .preview,
+    body[data-state="meeting"] .star,
+    body[data-state="meeting"] .preview { display: none; }
+
+    .columns {
+      height: 34px;
+      padding: 0 14px;
+      color: var(--muted);
+      background: #fafbfb;
+      border-bottom: 1px solid var(--line);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .rows { position: relative; }
+
+    .row {
+      min-height: 54px;
+      padding: 7px 14px;
+      border-bottom: 1px solid #edf0f1;
+      white-space: nowrap;
+    }
+
+    .row > span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .row.unread { font-weight: 700; }
+    .status { color: var(--teal); font-weight: 700; }
+    .type { font-weight: 700; }
+    .type.direct { color: var(--violet); }
+    .type.group { color: var(--magenta); }
+    .type.meeting { color: var(--gold); }
+    .schedule { color: #344d4a; }
+    .preview { color: #505c64; }
+    .star { color: #9d7617; }
+
+    body[data-state="inbox"] .row.atlas,
+    body[data-state="chat"] .row.atlas,
+    body[data-state="ada"] .row.ada,
+    body[data-state="meeting"] .row.meeting {
+      background: var(--select);
+      box-shadow: inset 4px 0 var(--select-line);
+    }
+
+    body[data-state="meeting"] .row:not(.meeting) { display: none; }
+
+    .reader {
+      display: none;
+      flex: 1 1 auto;
+      min-width: 0;
+      border-left: 1px solid #bfc6ca;
+      background: var(--paper);
+    }
+
+    body[data-state="chat"] .reader.chat-reader,
+    body[data-state="meeting"] .reader.meeting-reader { display: block; }
+
+    .reader-head {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      background: #fff;
+      border-bottom: 1px solid var(--line);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .reader-head strong { font-size: 17px; }
+    .reader-head span { color: var(--teal); font-size: 12px; font-weight: 650; }
+
+    .transcript { padding: 20px 24px; }
+
+    .day {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    .message { margin: 0 0 22px; max-width: 610px; }
+    .message-head { display: flex; gap: 12px; align-items: baseline; }
+    .message-head strong { color: var(--violet); }
+    .message-head time { color: var(--muted); font-size: 11px; }
+    .message p { margin: 6px 0 0; line-height: 1.55; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+    .meeting-details {
+      margin: 20px 22px;
+      padding: 18px 20px;
+      border-left: 4px solid var(--teal);
+      background: #edf5f4;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .meeting-details h2 { margin: 0 0 14px; font-size: 15px; }
+    .detail-row { display: grid; grid-template-columns: 94px 1fr; gap: 12px; margin: 8px 0; line-height: 1.35; }
+    .detail-row strong { color: #4f5b63; font-size: 12px; }
+    .join { color: var(--teal); font-weight: 700; }
+    .empty { margin: 26px; color: var(--muted); font-style: italic; }
+
+    .modeline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 13px;
+      color: #dbe2e5;
+      background: #303940;
+      border-top: 1px solid #1e2429;
+      font-size: 11px;
+    }
+
+    .mode-state { color: #7fd0c7; }
+  </style>
+</head>
+<body data-state="inbox">
+  <main class="window">
+    <header class="titlebar">
+      <div class="traffic"><span></span><span></span><span></span></div>
+      <div class="brand"><img src="../assets/logo.png" alt=""><span>teams4e</span><small>mock tenant</small></div>
+      <div></div>
+    </header>
+
+    <div class="workspace">
+      <section class="index">
+        <div class="index-head"><span class="view-name"></span><span class="view-count"></span></div>
+        <div class="columns">
+          <span>St</span><span>Message time</span><span>Type</span><span>Conversation</span><span>Meeting</span><span class="star">Star</span><span class="preview">Last message</span>
+        </div>
+        <div class="rows">
+          <div class="row atlas">
+            <span class="status"></span><span>2026-08-02 10:12</span><span class="type group">Group</span><span>Project Atlas</span><span class="schedule"></span><span class="star"></span><span class="preview">Alan Turing: I added notes on the paging and retry model.</span>
+          </div>
+          <div class="row ada unread">
+            <span class="status"></span><span>2026-08-02 09:40</span><span class="type direct">Direct</span><span>Ada Lovelace</span><span class="schedule"></span><span class="star"></span><span class="preview">Ada Lovelace: Try search, reactions, editing, attachments, and the action menu.</span>
+          </div>
+          <div class="row meeting">
+            <span class="status"></span><span></span><span class="type meeting">Meeting</span><span>Architecture review</span><span class="schedule">Mon Aug 10 10:30-11:15 | Video room 4</span><span class="star"></span><span class="preview"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="reader chat-reader">
+        <div class="reader-head"><strong>Project Atlas</strong><span>Open in Teams</span></div>
+        <div class="transcript">
+          <div class="day">Sunday, August 2, 2026</div>
+          <article class="message">
+            <div class="message-head"><strong>Grace Hopper</strong><time>10:00</time></div>
+            <p>The Atlas review starts at 10:00. Please read the channel thread.</p>
+          </article>
+          <article class="message">
+            <div class="message-head"><strong>Alan Turing</strong><time>10:12</time></div>
+            <p>I added notes on the paging and retry model.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="reader meeting-reader">
+        <div class="reader-head"><strong>Architecture review</strong><span>Open in Teams</span></div>
+        <div class="meeting-details">
+          <h2>Meeting details</h2>
+          <div class="detail-row"><strong>When</strong><span>Monday, August 10, 2026 10:30-11:15</span></div>
+          <div class="detail-row"><strong>Where</strong><span>Video room 4</span></div>
+          <div class="detail-row"><strong>Participants</strong><span>Ada Lovelace, Grace Hopper, Michael</span></div>
+          <div class="detail-row"><strong>Join</strong><span class="join">Join meeting</span></div>
+        </div>
+        <div class="empty">No messages in the selected time window.</div>
+      </section>
+    </div>
+
+    <footer class="modeline"><span>*Teams Recent*  Teams-Recent</span><span class="mode-state">Teams: idle mock</span></footer>
+  </main>
+  <script>
+    const state = new URLSearchParams(location.search).get("state") || "inbox";
+    document.body.dataset.state = state;
+  </script>
+</body>
+</html>

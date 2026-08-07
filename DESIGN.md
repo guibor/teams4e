@@ -2,7 +2,7 @@
 
 ## Architecture
 
-`msteams.el` is split at the authentication and process boundary:
+`teams4e` is split at the authentication and process boundary:
 
 1. Emacs owns views, selection, rendering, compose state, capture, and local
    triage state.
@@ -20,28 +20,39 @@ command.
 Microsoft Graph is authoritative for chats, messages, server read state, and
 calendar events. The package keeps three intentionally narrow local stores:
 
-- `msteams-cache-file`: a rebuildable SQLite reading/search cache.
-- `msteams-state-file`: favorites, muted/handled/snoozed triage, bookmarks, and
+- `teams4e-cache-file`: a rebuildable SQLite reading/search cache.
+- `teams4e-state-file`: favorites, muted/handled/snoozed triage, bookmarks, and
   other small UI state.
-- `msteams-draft-directory`: private recoverable compose drafts.
+- `teams4e-draft-directory`: private recoverable compose drafts.
 
-A chat is represented once in `msteams--chats`. Optional participant and
+A chat is represented once in `teams4e--chats`. Optional participant and
 meeting enrichment is merged into that alist. Filters and bookmarks select the
 same objects; they do not maintain synchronized inbox copies.
 
 ## Modules
 
-### `msteams.el`
+### `teams4e.el`
 
 Package entry point. It loads configuration, the core UI, advanced workflows,
-and optional Evil integration.
+and optional Evil integration. It also defines `M-x teams4e` as the primary
+inbox entry command.
 
-### `msteams-config.el`
+### `msteams.el`
 
-Defines the `msteams` customization group and all public settings. It also
+Pre-public-release compatibility entry point. It requires `teams4e` and aliases
+the former Lisp namespace. New code does not depend on it, and Microsoft's
+native `msteams://` URL protocol remains unchanged.
+
+`bin/msteams-graph` is the matching executable shim. Before importing the new
+backend it maps former `MSTEAMS_*` selectors to `TEAMS4E_*` only when the new
+name is unset, so explicit current configuration always wins.
+
+### `teams4e-config.el`
+
+Defines the `teams4e` customization group and all public settings. It also
 contains compatibility migrations for defaults that changed in live sessions.
 
-### `msteams-ui.el`
+### `teams4e-ui.el`
 
 Implements the asynchronous process transport, headers buffer, singleton
 reader, compose buffers, rendering, images, message mutation commands, and
@@ -49,13 +60,13 @@ basic capture/open commands.
 
 Main entry points:
 
-- `msteams-inbox`: open or refresh the headers buffer.
-- `msteams-open-chat`: render a chat in the shared reader.
-- `msteams-send` and `msteams-reply`: create native compose buffers.
-- `msteams--run-json`: issue one backend request and dispatch parsed JSON.
-- `msteams--enrich-meetings`: attach linked event data to existing chat rows.
+- `teams4e-inbox`: open or refresh the headers buffer.
+- `teams4e-open-chat`: render a chat in the shared reader.
+- `teams4e-send` and `teams4e-reply`: create native compose buffers.
+- `teams4e--run-json`: issue one backend request and dispatch parsed JSON.
+- `teams4e--enrich-meetings`: attach linked event data to existing chat rows.
 
-### `msteams-advanced.el`
+### `teams4e-advanced.el`
 
 Implements bookmarks and query evaluation, deferred/bulk actions, cache sync,
 offline search, channel views, full-thread Markdown, Org capture, attachment
@@ -63,21 +74,21 @@ workflows, and optional agent analysis.
 
 Main entry points:
 
-- `msteams-bookmark-jump`: apply a configured view/query.
-- `msteams-execute-marks`: apply deferred row actions serially.
-- `msteams-bulk-action`: apply one operation to selected conversations.
-- `msteams-sync`: refresh the local SQLite cache.
-- `msteams-channels`: choose a team and channel.
-- `msteams-export-current-thread`: fetch and write complete Markdown.
-- `msteams-capture-current-summary`: capture compact conversation metadata.
-- `msteams-analyze-current-thread`: export then start an `agent-shell` session.
+- `teams4e-bookmark-jump`: apply a configured view/query.
+- `teams4e-execute-marks`: apply deferred row actions serially.
+- `teams4e-bulk-action`: apply one operation to selected conversations.
+- `teams4e-sync`: refresh the local SQLite cache.
+- `teams4e-channels`: choose a team and channel.
+- `teams4e-export-current-thread`: fetch and write complete Markdown.
+- `teams4e-capture-current-summary`: capture compact conversation metadata.
+- `teams4e-analyze-current-thread`: export then start an `agent-shell` session.
 
-### `msteams-evil.el`
+### `teams4e-evil.el`
 
 Adds normal/motion bindings after Evil loads. It mirrors the ordinary major
 mode maps; business logic does not depend on Evil or Spacemacs.
 
-### `bin/msteams_graph.py`
+### `bin/teams4e_graph.py`
 
 Implements the command dispatcher, credential-provider boundary, Graph
 requests, retries, pagination, chat/channel operations, linked event lookup,
@@ -88,15 +99,15 @@ Main functions:
 - `graph_request`: issue a Graph request and enforce Graph-host token scoping.
 - `get_token`: obtain a short-lived token from the configured provider.
 - `list_chats` and `list_chat_messages`: fetch bounded conversation data.
-- `get_meeting_event_batch`: fetch linked events with bounded concurrency.
+- `list_meeting_events_batch`: fetch linked events with bounded concurrency.
 - `dispatch`: map the CLI-compatible argv protocol to one operation.
 
-### `bin/msteams_cache.py`
+### `bin/teams4e_cache.py`
 
 Owns the private SQLite schema and cache reads, writes, synchronization
 watermarks, and full-text search.
 
-### `bin/msteams_mock.py`
+### `bin/teams4e_mock.py`
 
 Implements the same command contract against a persistent fake tenant. Tests
 can exercise destructive and asynchronous workflows without Graph access.
@@ -107,13 +118,26 @@ Graph chat data may include `onlineMeetingInfo.calendarEventId`. The adapter
 fetches `/me/events/{id}` with a narrow field selection and returns the event
 beside the chat id. Emacs merges the result into `meetingContext.event`.
 
-The inbox schedule column, upcoming-meeting predicate/sort, and reader banner
-all read this same attachment. A calendar permission failure is soft: the
-conversation and participants remain available and the event is omitted.
+The inbox schedule column, meeting predicates/sort, and reader banner all read
+this same attachment. Message-oriented views display and sort descending by
+`lastMessagePreview` time, so calendar-only changes do not reorder the inbox.
+Meeting-only views sort ascending by event start and display the complete
+start/end interval. Rows with no known start follow rows with calendar data.
+
+A calendar permission failure is soft: the conversation and participants
+remain available and the event is omitted.
+
+## Documentation Assets
+
+`assets/logo.png` is an original package mark and `assets/demo.gif` illustrates
+the headers, singleton reader, and meeting projection with non-account data.
+`tools/teams4e-demo.el` launches the real UI against the bundled mock;
+`tools/readme-demo.html` is the fixed-format source used to render the compact
+README animation.
 
 ## Reader And Navigation
 
-There is one buffer named by `msteams--read-buffer-name`. Opening another chat
+There is one buffer named by `teams4e--read-buffer-name`. Opening another chat
 or channel replaces its contents. The linked headers buffer remains the owner
 of conversation selection, marks, filters, and bookmarks. Reader bindings such
 as `j`, `k`, `r`, `i`, and `b` delegate back to that owner, while `M-j` and

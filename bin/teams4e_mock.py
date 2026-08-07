@@ -14,12 +14,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from msteams_cache import TeamsCache
+from teams4e_cache import TeamsCache
 
 
 def mock_enabled() -> bool:
   """Return whether the backend should use the local mock tenant."""
-  return os.environ.get("MSTEAMS_MOCK", "").casefold() in {
+  return os.environ.get("TEAMS4E_MOCK", "").casefold() in {
       "1",
       "true",
       "yes",
@@ -28,11 +28,11 @@ def mock_enabled() -> bool:
 
 
 def default_state_path() -> Path:
-  configured = os.environ.get("MSTEAMS_MOCK_STATE")
+  configured = os.environ.get("TEAMS4E_MOCK_STATE")
   if configured:
     return Path(configured).expanduser()
   root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-  return root / "msteams" / "mock-tenant.json"
+  return root / "teams4e" / "mock-tenant.json"
 
 
 def now_iso() -> str:

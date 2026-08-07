@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Command entry point for the passive teams4e Graph backend."""
+
+from teams4e_graph import main
+
+
+if __name__ == "__main__":
+  raise SystemExit(main())

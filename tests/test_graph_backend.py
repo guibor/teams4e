@@ -1,4 +1,4 @@
-"""Offline tests for the passive msteams Microsoft Graph backend."""
+"""Offline tests for the passive teams4e Microsoft Graph backend."""
 
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ from unittest import mock
 BIN_DIR = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN_DIR))
 
-import msteams_graph as backend  # noqa: E402
-from msteams_cache import TeamsCache  # noqa: E402
-from msteams_mock import MockTenant  # noqa: E402
+import teams4e_graph as backend  # noqa: E402
+from teams4e_cache import TeamsCache  # noqa: E402
+from teams4e_mock import MockTenant  # noqa: E402
 
 
 def jwt(claims: dict) -> str:
@@ -61,6 +61,31 @@ class GraphBackendTests(unittest.TestCase):
   def setUp(self) -> None:
     backend.TOKEN_COMMAND_CACHE = None
 
+  def test_legacy_executable_maps_former_environment_names(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      state_path = Path(directory) / "legacy-mock.json"
+      environment = {
+          key: value
+          for key, value in os.environ.items()
+          if not key.startswith("TEAMS4E_")
+      }
+      environment.update({
+          "MSTEAMS_MOCK": "1",
+          "MSTEAMS_MOCK_STATE": str(state_path),
+      })
+
+      result = subprocess.run(
+          [str(BIN_DIR / "msteams-graph"), "status", "--output", "json"],
+          check=True,
+          capture_output=True,
+          text=True,
+          env=environment,
+      )
+      payload = json.loads(result.stdout)
+
+      self.assertEqual("MockTenant", payload["authType"])
+      self.assertEqual(str(state_path), payload["mockStateFile"])
+
   def test_status_decodes_shared_identity_without_refreshing(self) -> None:
     with tempfile.TemporaryDirectory() as directory:
       path = Path(directory) / "credentials.json"
@@ -93,7 +118,7 @@ class GraphBackendTests(unittest.TestCase):
       output = io.StringIO()
 
       with mock.patch.dict(
-          os.environ, {"MSTEAMS_CREDENTIALS": str(path)}, clear=False
+          os.environ, {"TEAMS4E_CREDENTIALS": str(path)}, clear=False
       ), contextlib.redirect_stdout(output):
         self.assertEqual(0, backend.dispatch(["token", "--output", "json"]))
 
@@ -116,7 +141,7 @@ class GraphBackendTests(unittest.TestCase):
         stderr="",
     )
     environment = {
-        "MSTEAMS_TOKEN_COMMAND": json.dumps(["token-provider", "--json"]),
+        "TEAMS4E_TOKEN_COMMAND": json.dumps(["token-provider", "--json"]),
     }
     with (
         mock.patch.dict(os.environ, environment, clear=False),
@@ -509,7 +534,7 @@ class GraphBackendTests(unittest.TestCase):
       path = Path(directory) / "missing.json"
       output = io.StringIO()
       with mock.patch.dict(
-          backend.os.environ, {"MSTEAMS_CREDENTIALS": str(path)}, clear=False
+          backend.os.environ, {"TEAMS4E_CREDENTIALS": str(path)}, clear=False
       ), contextlib.redirect_stdout(output):
         self.assertEqual(0, backend.dispatch(["status", "--output", "json"]))
       self.assertEqual("Logged out", json.loads(output.getvalue()))
@@ -654,7 +679,7 @@ class GraphBackendTests(unittest.TestCase):
         cache.set_meta("last_sync", previous)
         cache.connection.commit()
       with mock.patch.dict(
-          os.environ, {"MSTEAMS_CACHE": str(path)}, clear=False
+          os.environ, {"TEAMS4E_CACHE": str(path)}, clear=False
       ), mock.patch.object(
           backend,
           "list_chats",
@@ -720,8 +745,8 @@ class GraphBackendTests(unittest.TestCase):
       with mock.patch.dict(
           os.environ,
           {
-              "MSTEAMS_MOCK_STATE": str(state_path),
-              "MSTEAMS_CACHE": str(cache_path),
+              "TEAMS4E_MOCK_STATE": str(state_path),
+              "TEAMS4E_CACHE": str(cache_path),
           },
           clear=False,
       ):
@@ -784,9 +809,9 @@ class GraphBackendTests(unittest.TestCase):
       state_path = Path(directory) / "tenant.json"
       cache_path = Path(directory) / "cache.sqlite3"
       environment = {
-          "MSTEAMS_MOCK": "1",
-          "MSTEAMS_MOCK_STATE": str(state_path),
-          "MSTEAMS_CACHE": str(cache_path),
+          "TEAMS4E_MOCK": "1",
+          "TEAMS4E_MOCK_STATE": str(state_path),
+          "TEAMS4E_CACHE": str(cache_path),
       }
       output = io.StringIO()
       with mock.patch.dict(os.environ, environment, clear=False), \

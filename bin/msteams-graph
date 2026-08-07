@@ -1,8 +1,24 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Command entry point for the passive msteams Graph backend."""
+"""Compatibility entry point for the renamed teams4e backend."""
 
-from msteams_graph import main
+import os
+
+
+for old_name, new_name in {
+    "MSTEAMS_BOOTSTRAP_COMMAND": "TEAMS4E_BOOTSTRAP_COMMAND",
+    "MSTEAMS_CACHE": "TEAMS4E_CACHE",
+    "MSTEAMS_CREDENTIALS": "TEAMS4E_CREDENTIALS",
+    "MSTEAMS_CREDENTIAL_SERVER_NAME": "TEAMS4E_CREDENTIAL_SERVER_NAME",
+    "MSTEAMS_CREDENTIAL_SERVER_URL": "TEAMS4E_CREDENTIAL_SERVER_URL",
+    "MSTEAMS_MOCK": "TEAMS4E_MOCK",
+    "MSTEAMS_MOCK_STATE": "TEAMS4E_MOCK_STATE",
+    "MSTEAMS_TOKEN_COMMAND": "TEAMS4E_TOKEN_COMMAND",
+}.items():
+  if new_name not in os.environ and old_name in os.environ:
+    os.environ[new_name] = os.environ[old_name]
+
+from teams4e_graph import main
 
 
 if __name__ == "__main__":
