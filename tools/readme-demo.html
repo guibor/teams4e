@@ -6,17 +6,19 @@
   <title>teams4e README demo</title>
   <style>
     :root {
-      --ink: #20262d;
-      --muted: #6b737b;
-      --paper: #f7f8f8;
-      --panel: #ffffff;
-      --line: #d9dee2;
-      --teal: #187b75;
-      --violet: #665ca7;
-      --magenta: #9a3d68;
-      --gold: #916b16;
-      --select: #dcefed;
-      --select-line: #23837c;
+      --ink: #c6c6c6;
+      --muted: #8a8a8a;
+      --paper: #303030;
+      --panel: #303030;
+      --line: #4e4e4e;
+      --green: #a1db00;
+      --cyan: #00d7af;
+      --blue: #5fafd7;
+      --violet: #d18aff;
+      --magenta: #ff4ea3;
+      --yellow: #ffd700;
+      --select: #4e4e4e;
+      --select-line: #a1db00;
     }
 
     * { box-sizing: border-box; }
@@ -26,7 +28,7 @@
       height: 720px;
       margin: 0;
       overflow: hidden;
-      background: #e9edef;
+      background: #1c1c1c;
       color: var(--ink);
       font-family: "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
       font-size: 14px;
@@ -41,7 +43,7 @@
       grid-template-rows: 44px 1fr 30px;
       overflow: hidden;
       background: var(--panel);
-      border: 1px solid #aeb6bc;
+      border: 1px solid #4e4e4e;
       border-radius: 7px;
     }
 
@@ -50,16 +52,16 @@
       grid-template-columns: 90px 1fr 90px;
       align-items: center;
       padding: 0 14px;
-      color: #fff;
-      background: #242c33;
-      border-bottom: 1px solid #151a1f;
+      color: #c6c6c6;
+      background: #1c1c1c;
+      border-bottom: 1px solid #000000;
     }
 
     .traffic { display: flex; gap: 8px; }
     .traffic span { width: 11px; height: 11px; border-radius: 50%; }
-    .traffic span:nth-child(1) { background: #e15b55; }
-    .traffic span:nth-child(2) { background: #d8aa3f; }
-    .traffic span:nth-child(3) { background: #4aa86d; }
+    .traffic span:nth-child(1) { background: #ef2929; }
+    .traffic span:nth-child(2) { background: #fce94f; }
+    .traffic span:nth-child(3) { background: #a1db00; }
 
     .brand {
       display: flex;
@@ -73,7 +75,7 @@
     }
 
     .brand img { width: 27px; height: 27px; border-radius: 4px; }
-    .brand small { color: #b9c2c8; font-size: 12px; font-weight: 500; }
+    .brand small { color: #8a8a8a; font-size: 12px; font-weight: 500; }
 
     .workspace { display: flex; min-height: 0; background: var(--paper); }
     .index { flex: 1 1 auto; min-width: 0; background: var(--panel); }
@@ -87,9 +89,9 @@
       align-items: center;
       justify-content: space-between;
       padding: 0 16px;
-      background: #eef2f3;
-      border-bottom: 1px solid var(--line);
-      color: #3d4850;
+      background: #005f87;
+      border-bottom: 1px solid #005f87;
+      color: #eeeeee;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 13px;
       font-weight: 650;
@@ -123,7 +125,7 @@
       height: 34px;
       padding: 0 14px;
       color: var(--muted);
-      background: #fafbfb;
+      background: #3a3a3a;
       border-bottom: 1px solid var(--line);
       font-size: 11px;
       text-transform: uppercase;
@@ -134,7 +136,7 @@
     .row {
       min-height: 54px;
       padding: 7px 14px;
-      border-bottom: 1px solid #edf0f1;
+      border-bottom: 1px solid #3a3a3a;
       white-space: nowrap;
     }
 
@@ -145,14 +147,14 @@
     }
 
     .row.unread { font-weight: 700; }
-    .status { color: var(--teal); font-weight: 700; }
+    .status { color: var(--green); font-weight: 700; }
     .type { font-weight: 700; }
     .type.direct { color: var(--violet); }
     .type.group { color: var(--magenta); }
-    .type.meeting { color: var(--gold); }
-    .schedule { color: #344d4a; }
-    .preview { color: #505c64; }
-    .star { color: #9d7617; }
+    .type.meeting { color: var(--cyan); }
+    .schedule { color: var(--yellow); }
+    .preview { color: #b2b2b2; }
+    .star { color: var(--yellow); }
 
     body[data-state="inbox"] .row.atlas,
     body[data-state="chat"] .row.atlas,
@@ -168,7 +170,7 @@
       display: none;
       flex: 1 1 auto;
       min-width: 0;
-      border-left: 1px solid #bfc6ca;
+      border-left: 1px solid #4e4e4e;
       background: var(--paper);
     }
 
@@ -181,13 +183,13 @@
       align-items: center;
       justify-content: space-between;
       padding: 0 18px;
-      background: #fff;
+      background: #303030;
       border-bottom: 1px solid var(--line);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     .reader-head strong { font-size: 17px; }
-    .reader-head span { color: var(--teal); font-size: 12px; font-weight: 650; }
+    .reader-head span { color: var(--blue); font-size: 12px; font-weight: 650; }
 
     .transcript { padding: 20px 24px; }
 
@@ -202,22 +204,22 @@
 
     .message { margin: 0 0 22px; max-width: 610px; }
     .message-head { display: flex; gap: 12px; align-items: baseline; }
-    .message-head strong { color: var(--violet); }
+    .message-head strong { color: var(--yellow); }
     .message-head time { color: var(--muted); font-size: 11px; }
     .message p { margin: 6px 0 0; line-height: 1.55; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 
     .meeting-details {
       margin: 20px 22px;
       padding: 18px 20px;
-      border-left: 4px solid var(--teal);
-      background: #edf5f4;
+      border-left: 4px solid var(--green);
+      background: #3a3a3a;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     .meeting-details h2 { margin: 0 0 14px; font-size: 15px; }
     .detail-row { display: grid; grid-template-columns: 94px 1fr; gap: 12px; margin: 8px 0; line-height: 1.35; }
-    .detail-row strong { color: #4f5b63; font-size: 12px; }
-    .join { color: var(--teal); font-weight: 700; }
+    .detail-row strong { color: var(--cyan); font-size: 12px; }
+    .join { color: var(--blue); font-weight: 700; }
     .empty { margin: 26px; color: var(--muted); font-style: italic; }
 
     .modeline {
@@ -225,13 +227,13 @@
       align-items: center;
       justify-content: space-between;
       padding: 0 13px;
-      color: #dbe2e5;
-      background: #303940;
-      border-top: 1px solid #1e2429;
+      color: #005f87;
+      background: #afd7ff;
+      border-top: 1px solid #afd7ff;
       font-size: 11px;
     }
 
-    .mode-state { color: #7fd0c7; }
+    .mode-state { color: #005f87; font-weight: 700; }
   </style>
 </head>
 <body data-state="inbox">

@@ -47,7 +47,15 @@
   (when (file-exists-p path) (delete-file path)))
 
 (when (display-graphic-p)
-  (load-theme 'modus-operandi-tinted t)
+  (dolist (pattern '("~/.emacs.d/elpa/*/moe-theme-*"
+                     "~/.config/emacs/elpa/*/moe-theme-*"
+                     "~/spacemacs/elpa/*/*/moe-theme-*"))
+    (dolist (directory
+             (file-expand-wildcards (expand-file-name pattern) t))
+      (add-to-list 'custom-theme-load-path directory)))
+  (condition-case nil
+      (load-theme 'moe-dark t)
+    (error (load-theme 'wombat t)))
   (menu-bar-mode -1)
   (tool-bar-mode -1)
   (scroll-bar-mode -1)

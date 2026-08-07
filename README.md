@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" width="150" alt="teams4e logo">
+  <img src="assets/logo.png" width="112" alt="teams4e logo">
 </p>
 
 <h1 align="center">teams4e</h1>
@@ -22,8 +22,8 @@ an external token provider.
 
 ![teams4e mock tenant demo](assets/demo.gif)
 
-The demo uses the bundled local mock. It contains no account or organization
-data.
+The demo uses the bundled local mock and the Moe Dark palette. It contains no
+account or organization data.
 
 ## Why teams4e?
 
@@ -312,7 +312,9 @@ Launch the reproducible graphical demo with:
 Emacs -Q --load tools/teams4e-demo.el
 ```
 
-`tools/readme-demo.html` is the source for the account-free README animation.
+`tools/readme-demo.html` is the Moe Dark source for the account-free README
+animation. The graphical launcher prefers an installed `moe-dark` theme and
+falls back to Emacs's built-in `wombat` theme when Moe is unavailable.
 
 ## Migration from msteams
 

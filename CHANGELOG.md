@@ -16,4 +16,4 @@
 - Message views now order by the actual last-message timestamp; meeting-only
   views order by event start and show complete start/end intervals.
 - Lowercase `r` and `i` both queue mark-read; reply remains uppercase `R`.
-- Added an account-free README demo, original logo, and reproducible mock demo.
+- Added a minimal chat/cursor logo and an account-free Moe Dark README demo.

@@ -129,11 +129,13 @@ remain available and the event is omitted.
 
 ## Documentation Assets
 
-`assets/logo.png` is an original package mark and `assets/demo.gif` illustrates
-the headers, singleton reader, and meeting projection with non-account data.
-`tools/teams4e-demo.el` launches the real UI against the bundled mock;
-`tools/readme-demo.html` is the fixed-format source used to render the compact
-README animation.
+`assets/logo.png` is a minimal chat-outline and block-cursor package mark.
+`assets/demo.gif` illustrates the headers, singleton reader, and meeting
+projection with non-account data and the installed Moe Dark palette.
+`tools/teams4e-demo.el` launches the real UI against the bundled mock and
+prefers `moe-dark`, with `wombat` as a dependency-free fallback.
+`tools/readme-demo.html` is the fixed-format Moe Dark source used to render the
+compact README animation.
 
 ## Reader And Navigation
 
