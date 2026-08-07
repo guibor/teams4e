@@ -1,0 +1,9 @@
+{
+  "connectionName": "default",
+  "connectedAs": "user@example.com",
+  "userId": "current-user-id",
+  "authType": "DeviceCode",
+  "appId": "00000000-0000-0000-0000-000000000000",
+  "appTenant": "example.onmicrosoft.com",
+  "cloudType": "Public"
+}

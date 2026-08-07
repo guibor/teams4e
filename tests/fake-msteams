@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Small deterministic stand-in for the msteams Graph backend."""
+
+import json
+import os
+from pathlib import Path
+import sys
+
+
+FIXTURES = Path(__file__).with_name("fixtures")
+
+
+def emit_fixture(name: str) -> None:
+  sys.stdout.write((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def option(args: list[str], name: str) -> str | None:
+  try:
+    return args[args.index(name) + 1]
+  except (ValueError, IndexError):
+    return None
+
+
+def options(args: list[str], name: str) -> list[str]:
+  return [args[index + 1] for index, value in enumerate(args[:-1])
+          if value == name]
+
+
+def main() -> int:
+  args = sys.argv[1:]
+  command = [arg for arg in args if arg not in ("--output", "json", "none")]
+
+  if command == ["status"]:
+    emit_fixture("status.json")
+    return 0
+
+  if command[:3] == ["teams", "chat", "list"]:
+    emit_fixture("chats.json")
+    return 0
+
+  if command[:4] == ["teams", "chat", "member", "batch"]:
+    records = []
+    members = json.loads(
+        (FIXTURES / "members-chat-1.json").read_text(encoding="utf-8")
+    )
+    for chat_id in options(command, "--chatId"):
+      records.append({
+          "chatId": chat_id,
+          "members": members if chat_id == "chat-1" else [],
+          "membersLoaded": True,
+      })
+    sys.stdout.write(json.dumps(records))
+    return 0
+
+  if command[:5] == ["teams", "chat", "member", "list", "--chatId"]:
+    chat_id = option(args, "--chatId")
+    if chat_id == "chat-1":
+      emit_fixture("members-chat-1.json")
+    else:
+      sys.stdout.write("[]")
+    return 0
+
+  if command[:5] == ["teams", "chat", "message", "list", "--chatId"]:
+    chat_id = option(args, "--chatId")
+    if chat_id == "chat-1":
+      emit_fixture("messages-chat-1.json")
+    else:
+      sys.stdout.write("[]")
+    return 0
+
+  if command[:5] == ["teams", "chat", "get", "--participants", "ada@example.com"]:
+    chats = json.loads((FIXTURES / "chats.json").read_text(encoding="utf-8"))
+    sys.stdout.write(json.dumps(chats[0]))
+    return 0
+
+  if command[:5] == ["teams", "chat", "message", "send", "--chatId"] or (
+      command[:5] == ["teams", "chat", "message", "send", "--userEmails"]
+  ):
+    log_path = os.environ.get("MSTEAMS_TEST_LOG")
+    if log_path:
+      Path(log_path).write_text(json.dumps(args), encoding="utf-8")
+    sys.stdout.write("{}")
+    return 0
+
+  if command[:4] in (
+      ["teams", "chat", "mark", "read"],
+      ["teams", "chat", "mark", "unread"],
+  ):
+    log_path = os.environ.get("MSTEAMS_TEST_LOG")
+    if log_path:
+      Path(log_path).write_text(json.dumps(args), encoding="utf-8")
+    sys.stdout.write("{}")
+    return 0
+
+  sys.stderr.write(f"unsupported fake m365 command: {args!r}\n")
+  return 64
+
+
+if __name__ == "__main__":
+  raise SystemExit(main())

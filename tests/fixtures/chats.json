@@ -1,0 +1,52 @@
+[
+  {
+    "id": "chat-1",
+    "topic": null,
+    "createdDateTime": "2026-07-31T08:00:00Z",
+    "lastUpdatedDateTime": "2026-08-02T07:30:00Z",
+    "chatType": "oneOnOne",
+    "webUrl": "https://teams.microsoft.com/l/chat/chat-1/0",
+    "lastMessagePreview": {
+      "id": "message-2",
+      "createdDateTime": "2026-08-02T07:30:00Z",
+      "from": {
+        "user": {
+          "id": "current-user-id",
+          "displayName": "Michael"
+        }
+      },
+      "body": {
+        "contentType": "text",
+        "content": "Thanks, I will review it."
+      }
+    },
+    "viewpoint": {
+      "lastMessageReadDateTime": "2026-08-02T07:00:00Z"
+    }
+  },
+  {
+    "id": "chat-2",
+    "topic": "Project Atlas",
+    "createdDateTime": "2026-07-25T09:00:00Z",
+    "lastUpdatedDateTime": "2026-08-01T16:15:00Z",
+    "chatType": "group",
+    "webUrl": "https://teams.microsoft.com/l/chat/chat-2/0",
+    "lastMessagePreview": {
+      "id": "atlas-1",
+      "createdDateTime": "2026-08-01T16:15:00Z",
+      "from": {
+        "user": {
+          "id": "ada-user-id",
+          "displayName": "Ada Lovelace"
+        }
+      },
+      "body": {
+        "contentType": "text",
+        "content": "The project review starts at ten."
+      }
+    },
+    "viewpoint": {
+      "lastMessageReadDateTime": "2026-08-01T16:15:00Z"
+    }
+  }
+]

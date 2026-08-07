@@ -1,0 +1,56 @@
+[
+  {
+    "id": "message-1",
+    "chatId": "chat-1",
+    "createdDateTime": "2026-08-02T07:20:00Z",
+    "lastModifiedDateTime": "2026-08-02T07:20:00Z",
+    "messageType": "message",
+    "from": {
+      "user": {
+        "id": "ada-user-id",
+        "displayName": "Ada Lovelace",
+        "userIdentityType": "aadUser"
+      }
+    },
+    "body": {
+      "contentType": "html",
+      "content": "<p>Hello <strong>Michael</strong>.</p><p>The review is ready.</p>"
+    },
+    "attachments": [
+      {
+        "name": "review.pdf",
+        "contentType": "reference",
+        "contentUrl": "https://example.com/review.pdf"
+      }
+    ],
+    "reactions": [
+      {
+        "reactionType": "like"
+      },
+      {
+        "reactionType": "like"
+      }
+    ],
+    "webUrl": "https://teams.microsoft.com/l/message/chat-1/message-1"
+  },
+  {
+    "id": "message-2",
+    "chatId": "chat-1",
+    "createdDateTime": "2026-08-02T07:25:00Z",
+    "lastModifiedDateTime": "2026-08-02T07:25:00Z",
+    "messageType": "message",
+    "from": {
+      "user": {
+        "id": "current-user-id",
+        "displayName": "Michael-David Fiszer",
+        "userIdentityType": "aadUser"
+      }
+    },
+    "body": {
+      "contentType": "text",
+      "content": "Thanks. I will read it now."
+    },
+    "attachments": [],
+    "reactions": []
+  }
+]
