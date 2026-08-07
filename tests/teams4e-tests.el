@@ -345,14 +345,23 @@
 
 (ert-deftest teams4e-error-diagnostics-redact-message-body ()
   (should
-   (equal '("teams" "send" "--message" "<message redacted>" "--debug")
+   (equal '("teams" "send" "--message" "<content redacted>" "--debug")
           (teams4e--redacted-args
            '("teams" "send" "--message" "private body" "--debug"))))
   (should
-   (equal "Graph rejected <message redacted> for policy"
+   (equal "Graph rejected <content redacted> for policy"
           (teams4e--redacted-detail
            '("--message" "private body")
-           "Graph rejected private body for policy"))))
+           "Graph rejected private body for policy")))
+  (should
+   (equal '("--comment" "<content redacted>")
+          (teams4e--redacted-args
+           '("--comment" "private meeting note"))))
+  (should
+   (equal "Rejected <content redacted>"
+          (teams4e--redacted-detail
+           '("--comment" "private meeting note")
+           "Rejected private meeting note"))))
 
 (ert-deftest teams4e-resolves-configured-graph-backend ()
   (let ((teams4e-backend-program teams4e-test-fake-backend))
@@ -921,7 +930,8 @@
                      teams-export-thread teams-copy-thread-markdown
                      teams-analyze-thread
                      teams-capture-action teams-capture-message
-                     teams-capture-thread teams-unread-filter))
+                     teams-capture-thread teams-unread-filter
+                     teams-propose-new-time))
     (should (commandp command))))
 
 (ert-deftest teams4e-public-export-and-capture-aliases-are-context-aware ()
@@ -945,6 +955,7 @@
                      teams-bulk-action teams-close-inactive teams-sync
                      teams-user teams-create-chat teams-dispatch
                      teams-server-search teams-drafts teams-meeting-transcript
+                     teams-propose-new-time
                      teams-handle teams-snooze teams-clear-triage
                      teams-jump-capture))
     (should (commandp command))))
@@ -1179,6 +1190,132 @@
              same-label))
     (should (string-match-p "Aug 10.* - .*Aug 11" cross-label))))
 
+(ert-deftest teams4e-meeting-proposal-ranks-sends-and-renders-in-one-flow ()
+  (let* ((event
+          '((id . "event-1")
+            (start . ((dateTime . "2099-08-10T07:30:00")
+                      (timeZone . "UTC")))
+            (end . ((dateTime . "2099-08-10T08:15:00")
+                    (timeZone . "UTC")))
+            (allowNewTimeProposals . t)
+            (isOrganizer)
+            (organizer
+             . ((emailAddress
+                 . ((name . "Grace Hopper")
+                    (address . "grace@example.test")))))))
+         (chat
+          `((id . "meeting-1")
+            (chatType . "meeting")
+            (topic . "Architecture review")
+            (onlineMeetingInfo . ((calendarEventId . "event-1")))
+            (meetingContext . ((event . ,event)))))
+         (slot
+          '((start . ((dateTime . "2099-08-11T09:00:00")
+                      (timeZone . "UTC")))
+            (end . ((dateTime . "2099-08-11T09:45:00")
+                    (timeZone . "UTC")))))
+         (suggestion
+          `((confidence . 100)
+            (organizerAvailability . "free")
+            (attendeeAvailability
+             . (((availability . "free")
+                 (attendee
+                  . ((emailAddress
+                      . ((name . "Grace Hopper")
+                         (address . "grace@example.test"))))))))
+            (meetingTimeSlot . ,slot)))
+         (sent-event
+          (append '((responseStatus . ((response . "tentativelyAccepted"))))
+                  event))
+         requests completion-choices)
+    (with-temp-buffer
+      (teams4e-recent-mode)
+      (cl-letf
+          (((symbol-function 'teams4e--run-json)
+            (lambda (args callback &optional _error-callback)
+              (push args requests)
+              (if (member "suggest" args)
+                  (funcall callback
+                           `((event . ,event)
+                             (suggestions . (,suggestion))))
+                (funcall callback
+                         `((status . "proposed")
+                           (event . ,sent-event)
+                           (proposal . ,slot))))
+              'fake-request))
+           ((symbol-function 'completing-read)
+            (lambda (_prompt collection &rest _args)
+              (setq completion-choices collection)
+              (car collection)))
+           ((symbol-function 'read-string)
+            (lambda (&rest _args) "Please move this meeting"))
+           ((symbol-function 'teams4e--refresh-visible-recent) #'ignore))
+        (teams4e--proposal-request-suggestions
+         chat "event-1"
+         (list (date-to-time "2099-08-09T00:00:00Z")
+               (date-to-time "2099-08-17T00:00:00Z"))
+         'work)))
+    (setq requests (nreverse requests))
+    (should (= 2 (length requests)))
+    (should (equal '("teams" "meeting" "propose" "suggest")
+                   (seq-take (car requests) 4)))
+    (should (equal '("teams" "meeting" "propose" "send")
+                   (seq-take (cadr requests) 4)))
+    (should (equal "Please move this meeting"
+                   (cadr (member "--comment" (cadr requests)))))
+    (should (string-match-p "100% confidence"
+                            (car completion-choices)))
+    (should (string-match-p "all shown free"
+                            (car completion-choices)))
+    (should (member teams4e--proposal-manual-choice completion-choices))
+    (should (equal "New time proposed"
+                   (teams4e--meeting-status-label chat)))
+    (with-temp-buffer
+      (teams4e-chat-mode)
+      (setq teams4e--chat chat
+            teams4e--messages nil)
+      (teams4e--render-chat)
+      (should (string-match-p "Proposed: .*Aug 11" (buffer-string)))
+      (should (string-match-p "Status: New time proposed"
+                              (buffer-string))))))
+
+(ert-deftest teams4e-meeting-proposal-manual-fallback-preserves-exact-duration ()
+  (require 'org)
+  (let* ((event
+          '((id . "event-1")
+            (start . ((dateTime . "2099-08-10T07:30:15")
+                      (timeZone . "UTC")))
+            (end . ((dateTime . "2099-08-10T08:15:45")
+                    (timeZone . "UTC")))))
+         (chat
+          `((id . "meeting-1")
+            (chatType . "meeting")
+            (meetingContext . ((event . ,event)))))
+         (manual-start (date-to-time "2099-08-12T12:00:00Z"))
+         choices sent-slot)
+    (cl-letf
+        (((symbol-function 'completing-read)
+          (lambda (_prompt collection &rest _args)
+            (setq choices collection)
+            (car collection)))
+         ((symbol-function 'org-read-date)
+          (lambda (&rest _args) manual-start))
+         ((symbol-function 'teams4e--proposal-send)
+          (lambda (_chat _event-id slot) (setq sent-slot slot))))
+      (teams4e--proposal-choose
+       chat "event-1"
+       `((event . ,event)
+         (suggestions)
+         (suggestionError . "Microsoft Graph HTTP 403: denied"))
+       (list manual-start (time-add manual-start (days-to-time 7)))
+       'work))
+    (should (equal teams4e--proposal-manual-choice (car choices)))
+    (should-not (member teams4e--proposal-unrestricted-choice choices))
+    (should (equal "2099-08-12T12:00:00"
+                   (teams4e--dig sent-slot 'start 'dateTime)))
+    (should (equal "2099-08-12T12:45:30"
+                   (teams4e--dig sent-slot 'end 'dateTime)))))
+
 (ert-deftest teams4e-relevant-inbox-excludes-hidden-and-locally-muted-chats ()
   (let* ((visible '((id . "visible") (chatType . "group")))
          (hidden '((id . "hidden")
@@ -1328,6 +1465,7 @@
              ("a A" . teams4e-capture-current-thread)
              ("a j" . teams4e-jump-to-capture)
              ("a t" . teams4e-meeting-transcript)
+             ("a p" . teams4e-meeting-propose-new-time)
              ("a R" . teams4e-action-reply)
              ("a i" . teams4e-mark-read)
              ("a u" . teams4e-mark-unread)
@@ -2712,7 +2850,7 @@
          (teams4e-mock-state-file (expand-file-name "tenant.json" directory))
          (teams4e-cache-file (expand-file-name "cache.sqlite3" directory))
          (teams4e--member-cache (make-hash-table :test #'equal))
-         chats context meeting)
+         chats context meeting suggestions proposal)
     (unwind-protect
         (progn
           (teams4e-test-await
@@ -2732,6 +2870,33 @@
           (should (equal "2026-08-10T07:30:00"
                          (teams4e--dig context 'event 'start 'dateTime)))
           (should (= 3 (length (teams4e--get context 'members))))
+          (teams4e-test-await
+           (teams4e--run-json
+            '("teams" "meeting" "propose" "suggest"
+              "--eventId" "mock-event-architecture-review"
+              "--searchStart" "2026-08-09T00:00:00Z"
+              "--searchEnd" "2026-08-14T00:00:00Z"
+              "--activityDomain" "work")
+            (lambda (value) (setq suggestions value))))
+          (let ((slot (teams4e--get
+                       (car (teams4e--get suggestions 'suggestions))
+                       'meetingTimeSlot)))
+            (should (= 100
+                       (teams4e--get
+                        (car (teams4e--get suggestions 'suggestions))
+                        'confidence)))
+            (teams4e-test-await
+             (teams4e--run-json
+              (list "teams" "meeting" "propose" "send"
+                    "--eventId" "mock-event-architecture-review"
+                    "--start" (teams4e--event-date-time slot 'start)
+                    "--end" (teams4e--event-date-time slot 'end)
+                    "--comment" "Move the mock meeting")
+              (lambda (value) (setq proposal value))))
+            (teams4e--apply-meeting-context
+             meeting
+             `((event . ,(teams4e--get proposal 'event))
+               (proposal . ,(teams4e--get proposal 'proposal)))))
           (with-temp-buffer
             (teams4e-chat-mode)
             (setq teams4e--chat meeting
@@ -2740,6 +2905,9 @@
             (should (string-match-p "Meeting details" (buffer-string)))
             (should (string-match-p "When: .*2026" (buffer-string)))
             (should (string-match-p "Where: Video room 4" (buffer-string)))
+            (should (string-match-p "Proposed: .*Aug 11" (buffer-string)))
+            (should (string-match-p "Status: New time proposed"
+                                    (buffer-string)))
             (should (string-match-p "Participants: .*Grace Hopper"
                                     (buffer-string)))
             (should (string-match-p "Ada Lovelace" (buffer-string)))
@@ -3065,6 +3233,12 @@
              program '("teams" "search" "messages" "--query" "cache")))
     (should (teams4e--persistent-command-p
              program '("teams" "chat" "member" "list" "--chatId" "one")))
+    (should (teams4e--persistent-command-p
+             program '("teams" "meeting" "propose" "suggest"
+                       "--eventId" "one")))
+    (should-not (teams4e--persistent-command-p
+                 program '("teams" "meeting" "propose" "send"
+                           "--eventId" "one")))
     (should-not (teams4e--persistent-command-p
                  program '("teams" "chat" "message" "send" "--message" "x")))
     (should-not (teams4e--persistent-command-p

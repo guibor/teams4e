@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,8 @@ TOKEN_REFRESH_LOCK = threading.Lock()
 TOKEN_COMMAND_CACHE: tuple[str, int] | None = None
 MEETING_EVENT_SELECT = (
     "id,subject,start,end,isAllDay,isCancelled,showAs,responseStatus,"
-    "location,locations,organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink"
+    "location,locations,organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink,"
+    "allowNewTimeProposals,isOrganizer,responseRequested,type"
 )
 
 
@@ -747,6 +749,213 @@ def get_calendar_event(event_id: str, access_token: str) -> dict[str, Any]:
       access_token,
       request_headers={"Prefer": 'outlook.timezone="UTC"'},
   )
+
+
+def parse_graph_datetime(value: str) -> datetime:
+  """Parse a Graph/CLI date-time VALUE and normalize it to UTC."""
+  if not isinstance(value, str) or not value.strip():
+    raise BackendError("Meeting time must be a nonempty ISO 8601 date-time")
+  normalized = value.strip()
+  if normalized.endswith("Z"):
+    normalized = normalized[:-1] + "+00:00"
+  try:
+    parsed = datetime.fromisoformat(normalized)
+  except ValueError as exception:
+    raise BackendError(f"Invalid meeting date-time: {value}") from exception
+  if parsed.tzinfo is None:
+    parsed = parsed.replace(tzinfo=timezone.utc)
+  return parsed.astimezone(timezone.utc)
+
+
+def graph_utc_date_time(value: str) -> dict[str, str]:
+  """Return Graph dateTimeTimeZone JSON for ISO date-time VALUE in UTC."""
+  parsed = parse_graph_datetime(value)
+  return {
+      "dateTime": parsed.strftime("%Y-%m-%dT%H:%M:%S"),
+      "timeZone": "UTC",
+  }
+
+
+def meeting_duration_iso(event: dict[str, Any]) -> str:
+  """Return EVENT duration using the ISO 8601 form expected by Graph."""
+  start = event.get("start") if isinstance(event.get("start"), dict) else {}
+  end = event.get("end") if isinstance(event.get("end"), dict) else {}
+  start_value = start.get("dateTime")
+  end_value = end.get("dateTime")
+  if not isinstance(start_value, str) or not isinstance(end_value, str):
+    raise BackendError("The linked meeting has no usable start/end time")
+  seconds = int(
+      (parse_graph_datetime(end_value) - parse_graph_datetime(start_value)).total_seconds()
+  )
+  if seconds <= 0:
+    raise BackendError("The linked meeting has an invalid duration")
+  hours, remainder = divmod(seconds, 3600)
+  minutes, seconds = divmod(remainder, 60)
+  parts = ["PT"]
+  if hours:
+    parts.append(f"{hours}H")
+  if minutes:
+    parts.append(f"{minutes}M")
+  if seconds:
+    parts.append(f"{seconds}S")
+  return "".join(parts)
+
+
+def meeting_suggestion_attendees(
+    event: dict[str, Any], profile: dict[str, Any]
+) -> list[dict[str, Any]]:
+  """Return de-duplicated non-self attendees for findMeetingTimes."""
+  self_addresses = {
+      str(profile.get(key)).casefold()
+      for key in ("mail", "userPrincipalName")
+      if isinstance(profile.get(key), str) and profile.get(key)
+  }
+  people: list[dict[str, Any]] = []
+  organizer = event.get("organizer")
+  if isinstance(organizer, dict):
+    people.append({"type": "required", **organizer})
+  attendees = event.get("attendees")
+  if isinstance(attendees, list):
+    people.extend(item for item in attendees if isinstance(item, dict))
+  result: list[dict[str, Any]] = []
+  seen: set[str] = set()
+  for person in people:
+    email = person.get("emailAddress")
+    email = email if isinstance(email, dict) else {}
+    address = email.get("address")
+    if not isinstance(address, str) or not address.strip():
+      continue
+    key = address.casefold()
+    if key in self_addresses or key in seen:
+      continue
+    seen.add(key)
+    attendee_type = str(person.get("type") or "required").lower()
+    if attendee_type not in {"required", "optional", "resource"}:
+      attendee_type = "required"
+    result.append({
+        "type": attendee_type,
+        "emailAddress": {
+            "address": address,
+            "name": email.get("name") or address,
+        },
+    })
+  return result
+
+
+def get_meeting_time_suggestions(
+    event_id: str,
+    search_start: str,
+    search_end: str,
+    access_token: str,
+    *,
+    max_candidates: int = 8,
+    minimum_confidence: int = 50,
+    activity_domain: str = "work",
+) -> dict[str, Any]:
+  """Return availability-ranked alternate times for linked EVENT_ID."""
+  event = get_calendar_event(event_id, access_token)
+  if event.get("isCancelled"):
+    raise BackendError("Cannot propose a new time for a cancelled meeting")
+  if event.get("isOrganizer"):
+    raise BackendError(
+        "You organize this meeting; proposing a new time is an attendee action"
+    )
+  if event.get("allowNewTimeProposals") is False:
+    raise BackendError("The organizer does not allow new time proposals")
+  if activity_domain not in {"work", "personal", "unrestricted"}:
+    raise BackendError(f"Unsupported meeting activity domain: {activity_domain}")
+  search_start_value = graph_utc_date_time(search_start)
+  search_end_value = graph_utc_date_time(search_end)
+  if parse_graph_datetime(search_end) <= parse_graph_datetime(search_start):
+    raise BackendError("Meeting suggestion search must end after it starts")
+  profile = graph_json("/me?$select=mail,userPrincipalName", access_token)
+  payload = {
+      "attendees": meeting_suggestion_attendees(event, profile),
+      "timeConstraint": {
+          "activityDomain": activity_domain,
+          "timeSlots": [{"start": search_start_value, "end": search_end_value}],
+      },
+      "isOrganizerOptional": False,
+      "meetingDuration": meeting_duration_iso(event),
+      "returnSuggestionReasons": True,
+      "minimumAttendeePercentage": max(0, min(minimum_confidence, 100)),
+      "maxCandidates": max(1, min(max_candidates, 50)),
+  }
+  try:
+    suggestions = graph_json(
+        "/me/findMeetingTimes",
+        access_token,
+        method="POST",
+        payload=payload,
+        request_headers={"Prefer": 'outlook.timezone="UTC"'},
+    )
+  except BackendError as exception:
+    return {
+        "event": event,
+        "suggestions": [],
+        "suggestionError": str(exception),
+        "search": {
+            "start": search_start_value,
+            "end": search_end_value,
+            "activityDomain": activity_domain,
+        },
+    }
+  result = suggestions.get("meetingTimeSuggestions")
+  return {
+      "event": event,
+      "suggestions": result if isinstance(result, list) else [],
+      "emptySuggestionsReason": suggestions.get("emptySuggestionsReason"),
+      "search": {
+          "start": search_start_value,
+          "end": search_end_value,
+          "activityDomain": activity_domain,
+      },
+  }
+
+
+def propose_new_meeting_time(
+    event_id: str,
+    start: str,
+    end: str,
+    comment: str,
+    access_token: str,
+) -> dict[str, Any]:
+  """Tentatively accept EVENT_ID while proposing alternate START and END."""
+  event = get_calendar_event(event_id, access_token)
+  if event.get("isCancelled"):
+    raise BackendError("Cannot propose a new time for a cancelled meeting")
+  if event.get("isOrganizer"):
+    raise BackendError(
+        "You organize this meeting; proposing a new time is an attendee action"
+    )
+  if event.get("allowNewTimeProposals") is False:
+    raise BackendError("The organizer does not allow new time proposals")
+  if parse_graph_datetime(end) <= parse_graph_datetime(start):
+    raise BackendError("Proposed meeting end must be after its start")
+  proposal = {
+      "start": graph_utc_date_time(start),
+      "end": graph_utc_date_time(end),
+  }
+  graph_json(
+      f"/me/events/{quoted_id(event_id)}/tentativelyAccept",
+      access_token,
+      method="POST",
+      payload={
+          "comment": comment,
+          "sendResponse": True,
+          "proposedNewTime": proposal,
+      },
+  )
+  event["responseStatus"] = {
+      "response": "tentativelyAccepted",
+      "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+  }
+  return {
+      "status": "proposed",
+      "eventId": event_id,
+      "event": event,
+      "proposal": proposal,
+  }
 
 
 def get_meeting_context(chat_id: str, access_token: str) -> dict[str, Any]:
@@ -1880,6 +2089,30 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
         meeting_concurrency=integer_option(
             args, "--meetingConcurrency", 6, minimum=1
         ),
+    )
+  elif args[:4] == ["teams", "meeting", "propose", "suggest"]:
+    result = get_meeting_time_suggestions(
+        str(option(args, "--eventId")),
+        str(option(args, "--searchStart")),
+        str(option(args, "--searchEnd")),
+        access_token,
+        max_candidates=integer_option(
+            args, "--maxCandidates", 8, minimum=1
+        ),
+        minimum_confidence=integer_option(
+            args, "--minimumConfidence", 50, minimum=0
+        ),
+        activity_domain=str(
+            option(args, "--activityDomain", required=False) or "work"
+        ),
+    )
+  elif args[:4] == ["teams", "meeting", "propose", "send"]:
+    result = propose_new_meeting_time(
+        str(option(args, "--eventId")),
+        str(option(args, "--start")),
+        str(option(args, "--end")),
+        str(option(args, "--comment", required=False) or ""),
+        access_token,
     )
   elif args[:3] == ["teams", "meeting", "context"]:
     result = get_meeting_context(

@@ -70,7 +70,7 @@ Main entry points:
 
 Implements bookmarks and query evaluation, deferred/bulk actions, cache sync,
 offline search, channel views, full-thread Markdown, Org capture, attachment
-workflows, and optional agent analysis.
+workflows, availability-ranked meeting proposals, and optional agent analysis.
 
 Main entry points:
 
@@ -82,6 +82,8 @@ Main entry points:
 - `teams4e-export-current-thread`: fetch and write complete Markdown.
 - `teams4e-capture-current-summary`: capture compact conversation metadata.
 - `teams4e-analyze-current-thread`: export then start an `agent-shell` session.
+- `teams4e-meeting-propose-new-time`: rank or manually select an alternate
+  meeting interval and send it to the organizer.
 
 ### `teams4e-evil.el`
 
@@ -100,6 +102,10 @@ Main functions:
 - `get_token`: obtain a short-lived token from the configured provider.
 - `list_chats` and `list_chat_messages`: fetch bounded conversation data.
 - `list_meeting_events_batch`: fetch linked events with bounded concurrency.
+- `get_meeting_time_suggestions`: ask Outlook to rank alternate intervals while
+  preserving the linked event's duration.
+- `propose_new_meeting_time`: send one tentative response containing the chosen
+  alternate interval.
 - `dispatch`: map the CLI-compatible argv protocol to one operation.
 
 ### `bin/teams4e_cache.py`
@@ -128,6 +134,24 @@ with no known start follow rows with calendar data.
 
 A calendar permission failure is soft: the conversation and participants
 remain available and the event is omitted.
+
+The `a p` action operates on that same attached event. It calls
+`/me/findMeetingTimes` to rank alternatives inside a configurable window and
+shows local intervals, confidence, and unavailable attendees. The chooser can
+retry with unrestricted hours, choose another range, or build a manual slot.
+An availability permission failure is also soft: the manual path remains
+available. The chosen slot is sent with
+`/me/events/{id}/tentativelyAccept`, `sendResponse=true`, and an editable
+comment. This mutation is deliberately one-shot rather than persistent-server
+traffic, and diagnostic logging redacts the comment.
+
+Successful proposal state is merged into `meetingContext.proposal` on the
+existing chat. The reader banner and meeting status can therefore react
+immediately without a proposal database or second calendar object. The linked
+event's original start/end remain authoritative for meeting sorting until the
+organizer changes the event. Sending requires delegated `Calendars.ReadWrite`;
+organizer-owned, cancelled, and proposal-disabled events are rejected before
+the mutation.
 
 ## Documentation Assets
 

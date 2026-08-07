@@ -287,6 +287,42 @@ meeting details reader-only."
   :type 'integer
   :group 'teams4e)
 
+(defcustom teams4e-meeting-proposal-search-days 7
+  "Calendar days searched around a meeting for alternate work-hour slots.
+
+The default search starts up to one day before the original meeting, never in
+the past, and extends this many days beyond its date."
+  :type 'integer
+  :group 'teams4e)
+
+(defcustom teams4e-meeting-proposal-max-candidates 8
+  "Maximum availability-ranked alternatives shown by the proposal flow."
+  :type 'integer
+  :group 'teams4e)
+
+(defcustom teams4e-meeting-proposal-minimum-confidence 50
+  "Lowest Graph availability confidence accepted for a suggested time."
+  :type 'integer
+  :group 'teams4e)
+
+(defcustom teams4e-meeting-proposal-activity-domain 'work
+  "Hours considered when finding alternate meeting times.
+
+`work' respects mailbox work hours.  `personal' also considers weekends, and
+`unrestricted' considers every hour in the selected date range."
+  :type '(choice (const :tag "Mailbox work hours" work)
+                 (const :tag "Work hours plus weekends" personal)
+                 (const :tag "Any hour" unrestricted))
+  :group 'teams4e)
+
+(defcustom teams4e-meeting-proposal-default-comment
+  "Could we move this meeting to the proposed time?"
+  "Default organizer note offered before sending a new-time proposal.
+
+The prompt remains editable and accepts an empty comment."
+  :type 'string
+  :group 'teams4e)
+
 (defconst teams4e--previous-confirm-send-standard
   (condition-case nil
       (eval (car (get 'teams4e-confirm-send 'standard-value)))

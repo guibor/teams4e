@@ -10,7 +10,7 @@ import os
 import shutil
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -308,12 +308,33 @@ def seed_state() -> dict[str, Any]:
               "isCancelled": False,
               "showAs": "busy",
               "responseStatus": {"response": "accepted"},
+              "allowNewTimeProposals": True,
+              "isOrganizer": False,
+              "responseRequested": True,
+              "type": "singleInstance",
               "location": {"displayName": "Video room 4"},
               "locations": [{"displayName": "Video room 4"}],
-              "organizer": {"emailAddress": {"name": grace["displayName"]}},
+              "organizer": {"emailAddress": {
+                  "name": grace["displayName"],
+                  "address": grace["mail"],
+              }},
               "attendees": [
-                  {"emailAddress": {"name": me["displayName"]}},
-                  {"emailAddress": {"name": ada["displayName"]}},
+                  {
+                      "emailAddress": {
+                          "name": me["displayName"],
+                          "address": me["mail"],
+                      },
+                      "type": "required",
+                      "status": {"response": "accepted"},
+                  },
+                  {
+                      "emailAddress": {
+                          "name": ada["displayName"],
+                          "address": ada["mail"],
+                      },
+                      "type": "required",
+                      "status": {"response": "accepted"},
+                  },
               ],
               "onlineMeeting": {
                   "joinUrl": "https://teams.microsoft.com/mock/meeting/architecture-review"
@@ -520,6 +541,145 @@ class MockTenant:
       if chat.get("id") == chat_id:
         return chat
     raise ValueError(f"Unknown mock chat: {chat_id}")
+
+  def _meeting_event(self, event_id: str) -> dict[str, Any]:
+    for event in self.state.get("meetingEvents", {}).values():
+      if isinstance(event, dict) and event.get("id") == event_id:
+        return event
+    raise ValueError(f"Unknown mock meeting event: {event_id}")
+
+  @staticmethod
+  def _meeting_datetime(value: str) -> datetime:
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+      parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+  @staticmethod
+  def _meeting_date_time(value: datetime) -> dict[str, str]:
+    return {
+        "dateTime": value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+        "timeZone": "UTC",
+    }
+
+  def _meeting_time_suggestions(self, args: list[str]) -> dict[str, Any]:
+    event = self._meeting_event(str(option(args, "--eventId")))
+    if event.get("isCancelled"):
+      raise ValueError("Cannot propose a new time for a cancelled mock meeting")
+    if event.get("isOrganizer"):
+      raise ValueError("You organize this mock meeting")
+    if event.get("allowNewTimeProposals") is False:
+      raise ValueError("The organizer does not allow new time proposals")
+    start = self._meeting_datetime(str(event["start"]["dateTime"]))
+    end = self._meeting_datetime(str(event["end"]["dateTime"]))
+    duration = end - start
+    search_start = self._meeting_datetime(str(option(args, "--searchStart")))
+    search_end = self._meeting_datetime(str(option(args, "--searchEnd")))
+    if search_end <= search_start:
+      raise ValueError("Mock meeting suggestion search must end after it starts")
+    maximum = max(1, int(option(args, "--maxCandidates", required=False) or 8))
+    minimum = max(
+        0, int(option(args, "--minimumConfidence", required=False) or 50)
+    )
+    activity_domain = option(args, "--activityDomain", required=False) or "work"
+    if activity_domain not in {"work", "personal", "unrestricted"}:
+      raise ValueError(f"Unsupported mock meeting activity domain: {activity_domain}")
+    contacts = [event.get("organizer"), *event.get("attendees", [])]
+    self_address = str(self.state["profile"].get("mail") or "").casefold()
+    attendees = []
+    seen: set[str] = set()
+    for contact in contacts:
+      email = contact.get("emailAddress", {}) if isinstance(contact, dict) else {}
+      address = str(email.get("address") or "")
+      if not address or address.casefold() == self_address or address.casefold() in seen:
+        continue
+      seen.add(address.casefold())
+      attendees.append(copy.deepcopy(email))
+
+    candidate_starts = [start + timedelta(days=1), start + timedelta(days=2, hours=1)]
+    suggestions = []
+    for index, candidate_start in enumerate(candidate_starts):
+      candidate_end = candidate_start + duration
+      if candidate_start < search_start or candidate_end > search_end:
+        continue
+      confidence = 100 if index == 0 else 50
+      if confidence < minimum:
+        continue
+      availability = []
+      for attendee_index, email in enumerate(attendees):
+        state = "busy" if index == 1 and attendee_index == len(attendees) - 1 else "free"
+        availability.append({
+            "availability": state,
+            "attendee": {"emailAddress": email},
+        })
+      suggestions.append({
+          "confidence": confidence,
+          "order": index + 1,
+          "organizerAvailability": "free",
+          "suggestionReason": (
+              "Everyone is available in the mock tenant."
+              if index == 0
+              else "One attendee is busy in the mock tenant."
+          ),
+          "attendeeAvailability": availability,
+          "meetingTimeSlot": {
+              "start": self._meeting_date_time(candidate_start),
+              "end": self._meeting_date_time(candidate_end),
+          },
+      })
+      if len(suggestions) >= maximum:
+        break
+    return {
+        "event": copy.deepcopy(event),
+        "suggestions": suggestions,
+        "emptySuggestionsReason": "" if suggestions else "No mock slots in range",
+        "search": {
+            "start": self._meeting_date_time(search_start),
+            "end": self._meeting_date_time(search_end),
+            "activityDomain": activity_domain,
+        },
+    }
+
+  def _propose_meeting_time(self, args: list[str]) -> dict[str, Any]:
+    event_id = str(option(args, "--eventId"))
+    event = self._meeting_event(event_id)
+    if event.get("isCancelled"):
+      raise ValueError("Cannot propose a new time for a cancelled mock meeting")
+    if event.get("isOrganizer"):
+      raise ValueError("You organize this mock meeting")
+    if event.get("allowNewTimeProposals") is False:
+      raise ValueError("The organizer does not allow new time proposals")
+    start = self._meeting_datetime(str(option(args, "--start")))
+    end = self._meeting_datetime(str(option(args, "--end")))
+    if end <= start:
+      raise ValueError("Proposed meeting end must be after its start")
+    proposal = {
+        "start": self._meeting_date_time(start),
+        "end": self._meeting_date_time(end),
+    }
+    response_time = now_iso()
+    event["responseStatus"] = {
+        "response": "tentativelyAccepted",
+        "time": response_time,
+    }
+    self_address = str(self.state["profile"].get("mail") or "").casefold()
+    for attendee in event.get("attendees", []):
+      address = str(attendee.get("emailAddress", {}).get("address") or "")
+      if address.casefold() == self_address:
+        attendee["status"] = {
+            "response": "tentativelyAccepted",
+            "time": response_time,
+        }
+        attendee["proposedNewTime"] = copy.deepcopy(proposal)
+        break
+    self._write()
+    return {
+        "status": "proposed",
+        "eventId": event_id,
+        "event": copy.deepcopy(event),
+        "proposal": proposal,
+    }
 
   def _user(self, user_id_or_email: str) -> dict[str, Any]:
     wanted = user_id_or_email.casefold()
@@ -946,6 +1106,10 @@ class MockTenant:
           record["eventError"] = "No linked mock calendar event"
         records.append(record)
       return records
+    if args[:4] == ["teams", "meeting", "propose", "suggest"]:
+      return self._meeting_time_suggestions(args)
+    if args[:4] == ["teams", "meeting", "propose", "send"]:
+      return self._propose_meeting_time(args)
     if args[:3] == ["teams", "meeting", "context"]:
       chat_id = str(option(args, "--chatId"))
       chat = self._chat(chat_id)

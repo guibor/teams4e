@@ -31,6 +31,11 @@
 (defvar teams4e-download-directory)
 (defvar teams4e-draft-directory)
 (defvar teams4e-mock-mode)
+(defvar teams4e-meeting-proposal-activity-domain)
+(defvar teams4e-meeting-proposal-default-comment)
+(defvar teams4e-meeting-proposal-max-candidates)
+(defvar teams4e-meeting-proposal-minimum-confidence)
+(defvar teams4e-meeting-proposal-search-days)
 (defvar teams4e-notifications)
 (defvar teams4e-offline-mode)
 (defvar teams4e-preview-delay)
@@ -2119,6 +2124,321 @@ AFTER-EXPORT with its saved path when that callback is non-nil."
        (teams4e--report-error args status detail)
        (message "Teams transcript unavailable; see *M365 Errors*")))))
 
+(defconst teams4e--proposal-manual-choice "Enter a time manually")
+(defconst teams4e--proposal-range-choice "Search a different date range")
+(defconst teams4e--proposal-unrestricted-choice
+  "Include evenings and weekends")
+
+(defun teams4e--proposal-event-id (chat)
+  "Return the linked calendar event ID available for meeting CHAT."
+  (or (teams4e--meeting-event-id chat)
+      (teams4e--dig (teams4e--get chat 'meetingContext)
+                     'onlineMeetingInfo 'calendarEventId)
+      (teams4e--get (teams4e--meeting-event chat) 'id)))
+
+(defun teams4e--proposal-day-start (time)
+  "Return local midnight on the calendar day containing TIME."
+  (pcase-let ((`(,_second ,_minute ,_hour ,day ,month ,year . ,_)
+               (decode-time time)))
+    (encode-time 0 0 0 day month year)))
+
+(defun teams4e--proposal-default-window (chat)
+  "Return the default availability search window for meeting CHAT."
+  (let* ((now (current-time))
+         (meeting-start (or (teams4e--meeting-start-time chat) now))
+         (day-start (teams4e--proposal-day-start meeting-start))
+         (earliest (teams4e--proposal-day-start
+                    (time-subtract day-start (days-to-time 1))))
+         (start (if (time-less-p now earliest) earliest now))
+         (end (time-add day-start
+                        (days-to-time
+                         (max 1 teams4e-meeting-proposal-search-days)))))
+    (when (not (time-less-p start end))
+      (setq end (time-add start
+                          (days-to-time
+                           (max 1 teams4e-meeting-proposal-search-days)))))
+    (list start end)))
+
+(defun teams4e--proposal-read-window ()
+  "Read and return a custom availability search window."
+  (require 'org)
+  (let* ((start (org-read-date nil t nil "Search alternatives from: "))
+         (end (org-read-date
+               nil t nil "Search alternatives until (date/time): "
+               (time-add start
+                         (days-to-time
+                          (max 1 teams4e-meeting-proposal-search-days))))))
+    (unless (time-less-p start end)
+      (user-error "The search end must be after its start"))
+    (list start end)))
+
+(defun teams4e--proposal-utc-string (time)
+  "Format Emacs TIME as an ISO UTC string for the Teams backend."
+  (format-time-string "%Y-%m-%dT%H:%M:%SZ" time t))
+
+(defun teams4e--proposal-slot (start end)
+  "Build one Graph-style time slot from Emacs START and END times."
+  `((start . ((dateTime . ,(format-time-string
+                             "%Y-%m-%dT%H:%M:%S" start t))
+              (timeZone . "UTC")))
+    (end . ((dateTime . ,(format-time-string
+                           "%Y-%m-%dT%H:%M:%S" end t))
+            (timeZone . "UTC")))))
+
+(defun teams4e--proposal-duration-seconds (chat)
+  "Return meeting CHAT's duration, falling back to thirty minutes."
+  (let ((start (teams4e--meeting-start-time chat))
+        (end (teams4e--meeting-end-time chat)))
+    (if (and start end (time-less-p start end))
+        (float-time (time-subtract end start))
+      (* 30 60))))
+
+(defun teams4e--proposal-manual-slot (chat)
+  "Read a manual start and preserve the duration of meeting CHAT."
+  (require 'org)
+  (let* ((duration (round (teams4e--proposal-duration-seconds chat)))
+         (minutes (/ duration 60.0))
+         (duration-label
+          (if (zerop (% duration 60))
+              (format "%d min" (/ duration 60))
+            (format "%.1f min" minutes)))
+         (start (org-read-date
+                 nil t nil
+                 (format "New meeting start (duration stays %s): "
+                         duration-label)))
+         (end (time-add start (seconds-to-time duration))))
+    (unless (time-less-p (current-time) start)
+      (user-error "The proposed meeting time must be in the future"))
+    (teams4e--proposal-slot start end)))
+
+(defun teams4e--proposal-contact-name (event email)
+  "Return EVENT contact name matching EMAIL, or EMAIL itself."
+  (let ((wanted (and (stringp email) (downcase email)))
+        (contacts
+         (append (and (teams4e--get event 'organizer)
+                      (list (teams4e--get event 'organizer)))
+                 (teams4e--get event 'attendees))))
+    (or
+     (seq-some
+      (lambda (contact)
+        (let ((address (teams4e--dig contact 'emailAddress 'address)))
+          (when (and wanted (stringp address)
+                     (string-equal wanted (downcase address)))
+            (or (teams4e--dig contact 'emailAddress 'name) address))))
+      contacts)
+     email
+     "attendee")))
+
+(defun teams4e--proposal-unavailable-label (suggestion event)
+  "Return a concise unavailable-attendee label for SUGGESTION and EVENT."
+  (let (unavailable)
+    (let ((availability (teams4e--get suggestion 'organizerAvailability)))
+      (unless (or (null availability) (equal availability "free"))
+        (push (format "you %s" availability) unavailable)))
+    (dolist (entry (teams4e--get suggestion 'attendeeAvailability))
+      (let ((availability (teams4e--get entry 'availability)))
+        (unless (or (null availability) (equal availability "free"))
+          (let* ((email (teams4e--dig entry 'attendee 'emailAddress 'address))
+                 (name (teams4e--proposal-contact-name event email)))
+            (push (format "%s %s" name availability) unavailable)))))
+    (setq unavailable (nreverse unavailable))
+    (if unavailable
+        (let* ((shown (seq-take unavailable 3))
+               (remaining (- (length unavailable) (length shown))))
+          (concat (string-join shown ", ")
+                  (if (> remaining 0) (format " +%d" remaining) "")))
+      "all shown free")))
+
+(defun teams4e--proposal-suggestion-label (suggestion event index)
+  "Return completion label for SUGGESTION on EVENT at INDEX."
+  (let* ((slot (teams4e--get suggestion 'meetingTimeSlot))
+         (time-label (or (teams4e--meeting-slot-time-label slot)
+                         "Unknown time"))
+         (confidence (or (teams4e--get suggestion 'confidence) 0)))
+    (format "%d. %s | %s%% confidence | %s"
+            index time-label confidence
+            (teams4e--proposal-unavailable-label suggestion event))))
+
+(defun teams4e--proposal-refresh-displays (chat)
+  "Refresh headers and the singleton reader after changing meeting CHAT."
+  (teams4e--refresh-visible-recent)
+  (when-let ((reader (get-buffer teams4e--read-buffer-name)))
+    (with-current-buffer reader
+      (when (and (derived-mode-p 'teams4e-chat-mode)
+                 teams4e--chat
+                 (equal (teams4e--chat-id chat)
+                        (teams4e--chat-id teams4e--chat)))
+        (setq teams4e--meeting-context
+              (teams4e--get chat 'meetingContext))
+        (teams4e--render-chat)))))
+
+(defun teams4e--proposal-send (chat event-id slot)
+  "Send SLOT as a proposed new time for CHAT's linked EVENT-ID."
+  (let* ((old-label (or (teams4e--meeting-time-label chat) "current time"))
+         (new-label (or (teams4e--meeting-slot-time-label slot) "new time"))
+         (organizer
+          (or (teams4e--dig (teams4e--meeting-event chat)
+                             'organizer 'emailAddress 'name)
+              "organizer"))
+         (comment
+          (read-string
+           (format "Note to %s for %s (%s -> %s): "
+                   organizer (teams4e--chat-label chat)
+                   old-label new-label)
+           teams4e-meeting-proposal-default-comment))
+         (start (teams4e--event-date-time slot 'start))
+         (end (teams4e--event-date-time slot 'end))
+         (args (list "teams" "meeting" "propose" "send"
+                     "--eventId" event-id
+                     "--start" start
+                     "--end" end
+                     "--comment" comment)))
+    (message "Sending new-time proposal for %s..." (teams4e--chat-label chat))
+    (teams4e--run-json
+     args
+     (lambda (payload)
+       (let ((event (teams4e--get payload 'event))
+             (proposal (teams4e--get payload 'proposal)))
+         (teams4e--apply-meeting-context
+          chat `((event . ,event) (proposal . ,proposal)))
+         (teams4e--proposal-refresh-displays chat)
+         (message "Proposed %s for %s"
+                  (or (teams4e--meeting-slot-time-label proposal) new-label)
+                  (teams4e--chat-label chat))))
+     (lambda (status detail)
+       (teams4e--report-error args status detail)
+       (message "New-time proposal was not sent: %s"
+                (truncate-string-to-width
+                 (string-trim
+                  (or (teams4e--redacted-detail args detail)
+                      "unknown backend error"))
+                 140 nil nil t))))))
+
+(defun teams4e--proposal-request-suggestions
+    (chat event-id window activity-domain)
+  "Find alternate times for CHAT and EVENT-ID inside WINDOW and ACTIVITY-DOMAIN."
+  (let* ((origin (current-buffer))
+         (start (car window))
+         (end (cadr window))
+         (args
+          (list "teams" "meeting" "propose" "suggest"
+                "--eventId" event-id
+                "--searchStart" (teams4e--proposal-utc-string start)
+                "--searchEnd" (teams4e--proposal-utc-string end)
+                "--activityDomain" (symbol-name activity-domain)
+                "--maxCandidates"
+                (number-to-string
+                 (max 1 teams4e-meeting-proposal-max-candidates))
+                "--minimumConfidence"
+                (number-to-string
+                 (max 0 teams4e-meeting-proposal-minimum-confidence)))))
+    (message "Finding available times for %s..." (teams4e--chat-label chat))
+    (teams4e--run-json
+     args
+     (lambda (payload)
+       (when (buffer-live-p origin)
+         (with-current-buffer origin
+           (teams4e--proposal-choose
+            chat event-id payload window activity-domain))))
+     (lambda (status detail)
+       (teams4e--report-error args status detail)
+       (message "Cannot propose a new time for %s: %s"
+                (teams4e--chat-label chat)
+                (truncate-string-to-width
+                 (string-trim (or detail "unknown backend error"))
+                 120 nil nil t))))))
+
+(defun teams4e--proposal-choose
+    (chat event-id payload window activity-domain)
+  "Choose one proposal from PAYLOAD for CHAT and EVENT-ID.
+
+WINDOW and ACTIVITY-DOMAIN describe the request and support broadening it."
+  (let* ((event (teams4e--get payload 'event))
+         (suggestions (teams4e--get payload 'suggestions))
+         (pairs
+          (cl-loop for suggestion in suggestions
+                   for index from 1
+                   collect
+                   (cons (teams4e--proposal-suggestion-label
+                          suggestion event index)
+                         suggestion)))
+         (suggestion-error (teams4e--get payload 'suggestionError))
+         (special
+          (if suggestion-error
+              (list teams4e--proposal-manual-choice
+                    teams4e--proposal-range-choice)
+            (append
+             (unless (eq activity-domain 'unrestricted)
+               (list teams4e--proposal-unrestricted-choice))
+             (list teams4e--proposal-range-choice
+                   teams4e--proposal-manual-choice))))
+         (reason
+          (or suggestion-error
+              (teams4e--get payload 'emptySuggestionsReason)))
+         (prompt
+          (if pairs
+              (format "Propose new time for %s: "
+                      (teams4e--chat-label chat))
+            (format "No ranked alternatives for %s%s: "
+                    (teams4e--chat-label chat)
+                    (if (and (stringp reason) (not (string-empty-p reason)))
+                        (format " (%s)"
+                                (truncate-string-to-width reason 70 nil nil t))
+                      ""))))
+         (choice (completing-read
+                  prompt (append (mapcar #'car pairs) special) nil t)))
+    (when event
+      (teams4e--apply-meeting-context chat `((event . ,event))))
+    (cond
+     ((equal choice teams4e--proposal-manual-choice)
+      (teams4e--proposal-send
+       chat event-id (teams4e--proposal-manual-slot chat)))
+     ((equal choice teams4e--proposal-range-choice)
+      (teams4e--proposal-request-suggestions
+       chat event-id (teams4e--proposal-read-window) activity-domain))
+     ((equal choice teams4e--proposal-unrestricted-choice)
+      (teams4e--proposal-request-suggestions
+       chat event-id window 'unrestricted))
+     (t
+      (let ((suggestion (cdr (assoc choice pairs))))
+        (unless suggestion (user-error "No meeting time selected"))
+        (teams4e--proposal-send
+         chat event-id (teams4e--get suggestion 'meetingTimeSlot)))))))
+
+(defun teams4e--proposal-start (chat)
+  "Start the new-time proposal flow for meeting CHAT."
+  (if-let ((event-id (teams4e--proposal-event-id chat)))
+      (teams4e--proposal-request-suggestions
+       chat event-id (teams4e--proposal-default-window chat)
+       teams4e-meeting-proposal-activity-domain)
+    (message "Resolving linked calendar event for %s..."
+             (teams4e--chat-label chat))
+    (teams4e--fetch-meeting-context
+     chat
+     (lambda (_context)
+       (if-let ((event-id (teams4e--proposal-event-id chat)))
+           (teams4e--proposal-request-suggestions
+            chat event-id (teams4e--proposal-default-window chat)
+            teams4e-meeting-proposal-activity-domain)
+         (message "This meeting chat has no linked calendar event")))
+     (lambda (status detail)
+       (teams4e--report-error
+        (teams4e--meeting-context-args chat) status detail)))))
+
+(defun teams4e-meeting-propose-new-time ()
+  "Propose an availability-ranked alternate time for the meeting at point.
+
+The selected slot preserves the current meeting duration.  Choosing a slot and
+submitting the editable organizer note sends the proposal without another
+confirmation prompt."
+  (interactive)
+  (teams4e--require-online)
+  (let ((chat (or (teams4e--chat-at-point)
+                  (user-error "No Teams chat here"))))
+    (unless (teams4e--meeting-chat-p chat)
+      (user-error "The current Teams conversation is not a meeting chat"))
+    (teams4e--proposal-start chat)))
+
 (defun teams4e-capture-current-summary ()
   "Capture title, source, date, and last-message context without a transcript.
 
@@ -3073,6 +3393,7 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
     (define-key map (kbd "A") #'teams4e-capture-current-thread)
     (define-key map (kbd "j") #'teams4e-jump-to-capture)
     (define-key map (kbd "t") #'teams4e-meeting-transcript)
+    (define-key map (kbd "p") #'teams4e-meeting-propose-new-time)
     (define-key map (kbd "c") #'teams4e-action-compose)
     (define-key map (kbd "R") #'teams4e-action-reply)
     (define-key map (kbd "f") #'teams4e-message-forward)
@@ -3099,6 +3420,8 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
 (define-key teams4e-action-map (kbd "h") nil)
 (define-key teams4e-action-map (kbd "R")
             #'teams4e-action-reply)
+(define-key teams4e-action-map (kbd "p")
+            #'teams4e-meeting-propose-new-time)
 
 (defun teams4e-headers-action ()
   "Run a row action from the Teams headers buffer.
@@ -3134,6 +3457,8 @@ shared by the terminal Teams client."
              teams4e-jump-to-capture)
             ("Open latest meeting transcript" .
              teams4e-meeting-transcript)
+            ("Propose a new meeting time" .
+             teams4e-meeting-propose-new-time)
             ("Capture complete thread to Org" .
              teams4e-capture-current-thread)
             ("Open in Teams web" . teams4e-open-current-in-browser)
@@ -3340,6 +3665,8 @@ shared by the terminal Teams client."
              teams4e-jump-to-capture)
             ("Open latest meeting transcript" .
              teams4e-meeting-transcript)
+            ("Propose a new meeting time" .
+             teams4e-meeting-propose-new-time)
             ("Copy complete thread as Markdown" .
              teams4e-copy-current-thread-markdown)
             ("Analyze complete thread with agent" .
@@ -3387,6 +3714,7 @@ shared by the terminal Teams client."
           ("d" "drafts" teams4e-compose-drafts)
           ("n" "new chat" teams4e-create-chat)
           ("p" "person" teams4e-user)
+          ("P" "propose meeting time" teams4e-meeting-propose-new-time)
           ("a" "capture action" teams4e-capture-current-summary)
           ("A" "capture full thread" teams4e-capture-current-thread)
           ("y" "copy Markdown" teams4e-copy-current-thread-markdown)
@@ -3445,6 +3773,7 @@ shared by the terminal Teams client."
     "k" "clear triage"
     "j" "jump to capture"
     "t" "meeting transcript"
+    "p" "propose meeting time"
     "e" "export Markdown"
     "y" "copy Markdown"
     "g" "analyze with agent"
@@ -3467,6 +3796,7 @@ shared by the terminal Teams client."
 (defalias 'teams-server-search #'teams4e-server-search)
 (defalias 'teams-drafts #'teams4e-compose-drafts)
 (defalias 'teams-meeting-transcript #'teams4e-meeting-transcript)
+(defalias 'teams-propose-new-time #'teams4e-meeting-propose-new-time)
 (defalias 'teams-handle #'teams4e-toggle-handled)
 (defalias 'teams-snooze #'teams4e-snooze)
 (defalias 'teams-clear-triage #'teams4e-clear-triage)

@@ -292,11 +292,11 @@
                (expand-file-name teams4e-mock-state-file))))
 
 (defun teams4e--redacted-args (args)
-  "Return ARGS with message bodies hidden for diagnostics."
+  "Return ARGS with private outgoing content hidden for diagnostics."
   (let (result redact-next)
     (dolist (arg args (nreverse result))
-      (push (if redact-next "<message redacted>" arg) result)
-      (setq redact-next (equal arg "--message")))))
+      (push (if redact-next "<content redacted>" arg) result)
+      (setq redact-next (member arg '("--message" "--comment"))))))
 
 (defun teams4e--command-string (args)
   "Return a shell-quoted diagnostic command for ARGS."
@@ -305,13 +305,15 @@
              " "))
 
 (defun teams4e--redacted-detail (args detail)
-  "Remove the exact outgoing message in ARGS from diagnostic DETAIL."
-  (let ((message-args (member "--message" args)))
-    (if (and (stringp detail) (stringp (cadr message-args))
-             (not (string-empty-p (cadr message-args))))
-        (replace-regexp-in-string
-         (regexp-quote (cadr message-args)) "<message redacted>" detail t t)
-      detail)))
+  "Remove exact outgoing message or comment values from diagnostic DETAIL."
+  (let ((redacted detail))
+    (dolist (option '("--message" "--comment") redacted)
+      (let ((value (cadr (member option args))))
+        (when (and (stringp redacted) (stringp value)
+                   (not (string-empty-p value)))
+          (setq redacted
+                (replace-regexp-in-string
+                 (regexp-quote value) "<content redacted>" redacted t t)))))))
 
 (defun teams4e--report-error (args status detail)
   "Record a failed Teams backend invocation of ARGS with STATUS and DETAIL."
@@ -412,7 +414,9 @@ when non-nil, receives the exit status and combined diagnostic text."
                    '("teams" "cache" "clear") args)))
         (teams4e--args-prefix-p '("teams" "sync") args)
         (teams4e--args-prefix-p '("teams" "search") args)
-        (teams4e--args-prefix-p '("teams" "meeting") args)
+        (and (teams4e--args-prefix-p '("teams" "meeting") args)
+             (not (teams4e--args-prefix-p
+                   '("teams" "meeting" "propose" "send") args)))
         (teams4e--args-prefix-p '("teams" "team" "list") args)
         (teams4e--args-prefix-p '("teams" "channel" "list") args)
         (teams4e--args-prefix-p '("teams" "channel" "message" "list") args)
@@ -2893,6 +2897,10 @@ When DATE-ONLY is non-nil, omit the time of day."
                              'responseStatus 'response)))
     (intern (downcase response))))
 
+(defun teams4e--meeting-proposal (chat)
+  "Return the new-time proposal attached to meeting CHAT in this session."
+  (teams4e--get (teams4e--get chat 'meetingContext) 'proposal))
+
 (defun teams4e--meeting-status-label (chat)
   "Return a concise calendar status label for meeting CHAT."
   (let* ((event (teams4e--meeting-event chat))
@@ -2902,6 +2910,7 @@ When DATE-ONLY is non-nil, omit the time of day."
     (cond
      ((teams4e--get event 'isCancelled) "Cancelled")
      ((eq (teams4e--meeting-response chat) 'declined) "Declined")
+     ((teams4e--meeting-proposal chat) "New time proposed")
      ((and start end
            (not (time-less-p now start))
            (time-less-p now end))
@@ -2991,6 +3000,26 @@ When DATE-ONLY is non-nil, omit the time of day."
                         (teams4e--format-meeting-time end-value)))))
      (t nil))))
 
+(defun teams4e--meeting-slot-time-label (slot)
+  "Return a readable local start/end label for Graph time SLOT."
+  (let* ((start-value (teams4e--event-date-time slot 'start))
+         (end-value (teams4e--event-date-time slot 'end))
+         (start-time (and start-value
+                          (ignore-errors (date-to-time start-value))))
+         (end-time (and end-value (ignore-errors (date-to-time end-value)))))
+    (cond
+     ((and start-time end-time
+           (equal (format-time-string "%Y-%m-%d" start-time)
+                  (format-time-string "%Y-%m-%d" end-time)))
+      (format "%s-%s"
+              (teams4e--format-meeting-time start-value)
+              (format-time-string "%H:%M" end-time)))
+     (start-value
+      (concat (teams4e--format-meeting-time start-value)
+              (when end-value
+                (concat " - " (teams4e--format-meeting-time end-value)))))
+     (t nil))))
+
 (defun teams4e--insert-meeting-banner ()
   "Insert time, place, status, participants, and join data for the meeting chat."
   (when (teams4e--meeting-chat-p teams4e--chat)
@@ -3007,6 +3036,10 @@ When DATE-ONLY is non-nil, omit the time of day."
             (teams4e--meeting-location-label teams4e--chat))
            (status-label
             (teams4e--meeting-status-label teams4e--chat))
+           (proposal-label
+            (when-let ((proposal
+                        (teams4e--meeting-proposal teams4e--chat)))
+              (teams4e--meeting-slot-time-label proposal)))
            (join-url
             (or (teams4e--dig context 'event 'onlineMeeting 'joinUrl)
                 (teams4e--dig context 'onlineMeetingInfo 'joinWebUrl)
@@ -3014,6 +3047,8 @@ When DATE-ONLY is non-nil, omit the time of day."
                                'onlineMeetingInfo 'joinWebUrl))))
       (insert (propertize "Meeting details\n" 'face 'bold))
       (insert (format "When: %s\n" when-label))
+      (when proposal-label
+        (insert (format "Proposed: %s\n" proposal-label)))
       (when where-label (insert (format "Where: %s\n" where-label)))
       (when status-label (insert (format "Status: %s\n" status-label)))
       (insert (format "Participants: %s\n"

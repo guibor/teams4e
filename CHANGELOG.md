@@ -13,6 +13,9 @@
 - Inline images, attachments, Org capture, complete Markdown export, and
   optional `agent-shell` analysis.
 - Linked calendar event metadata and an upcoming-meetings view.
+- Meeting-only `a p` flow with availability-ranked alternatives, custom and
+  unrestricted search windows, manual fallback, and real Outlook new-time
+  proposals without a duplicate calendar model.
 - Message views now order by the actual last-message timestamp and omit the
   meeting interval column; meeting-only views add that column, order by event
   start, and show complete start/end intervals.

@@ -118,7 +118,10 @@ Then declare the package normally:
 
 Tenant policy and the token's delegated permissions determine which Graph
 actions are available. Calendar enrichment is optional; meeting chats remain
-readable when calendar access is unavailable.
+readable when calendar access is unavailable. Ranked alternate-time suggestions
+use Outlook availability, while sending a proposal requires delegated
+`Calendars.ReadWrite`. If availability lookup is unavailable, the proposal
+flow still offers a manual time while preserving the meeting duration.
 
 ## Authentication
 
@@ -198,6 +201,7 @@ thread.
 | `a a` / `a A` | Capture a summary / complete thread to Org |
 | `a e` / `a y` | Export / copy complete Markdown |
 | `a g` | Export and analyze with `agent-shell` |
+| `a p` | Propose an availability-ranked new meeting time |
 | `G` / `L` | Load complete history / load more |
 | `M-j` / `M-k` | Next/previous message inside the transcript |
 | `q` | Close the reader or restore the previous window layout |
@@ -229,9 +233,31 @@ resolves that event with bounded concurrency and merges it into the existing
 chat alist. The meeting-only headers schedule column and reader banner both
 render from that one attachment.
 
+### Propose a new time
+
+From `b m`, `b M`, or an open meeting reader, press `a p`. `teams4e` preserves
+the meeting duration and asks Outlook for ranked alternatives, displayed in
+local time with confidence and the people who are busy. The same chooser can
+expand beyond work hours, search a different date range, or enter an exact
+start manually. Selecting a time opens an editable note to the organizer;
+submitting that note sends the proposal without a second confirmation.
+
+The action is also available as `M-x teams-propose-new-time`. It sends an
+Outlook tentative response with the proposed interval. It does not locally move
+the organizer's event: until the organizer accepts and updates the meeting, the
+original interval remains the event's sort key and the reader shows the pending
+proposal separately. Organizer-owned, cancelled, and proposal-disabled events
+fail explicitly.
+
 ```elisp
 (setq teams4e-meeting-enrichment-limit 32
-      teams4e-meeting-enrichment-concurrency 6)
+      teams4e-meeting-enrichment-concurrency 6
+      teams4e-meeting-proposal-search-days 7
+      teams4e-meeting-proposal-max-candidates 8
+      teams4e-meeting-proposal-minimum-confidence 50
+      teams4e-meeting-proposal-activity-domain 'work
+      teams4e-meeting-proposal-default-comment
+      "Could we move this meeting to the proposed time?")
 ```
 
 ## Capture, Export, and Analysis

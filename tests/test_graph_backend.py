@@ -241,7 +241,8 @@ class GraphBackendTests(unittest.TestCase):
           urllib.parse.urlparse(path).query
       )["$select"][0].split(",")
       self.assertTrue({
-          "location", "locations", "isCancelled", "responseStatus", "showAs"
+          "location", "locations", "isCancelled", "responseStatus", "showAs",
+          "allowNewTimeProposals", "isOrganizer", "responseRequested",
       }.issubset(selected))
       self.assertEqual(
           {"Prefer": 'outlook.timezone="UTC"'}, kwargs["request_headers"]
@@ -286,6 +287,141 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual(["chat-1", "chat-2"], [item["chatId"] for item in result])
     self.assertEqual("event-1", result[0]["event"]["id"])
     self.assertIn("denied", result[1]["eventError"])
+
+  def test_meeting_suggestions_preserve_duration_and_rank_attendees(self) -> None:
+    event = {
+        "id": "event:id",
+        "start": {"dateTime": "2026-08-10T07:30:00", "timeZone": "UTC"},
+        "end": {"dateTime": "2026-08-10T08:15:00", "timeZone": "UTC"},
+        "allowNewTimeProposals": True,
+        "isOrganizer": False,
+        "isCancelled": False,
+        "organizer": {
+            "emailAddress": {"name": "Grace", "address": "grace@example.test"}
+        },
+        "attendees": [
+            {
+                "type": "required",
+                "emailAddress": {
+                    "name": "Current User",
+                    "address": "user@example.test",
+                },
+            },
+            {
+                "type": "optional",
+                "emailAddress": {"name": "Ada", "address": "ada@example.test"},
+            },
+            {
+                "type": "resource",
+                "emailAddress": {"name": "Room 4", "address": "room4@example.test"},
+            },
+        ],
+    }
+    graph_result = {
+        "emptySuggestionsReason": "",
+        "meetingTimeSuggestions": [{
+            "confidence": 100,
+            "meetingTimeSlot": {
+                "start": {"dateTime": "2026-08-11T07:30:00", "timeZone": "UTC"},
+                "end": {"dateTime": "2026-08-11T08:15:00", "timeZone": "UTC"},
+            },
+        }],
+    }
+    with (
+        mock.patch.object(backend, "get_calendar_event", return_value=event),
+        mock.patch.object(
+            backend,
+            "graph_json",
+            side_effect=[
+                {"mail": "user@example.test", "userPrincipalName": "user@example.test"},
+                graph_result,
+            ],
+        ) as request,
+    ):
+      result = backend.get_meeting_time_suggestions(
+          "event:id",
+          "2026-08-09T00:00:00Z",
+          "2026-08-17T00:00:00Z",
+          "token",
+          max_candidates=6,
+          minimum_confidence=60,
+          activity_domain="work",
+      )
+
+    self.assertEqual(100, result["suggestions"][0]["confidence"])
+    self.assertEqual("/me/findMeetingTimes", request.call_args_list[1].args[0])
+    payload = request.call_args_list[1].kwargs["payload"]
+    self.assertEqual("PT45M", payload["meetingDuration"])
+    self.assertEqual(6, payload["maxCandidates"])
+    self.assertEqual(60, payload["minimumAttendeePercentage"])
+    self.assertEqual("work", payload["timeConstraint"]["activityDomain"])
+    attendees = {
+        item["emailAddress"]["address"]: item["type"]
+        for item in payload["attendees"]
+    }
+    self.assertEqual({
+        "grace@example.test": "required",
+        "ada@example.test": "optional",
+        "room4@example.test": "resource",
+    }, attendees)
+    self.assertNotIn("user@example.test", attendees)
+
+  def test_meeting_suggestions_keep_manual_fallback_on_permission_error(self) -> None:
+    event = {
+        "id": "event-id",
+        "start": {"dateTime": "2026-08-10T07:30:00", "timeZone": "UTC"},
+        "end": {"dateTime": "2026-08-10T08:00:00", "timeZone": "UTC"},
+        "allowNewTimeProposals": True,
+        "isOrganizer": False,
+    }
+    with (
+        mock.patch.object(backend, "get_calendar_event", return_value=event),
+        mock.patch.object(
+            backend,
+            "graph_json",
+            side_effect=[
+                {"mail": "user@example.test"},
+                backend.BackendError("Microsoft Graph HTTP 403: shared calendar denied"),
+            ],
+        ),
+    ):
+      result = backend.get_meeting_time_suggestions(
+          "event-id", "2026-08-09T00:00:00Z", "2026-08-17T00:00:00Z", "token"
+      )
+    self.assertEqual([], result["suggestions"])
+    self.assertIn("403", result["suggestionError"])
+
+  def test_propose_new_meeting_time_posts_tentative_response(self) -> None:
+    event = {
+        "id": "event:id",
+        "allowNewTimeProposals": True,
+        "isOrganizer": False,
+        "isCancelled": False,
+        "responseStatus": {"response": "accepted"},
+    }
+    with (
+        mock.patch.object(backend, "get_calendar_event", return_value=event),
+        mock.patch.object(backend, "graph_json", return_value={}) as request,
+    ):
+      result = backend.propose_new_meeting_time(
+          "event:id",
+          "2026-08-11T07:30:00Z",
+          "2026-08-11T08:15:00Z",
+          "Could we move this?",
+          "token",
+      )
+    self.assertEqual(
+        "/me/events/event%3Aid/tentativelyAccept", request.call_args.args[0]
+    )
+    self.assertEqual("POST", request.call_args.kwargs["method"])
+    payload = request.call_args.kwargs["payload"]
+    self.assertTrue(payload["sendResponse"])
+    self.assertEqual("Could we move this?", payload["comment"])
+    self.assertEqual(
+        "2026-08-11T07:30:00", payload["proposedNewTime"]["start"]["dateTime"]
+    )
+    self.assertEqual("proposed", result["status"])
+    self.assertEqual("tentativelyAccepted", result["event"]["responseStatus"]["response"])
 
   def test_meeting_context_keeps_members_when_calendar_access_fails(self) -> None:
     with (
@@ -782,6 +918,41 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual("text/vtt", transcript["contentType"])
     self.assertIn("Graph remains authoritative", transcript["content"])
     self.assertEqual("Video room 4", events[0]["event"]["location"]["displayName"])
+
+  def test_mock_meeting_proposal_updates_the_existing_event(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      state_path = Path(directory) / "tenant.json"
+      tenant = MockTenant(state_path)
+      suggestions = tenant.execute([
+          "teams", "meeting", "propose", "suggest",
+          "--eventId", "mock-event-architecture-review",
+          "--searchStart", "2026-08-09T00:00:00Z",
+          "--searchEnd", "2026-08-14T00:00:00Z",
+          "--activityDomain", "work",
+      ])
+      slot = suggestions["suggestions"][0]["meetingTimeSlot"]
+      result = tenant.execute([
+          "teams", "meeting", "propose", "send",
+          "--eventId", "mock-event-architecture-review",
+          "--start", slot["start"]["dateTime"],
+          "--end", slot["end"]["dateTime"],
+          "--comment", "Mock proposal",
+      ])
+      context = tenant.execute([
+          "teams", "meeting", "context",
+          "--chatId", "mock-chat-future-meeting",
+      ])
+    self.assertEqual(100, suggestions["suggestions"][0]["confidence"])
+    self.assertEqual("proposed", result["status"])
+    self.assertEqual(
+        "tentativelyAccepted", context["event"]["responseStatus"]["response"]
+    )
+    current = next(
+        attendee
+        for attendee in context["event"]["attendees"]
+        if attendee["emailAddress"]["address"] == "user@example.test"
+    )
+    self.assertEqual(slot, current["proposedNewTime"])
 
   def test_mock_attachment_round_trip_uses_private_local_copy(self) -> None:
     with tempfile.TemporaryDirectory() as directory:
