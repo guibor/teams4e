@@ -223,6 +223,9 @@ Use `M-x teams4e-dispatch` or `a ?` for discoverable action menus.
 Bookmarks filter the same canonical chat objects; they do not create a second
 calendar inbox or synchronized copies.
 
+Built-in symbols such as `all` and `upcoming` take precedence over functions
+with the same Emacs symbol name. Custom function bookmarks remain supported.
+
 | Bookmark | View | Default order |
 | --- | --- | --- |
 | `b i` | Relevant inbox | Newest last message first |

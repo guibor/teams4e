@@ -299,6 +299,11 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
     ('upcoming (teams4e--meeting-upcoming-p chat))
     (_ t)))
 
+(defconst teams4e--built-in-view-symbols
+  '(inbox all attention muted unread favorites handled snoozed
+          direct group meeting upcoming)
+  "Symbols interpreted as built-in views before function lookup.")
+
 (defun teams4e--query-text-match-p (needle text)
   "Return non-nil when case-insensitive NEEDLE occurs in TEXT."
   (and (stringp text)
@@ -382,6 +387,9 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
 (defun teams4e--query-chat-p (chat query)
   "Return whether CHAT matches bookmark/filter QUERY."
   (cond
+   ((and (symbolp query)
+         (memq query teams4e--built-in-view-symbols))
+    (teams4e--built-in-view-chat-p chat query))
    ((functionp query) (funcall query chat))
    ((symbolp query) (teams4e--built-in-view-chat-p chat query))
    ((stringp query)

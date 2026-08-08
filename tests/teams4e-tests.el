@@ -1676,6 +1676,21 @@
     (should (teams4e--query-chat-p direct "favorite"))
     (should-not (teams4e--query-chat-p direct "-favorite"))))
 
+(ert-deftest teams4e-all-view-symbol-wins-over-compat-function ()
+  (let ((chat '((id . "chat-1") (chatType . "group"))))
+    (cl-letf (((symbol-function 'all)
+               (lambda (_predicate _list)
+                 (ert-fail "compat all function must not handle a view"))))
+      (should (teams4e--query-chat-p chat 'all)))))
+
+(ert-deftest teams4e-custom-symbol-function-remains-a-bookmark-predicate ()
+  (let ((chat '((id . "chat-1") (chatType . "group"))))
+    (cl-letf (((symbol-function 'teams4e-test-bookmark-predicate)
+               (lambda (candidate)
+                 (equal (teams4e--chat-id candidate) "chat-1"))))
+      (should
+       (teams4e--query-chat-p chat 'teams4e-test-bookmark-predicate)))))
+
 (ert-deftest teams4e-bookmark-shortcut-filters-the-headers-buffer ()
   (let ((teams4e-bookmarks
          '((:name "Unread" :query "unread" :key ?u)))

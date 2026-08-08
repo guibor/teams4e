@@ -79,6 +79,8 @@ workflows, proposal primitives, and optional agent analysis.
 Main entry points:
 
 - `teams4e-bookmark-jump`: apply a configured view/query.
+- `teams4e--query-chat-p`: resolve known built-in view symbols before callable
+  predicates, then evaluate custom functions or textual query clauses.
 - `teams4e-execute-marks`: apply deferred row actions serially.
 - `teams4e-bulk-action`: apply one operation to selected conversations.
 - `teams4e-sync`: refresh the local SQLite cache.

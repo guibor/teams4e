@@ -4,6 +4,9 @@
 
 - Repaired `b`/`B` after live Evil Collection reloads and made `b a` return to
   an unfiltered All Chats view by clearing the unread-only overlay.
+- Resolved built-in bookmark symbols before callable symbols, preventing
+  Emacs/compat's two-argument `all` function from intercepting `b a` while
+  retaining symbol-function predicates for custom bookmarks.
 - Based unread detection and local read-override expiry on the actual last
   message rather than `lastUpdatedDateTime`, so calendar, membership, and topic
   changes do not create false unread rows.
