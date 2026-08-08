@@ -343,6 +343,19 @@
     (should (= 2 (length chats-result)))
     (should (equal "chat-1" (teams4e--chat-id (car chats-result))))))
 
+(ert-deftest teams4e-resolver-recovers-after-live-package-upgrade ()
+  (let ((teams4e-backend-program
+         "/tmp/elpa/teams4e-20260101.1200/bin/teams4e-graph")
+        (teams4e--package-directory teams4e-test-layer-directory))
+    (should
+     (equal (expand-file-name "bin/teams4e-graph"
+                              teams4e-test-layer-directory)
+            (teams4e--executable)))))
+
+(ert-deftest teams4e-resolver-does-not-hide-invalid-custom-backend ()
+  (let ((teams4e-backend-program "/tmp/custom-teams/backend"))
+    (should-error (teams4e--executable) :type 'user-error)))
+
 (ert-deftest teams4e-send-preserves-multiline-message-as-one-argument ()
   (let* ((teams4e-backend-program teams4e-test-fake-backend)
          (log (make-temp-file "teams4e-send-"))

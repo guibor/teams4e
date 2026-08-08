@@ -349,6 +349,10 @@ Other useful options include:
 
 Run `M-x customize-group RET teams4e RET` for the complete set.
 
+After an in-place package upgrade, the running session recognizes a removed
+versioned `teams4e` backend path and uses the newly installed bundled backend.
+An unrelated invalid custom `teams4e-backend-program` remains an error.
+
 ## Architecture
 
 ```text

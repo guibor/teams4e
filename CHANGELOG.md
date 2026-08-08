@@ -11,6 +11,9 @@
   chat may appear in message or unread views.
 - Made logged-out OAuth and calendar-enrichment failures visible in headers and
   `*M365 Errors*` instead of leaving an unexplained empty meeting view.
+- Recovered automatically when a live Quelpa upgrade removes the versioned
+  package directory still referenced by `teams4e-backend-program`, without
+  masking unrelated invalid custom backend paths.
 
 ## 0.1.0 - 2026-08-08
 

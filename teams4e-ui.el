@@ -263,6 +263,15 @@
   "Face for inline Teams image labels."
   :group 'teams4e)
 
+(defun teams4e--stale-package-backend-p (path)
+  "Return non-nil when PATH names a removed versioned teams4e backend."
+  (and (stringp path)
+       (string-equal (file-name-nondirectory path) "teams4e-graph")
+       (string-match-p
+        "/teams4e-[^/]+/bin/teams4e-graph\\'"
+        (expand-file-name path))
+       (not (file-executable-p path))))
+
 (defun teams4e--executable ()
   "Resolve the configured passive Graph backend executable."
   (let* ((configured (and (boundp 'teams4e-backend-program)
@@ -270,10 +279,15 @@
          (explicit (and configured
                         (string-match-p "/" configured)
                         (expand-file-name configured)))
+         (bundled
+          (expand-file-name "bin/teams4e-graph"
+                            teams4e--package-directory))
          (candidates
           (append
            (and explicit (list explicit))
-           (and configured (list (executable-find configured))))))
+           (and configured (list (executable-find configured)))
+           (and (teams4e--stale-package-backend-p explicit)
+                (list bundled)))))
     (or (seq-find (lambda (path)
                     (and (stringp path) (file-executable-p path)))
                   candidates)

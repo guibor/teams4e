@@ -64,6 +64,8 @@ Main entry points:
 - `teams4e-open-chat`: render a chat in the shared reader.
 - `teams4e-send` and `teams4e-reply`: create native compose buffers.
 - `teams4e--run-json`: issue one backend request and dispatch parsed JSON.
+- `teams4e--executable`: honor the configured backend and recover only from a
+  removed versioned package path after a live package upgrade.
 - `teams4e--enrich-meetings`: attach linked event data to existing chat rows.
 - `teams4e--unread-p`: compare the real last-message timestamp with Graph's
   read marker; chat metadata timestamps are deliberately excluded.
