@@ -288,6 +288,52 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual("event-1", result[0]["event"]["id"])
     self.assertIn("denied", result[1]["eventError"])
 
+  def test_meeting_event_batch_resolves_event_id_missing_from_chat_list(
+      self,
+  ) -> None:
+    meetings = [
+        {"chatId": "chat-1"},
+        {"chatId": "chat-2", "eventId": "event-2"},
+    ]
+
+    with (
+        mock.patch.object(
+            backend,
+            "graph_json",
+            return_value={
+                "chatType": "meeting",
+                "onlineMeetingInfo": {"calendarEventId": "event-1"},
+            },
+        ) as chat_request,
+        mock.patch.object(
+            backend,
+            "get_calendar_event",
+            side_effect=lambda event_id, _token: {"id": event_id},
+        ) as event_request,
+    ):
+      result = backend.list_meeting_events_batch(
+          meetings, "token", meeting_concurrency=2
+      )
+
+    chat_request.assert_called_once_with("/chats/chat-1", "token")
+    self.assertEqual(2, event_request.call_count)
+    self.assertEqual(["chat-1", "chat-2"], [item["chatId"] for item in result])
+    self.assertEqual("event-1", result[0]["event"]["id"])
+    self.assertEqual(
+        "event-1", result[0]["onlineMeetingInfo"]["calendarEventId"]
+    )
+
+  def test_meeting_event_batch_reports_chat_without_calendar_event(self) -> None:
+    with mock.patch.object(
+        backend,
+        "graph_json",
+        return_value={"chatType": "meeting", "onlineMeetingInfo": {}},
+    ):
+      result = backend.list_meeting_events_batch(
+          [{"chatId": "chat-1"}], "token"
+      )
+    self.assertIn("no linked calendar event ID", result[0]["eventError"])
+
   def test_meeting_suggestions_preserve_duration_and_rank_attendees(self) -> None:
     event = {
         "id": "event:id",

@@ -278,7 +278,8 @@ Emacs starts that single batch asynchronously after rendering chat metadata."
 
 The enrichment attaches event metadata directly to the existing chat objects;
 it does not create a second inbox or calendar cache.  Set this to zero to keep
-meeting details reader-only."
+meeting details reader-only.  Explicit meeting views spend this bound on
+recent message-less meeting stubs first, then other meeting chats."
   :type 'integer
   :group 'teams4e)
 

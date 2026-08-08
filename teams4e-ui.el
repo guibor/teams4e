@@ -1145,6 +1145,11 @@ activity.  Message-oriented views therefore use only the preview timestamp."
   "Return non-nil when CHAT represents a Teams meeting conversation."
   (equal (teams4e--get chat 'chatType) "meeting"))
 
+(defun teams4e--message-less-meeting-p (chat)
+  "Return non-nil when meeting CHAT has no usable message timestamp."
+  (and (teams4e--meeting-chat-p chat)
+       (not (stringp (teams4e--last-message-date-time chat)))))
+
 (defun teams4e--meeting-context-args (chat)
   "Return backend arguments used to resolve metadata for meeting CHAT."
   (list "teams" "meeting" "context"
@@ -1766,7 +1771,9 @@ Return non-nil when a linked reader exists, even when it already matches."
 
 (defun teams4e--meeting-event-id (chat)
   "Return CHAT's linked calendar event identifier, when available."
-  (teams4e--dig chat 'onlineMeetingInfo 'calendarEventId))
+  (or (teams4e--dig chat 'onlineMeetingInfo 'calendarEventId)
+      (teams4e--dig chat 'meetingContext 'onlineMeetingInfo 'calendarEventId)
+      (teams4e--get (teams4e--meeting-event chat) 'id)))
 
 (defun teams4e--meeting-event-batch-args (chats)
   "Return one backend request for the linked calendar events of CHATS."
@@ -1776,36 +1783,72 @@ Return non-nil when a linked reader exists, even when it already matches."
    (json-encode
     (mapcar
      (lambda (chat)
-       `((chatId . ,(teams4e--chat-id chat))
-         (eventId . ,(teams4e--meeting-event-id chat))))
+       (let ((event-id (teams4e--meeting-event-id chat)))
+         (append `((chatId . ,(teams4e--chat-id chat)))
+                 (and event-id `((eventId . ,event-id))))))
      chats))
    "--meetingConcurrency"
    (number-to-string
     (max 1 teams4e-meeting-enrichment-concurrency))))
 
-(defun teams4e--enrich-meetings (chats)
+(defun teams4e--meeting-enrichment-newer-p (left right)
+  "Return non-nil when meeting LEFT should be enriched before RIGHT.
+
+Message-less rows are calendar-created stubs and are prioritized only for the
+explicit meeting-workspace fallback.  Within each class, recent chat metadata
+wins without affecting visible message or meeting ordering."
+  (let ((left-empty (teams4e--message-less-meeting-p left))
+        (right-empty (teams4e--message-less-meeting-p right))
+        (left-time
+         (teams4e--parse-message-time
+          (or (teams4e--get left 'lastUpdatedDateTime)
+              (teams4e--get left 'createdDateTime))))
+        (right-time
+         (teams4e--parse-message-time
+          (or (teams4e--get right 'lastUpdatedDateTime)
+              (teams4e--get right 'createdDateTime)))))
+    (cond
+     ((not (eq (not left-empty) (not right-empty))) left-empty)
+     ((and left-time right-time)
+      (if (time-equal-p left-time right-time)
+          (string< (teams4e--chat-id left) (teams4e--chat-id right))
+        (time-less-p right-time left-time)))
+     (left-time t)
+     (right-time nil)
+     (t (string< (teams4e--chat-id left) (teams4e--chat-id right))))))
+
+(defun teams4e--enrich-meetings (chats &optional resolve-missing)
   "Resolve linked calendar events for a bounded subset of meeting CHATS.
 
 Results are merged into the existing chat alists.  The inbox therefore has
-one conversation representation even while meeting metadata arrives later."
+one conversation representation even while meeting metadata arrives later.
+When RESOLVE-MISSING is non-nil, the backend may first resolve an event ID
+omitted by the chat-list response; explicit meeting views use this path."
   (let* ((limit (max 0 teams4e-meeting-enrichment-limit))
+         (candidates
+          (seq-filter
+           (lambda (chat)
+             (let* ((id (teams4e--chat-id chat))
+                    (context (teams4e--get chat 'meetingContext)))
+               (and id
+                    (teams4e--meeting-chat-p chat)
+                    (or resolve-missing
+                        (teams4e--meeting-event-id chat))
+                    (not (teams4e--get context 'event))
+                    (not (teams4e--get context 'eventError))
+                    (not (gethash id teams4e--meeting-inflight)))))
+           chats))
          (selected
           (seq-take
-           (seq-filter
-            (lambda (chat)
-              (let* ((id (teams4e--chat-id chat))
-                     (context (teams4e--get chat 'meetingContext)))
-                (and id
-                     (teams4e--meeting-chat-p chat)
-                     (teams4e--meeting-event-id chat)
-                     (not (teams4e--get context 'event))
-                     (not (teams4e--get context 'eventError))
-                     (not (gethash id teams4e--meeting-inflight)))))
-            chats)
+           (if resolve-missing
+               (sort candidates #'teams4e--meeting-enrichment-newer-p)
+             candidates)
            limit))
          (ids (mapcar #'teams4e--chat-id selected)))
     (when (and ids (not teams4e-offline-mode))
       (dolist (id ids) (puthash id t teams4e--meeting-inflight))
+      (when resolve-missing
+        (teams4e--refresh-visible-recent))
       (let ((args (teams4e--meeting-event-batch-args selected)))
         (teams4e--run-json
          args
@@ -1820,7 +1863,8 @@ one conversation representation even while meeting metadata arrives later."
          (lambda (_status _detail)
            ;; Calendar permission is optional; chat and member data stay useful.
            (dolist (id ids)
-             (remhash id teams4e--meeting-inflight))))))))
+             (remhash id teams4e--meeting-inflight))
+           (teams4e--refresh-visible-recent)))))))
 
 (defvar teams4e-recent-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1893,7 +1937,10 @@ one conversation representation even while meeting metadata arrives later."
                  (teams4e--render-recent)
                  (teams4e--schedule-preview)))
              (teams4e--enrich-members chats)
-             (teams4e--enrich-meetings chats))
+             (teams4e--enrich-meetings
+              chats
+              (and (fboundp 'teams4e--meeting-view-p)
+                   (teams4e--meeting-view-p))))
            (lambda (status detail)
              (when (buffer-live-p buffer)
                (with-current-buffer buffer
@@ -2974,10 +3021,13 @@ When DATE-ONLY is non-nil, omit the time of day."
          (end (teams4e--meeting-end-time chat))
          (boundary (or end start)))
     (and (teams4e--meeting-chat-p chat)
-         event boundary
-         (not (teams4e--get event 'isCancelled))
-         (not (eq (teams4e--meeting-response chat) 'declined))
-         (time-less-p (current-time) boundary))))
+         (or (and event boundary
+                  (not (teams4e--get event 'isCancelled))
+                  (not (eq (teams4e--meeting-response chat) 'declined))
+                  (time-less-p (current-time) boundary))
+             (and (not event)
+                  (gethash (teams4e--chat-id chat)
+                           teams4e--meeting-inflight))))))
 
 (defun teams4e--meeting-starts-before-p (left right)
   "Return non-nil when meeting chat LEFT starts before RIGHT."

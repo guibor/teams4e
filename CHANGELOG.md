@@ -26,6 +26,9 @@
 - Message views now order by the actual last-message timestamp and omit the
   meeting interval column; meeting-only views add that column, order by event
   start, and show complete start/end intervals.
+- Message views omit meeting chat stubs with no usable last message, while
+  meeting-only views retain them and resolve missing calendar event IDs through
+  a bounded chat-metadata fallback.
 - Lowercase `r` and `i` both queue mark-read; reply remains uppercase `R`.
 - Deferred Evil bindings use the runtime `evil-define-key*` API so compiled
   package startup does not call a macro as a function.

@@ -71,6 +71,9 @@ For a credential-free first run, enable the mock and open the inbox:
 (teams4e)
 ```
 
+`M-x teams4e` and `M-x teams` are exact aliases for the same
+`teams4e-inbox` entry point.
+
 Or interactively:
 
 ```text
@@ -230,15 +233,22 @@ calendar inbox or synchronized copies.
 
 Message-oriented views derive their date and sort key from
 `lastMessagePreview`; a calendar update does not make a quiet conversation
-jump to the top, and these views omit the meeting interval column. Meeting-only
-views instead add that column, sort by the linked event start, and show the
-complete start/end interval. Meetings without calendar permission fall back
-behind meetings with known start times.
+jump to the top, and these views omit the meeting interval column. A meeting
+chat with no usable last-message timestamp is omitted from message-oriented
+views instead of appearing as an undated unread row; it remains available in
+`b m`, `b M`, and explicit meeting queries. Meeting-only views add the schedule
+column, sort by the linked event start, and show the complete start/end
+interval. Meetings without calendar permission fall behind meetings with known
+start times.
 
 Graph chat data may expose `onlineMeetingInfo.calendarEventId`. The backend
 resolves that event with bounded concurrency and merges it into the existing
-chat alist. The meeting-only headers schedule column and reader banner both
-render from that one attachment.
+chat alist. If the list response omits the event ID, an explicit meeting view
+performs one bounded chat-metadata lookup before the event lookup; ordinary
+inbox loads do not pay that fallback cost. Recent message-less meeting rows are
+resolved before message-bearing meeting history within that bound. The
+meeting-only headers schedule column and reader banner both render from that
+one attachment.
 
 ### Meeting workspace
 

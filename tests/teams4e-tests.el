@@ -1176,6 +1176,40 @@
     (let ((teams4e--active-view 'favorites))
       (should (teams4e--view-chat-p (car chats))))))
 
+(ert-deftest teams4e-message-views-hide-message-less-meeting-stubs ()
+  (let* ((empty-meeting
+          '((id . "empty-meeting")
+            (chatType . "meeting")
+            (lastUpdatedDateTime . "2026-08-08T12:00:00Z")))
+         (active-meeting
+          '((id . "active-meeting")
+            (chatType . "meeting")
+            (lastUpdatedDateTime . "2026-08-08T12:00:00Z")
+            (lastMessagePreview
+             . ((id . "message-1")
+                (createdDateTime . "2026-08-08T11:00:00Z")))))
+         (empty-group
+          '((id . "empty-group")
+            (chatType . "group")
+            (lastUpdatedDateTime . "2026-08-08T12:00:00Z")))
+         (teams4e--read-overrides (make-hash-table :test #'equal))
+         (teams4e--favorites (make-hash-table :test #'equal))
+         (teams4e--muted (make-hash-table :test #'equal))
+         (teams4e--handled (make-hash-table :test #'equal))
+         (teams4e--snoozed (make-hash-table :test #'equal))
+         (teams4e--state-loaded t))
+    (let ((teams4e--active-view 'inbox)
+          (teams4e--active-query nil))
+      (should-not (teams4e--view-chat-p empty-meeting))
+      (should (teams4e--view-chat-p active-meeting))
+      (should (teams4e--view-chat-p empty-group)))
+    (let ((teams4e--active-view 'inbox)
+          (teams4e--active-query "unread"))
+      (should-not (teams4e--view-chat-p empty-meeting)))
+    (let ((teams4e--active-view 'inbox)
+          (teams4e--active-query "type:meeting"))
+      (should (teams4e--view-chat-p empty-meeting)))))
+
 (ert-deftest teams4e-upcoming-meetings-use-calendar-status-and-start-order ()
   (let* ((later
           '((id . "later") (chatType . "meeting")
@@ -2541,6 +2575,81 @@
                    (teams4e--dig meeting 'meetingContext 'event
                                   'start 'dateTime)))
     (should-not (gethash "meeting-1" teams4e--meeting-inflight))))
+
+(ert-deftest teams4e-meeting-view-resolves-list-rows-without-event-ids ()
+  (let* ((meeting '((id . "meeting-1") (chatType . "meeting")))
+         (teams4e--chats (list meeting))
+         (teams4e-meeting-enrichment-limit 12)
+         (teams4e-meeting-enrichment-concurrency 3)
+         (teams4e-offline-mode nil)
+         (teams4e--meeting-inflight (make-hash-table :test #'equal))
+         observed)
+    (cl-letf (((symbol-function 'teams4e--run-json)
+               (lambda (args callback &optional _error-callback)
+                 (setq observed args)
+                 (funcall callback
+                          '(((chatId . "meeting-1")
+                             (onlineMeetingInfo
+                              . ((calendarEventId . "event-1")))
+                             (event
+                              . ((id . "event-1")
+                                 (start
+                                  . ((dateTime . "2099-08-10T07:30:00")
+                                     (timeZone . "UTC"))))))))
+                 'fake-process))
+              ((symbol-function 'teams4e--refresh-visible-recent)
+               #'ignore))
+      (teams4e--enrich-meetings teams4e--chats t))
+    (let ((requests
+           (json-parse-string (nth 5 observed)
+                              :object-type 'alist :array-type 'list)))
+      (should (= 1 (length requests)))
+      (should (equal "meeting-1" (teams4e--get (car requests) 'chatId)))
+      (should-not (assq 'eventId (car requests))))
+    (should (equal "event-1" (teams4e--meeting-event-id meeting)))
+    (should (equal "2099-08-10T07:30:00"
+                   (teams4e--dig meeting 'meetingContext 'event
+                                  'start 'dateTime)))
+    (should-not (gethash "meeting-1" teams4e--meeting-inflight))))
+
+(ert-deftest teams4e-upcoming-view-shows-calendar-enrichment-in-flight ()
+  (let* ((meeting '((id . "meeting-1") (chatType . "meeting")))
+         (teams4e--meeting-inflight (make-hash-table :test #'equal)))
+    (should-not (teams4e--meeting-upcoming-p meeting))
+    (puthash "meeting-1" t teams4e--meeting-inflight)
+    (should (teams4e--meeting-upcoming-p meeting))))
+
+(ert-deftest teams4e-meeting-fallback-prioritizes-recent-message-less-rows ()
+  (let* ((message-meeting
+          '((id . "with-message")
+            (chatType . "meeting")
+            (lastUpdatedDateTime . "2026-08-08T12:00:00Z")
+            (lastMessagePreview
+             . ((createdDateTime . "2026-08-08T12:00:00Z")))))
+         (calendar-stub
+          '((id . "calendar-stub")
+            (chatType . "meeting")
+            (lastUpdatedDateTime . "2026-08-08T11:00:00Z")))
+         (teams4e--chats (list message-meeting calendar-stub))
+         (teams4e-meeting-enrichment-limit 1)
+         (teams4e-meeting-enrichment-concurrency 1)
+         (teams4e-offline-mode nil)
+         (teams4e--meeting-inflight (make-hash-table :test #'equal))
+         observed)
+    (cl-letf (((symbol-function 'teams4e--run-json)
+               (lambda (args _callback &optional _error-callback)
+                 (setq observed args)
+                 'fake-process))
+              ((symbol-function 'teams4e--refresh-visible-recent)
+               #'ignore))
+      (teams4e--enrich-meetings teams4e--chats t))
+    (let* ((requests
+            (json-parse-string (nth 5 observed)
+                               :object-type 'alist :array-type 'list))
+           (request (car requests)))
+      (should (= 1 (length requests)))
+      (should (equal "calendar-stub"
+                     (teams4e--get request 'chatId))))))
 
 (ert-deftest teams4e-known-account-skips-redundant-status-process ()
   (let ((teams4e-offline-mode nil)

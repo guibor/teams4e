@@ -119,6 +119,8 @@ Main functions:
 - `graph_request`: issue a Graph request and enforce Graph-host token scoping.
 - `get_token`: obtain a short-lived token from the configured provider.
 - `list_chats` and `list_chat_messages`: fetch bounded conversation data.
+- `meeting_event_record`: resolve one linked event, including a chat-metadata
+  fallback when the list response omitted its event ID.
 - `list_meeting_events_batch`: fetch linked events with bounded concurrency.
 - `get_meeting_time_suggestions`: ask Outlook to rank alternate intervals while
   preserving the linked event's duration.
@@ -145,15 +147,22 @@ can exercise destructive and asynchronous workflows without Graph access.
 
 Graph chat data may include `onlineMeetingInfo.calendarEventId`. The adapter
 fetches `/me/events/{id}` with a narrow field selection and returns the event
-beside the chat id. Emacs merges the result into `meetingContext.event`.
+beside the chat id. If the list row omits the ID, an explicit meeting view may
+first fetch `/chats/{id}` through the same bounded batch; normal inbox loads
+keep the event-ID-only fast path. Emacs merges the result into
+`meetingContext.event`. The explicit fallback prioritizes recent message-less
+meeting rows before message-bearing meeting history so its fixed bound is
+useful for calendar-created future meetings.
 
 The meeting-only schedule column, meeting predicates/sort, and reader banner
 all read this same attachment. Message-oriented views use the compact headers
 schema without a meeting column and sort descending by `lastMessagePreview`
 time, so calendar-only changes neither consume inbox width nor reorder the
-inbox. Meeting-only views switch the schema and row projection together, sort
-ascending by event start, and display the complete start/end interval. Rows
-with no known start follow rows with calendar data.
+inbox. They also suppress meeting chats with no usable last-message timestamp,
+which prevents calendar-created chat stubs from becoming undated unread rows.
+Meeting-only views retain those same canonical chats, switch the schema and row
+projection together, sort ascending by event start, and display the complete
+start/end interval. Rows with no known start follow rows with calendar data.
 
 A calendar permission failure is soft: the conversation and participants
 remain available and the event is omitted.

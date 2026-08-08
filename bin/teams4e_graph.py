@@ -1285,39 +1285,75 @@ def get_meeting_context(chat_id: str, access_token: str) -> dict[str, Any]:
   return result
 
 
+def meeting_event_record(
+    chat_id: str,
+    event_id: str | None,
+    access_token: str,
+) -> dict[str, Any]:
+  """Resolve one meeting event, looking up omitted chat metadata if needed."""
+  result: dict[str, Any] = {"chatId": chat_id}
+  if not event_id:
+    try:
+      chat = graph_json(f"/chats/{quoted_id(chat_id)}", access_token)
+    except BackendError as exception:
+      result["eventError"] = str(exception)
+      return result
+    if chat.get("chatType") != "meeting":
+      result["eventError"] = "The chat is not a meeting conversation"
+      return result
+    meeting_info = chat.get("onlineMeetingInfo")
+    meeting_info = meeting_info if isinstance(meeting_info, dict) else {}
+    result["onlineMeetingInfo"] = meeting_info
+    candidate = meeting_info.get("calendarEventId")
+    event_id = candidate if isinstance(candidate, str) and candidate else None
+  if not event_id:
+    result["eventError"] = "The meeting chat has no linked calendar event ID"
+    return result
+  try:
+    result["event"] = get_calendar_event(event_id, access_token)
+  except BackendError as exception:
+    result["eventError"] = str(exception)
+  return result
+
+
 def list_meeting_events_batch(
-    meetings: list[dict[str, str]],
+    meetings: list[dict[str, Any]],
     access_token: str,
     *,
     meeting_concurrency: int = 6,
 ) -> list[dict[str, Any]]:
   """Resolve linked events for MEETINGS using bounded concurrency.
 
-  Each input contains a chatId and calendar eventId already present in the
-  chat-list response.  Avoiding another chat/member lookup keeps inbox
-  enrichment materially cheaper than opening every meeting transcript.
+  Inputs may include an eventId already present in the chat-list response.  A
+  missing eventId costs one bounded chat metadata request, but never loads
+  members or messages.  This keeps ordinary inbox enrichment cheap while
+  allowing the explicit meeting workspace to resolve otherwise sparse rows.
   """
-  unique: dict[str, str] = {}
+  unique: dict[str, str | None] = {}
   for meeting in meetings:
     chat_id = meeting.get("chatId")
     event_id = meeting.get("eventId")
-    if isinstance(chat_id, str) and chat_id and isinstance(event_id, str) and event_id:
-      unique[chat_id] = event_id
+    if not isinstance(chat_id, str) or not chat_id:
+      continue
+    normalized_event_id = (
+        event_id if isinstance(event_id, str) and event_id else None
+    )
+    if chat_id not in unique or normalized_event_id:
+      unique[chat_id] = normalized_event_id
   if not unique:
     return []
   workers = max(1, min(meeting_concurrency, len(unique)))
   records: dict[str, dict[str, Any]] = {}
   with ThreadPoolExecutor(max_workers=workers) as executor:
     futures = {
-        executor.submit(get_calendar_event, event_id, access_token): chat_id
+        executor.submit(
+            meeting_event_record, chat_id, event_id, access_token
+        ): chat_id
         for chat_id, event_id in unique.items()
     }
     for future in as_completed(futures):
       chat_id = futures[future]
-      try:
-        records[chat_id] = {"chatId": chat_id, "event": future.result()}
-      except BackendError as exception:
-        records[chat_id] = {"chatId": chat_id, "eventError": str(exception)}
+      records[chat_id] = future.result()
   return [records[chat_id] for chat_id in unique]
 
 

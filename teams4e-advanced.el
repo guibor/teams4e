@@ -397,6 +397,8 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
   "Return whether CHAT belongs to the active inbox view or query."
   (teams4e--ensure-active-view)
   (and
+   (or (teams4e--meeting-view-p)
+       (not (teams4e--message-less-meeting-p chat)))
    (if teams4e--active-query
        (teams4e--query-chat-p chat teams4e--active-query)
      (teams4e--built-in-view-chat-p
@@ -665,6 +667,8 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
   (setq teams4e--active-query query
         teams4e--active-filter-name name
         tabulated-list-sort-key nil)
+  (when (teams4e--meeting-view-p)
+    (teams4e--enrich-meetings teams4e--chats t))
   (if (derived-mode-p 'teams4e-recent-mode)
       (teams4e--render-recent)
     (teams4e-inbox)))
