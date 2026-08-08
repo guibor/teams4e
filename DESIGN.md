@@ -34,8 +34,8 @@ same objects; they do not maintain synchronized inbox copies.
 ### `teams4e.el`
 
 Package entry point. It loads configuration, the core UI, advanced workflows,
-and optional Evil integration. It also defines `M-x teams4e` as the primary
-inbox entry command.
+the meeting workspace, and optional Evil integration. It also defines
+`M-x teams4e` as the primary inbox entry command.
 
 ### `msteams.el`
 
@@ -70,7 +70,7 @@ Main entry points:
 
 Implements bookmarks and query evaluation, deferred/bulk actions, cache sync,
 offline search, channel views, full-thread Markdown, Org capture, attachment
-workflows, availability-ranked meeting proposals, and optional agent analysis.
+workflows, proposal primitives, and optional agent analysis.
 
 Main entry points:
 
@@ -83,12 +83,30 @@ Main entry points:
 - `teams4e-capture-current-summary`: capture compact conversation metadata.
 - `teams4e-analyze-current-thread`: export then start an `agent-shell` session.
 - `teams4e-meeting-propose-new-time`: rank or manually select an alternate
-  meeting interval and send it to the organizer.
+  meeting interval through the meeting workspace, with a legacy minibuffer
+  fallback when that module is not loaded.
+
+### `teams4e-meetings.el`
+
+Implements the calendar-light meeting experience on the canonical chat/event
+object. It owns overlap detection, the singleton full-window availability
+buffer, Suggestions and Calendar blocks projections, RSVP, join, and linked
+calendar actions. It stores no calendar rows or proposals after rendering.
+
+Main entry points:
+
+- `teams4e-meetings`: open upcoming and active meeting chats in event order.
+- `teams4e-meeting-availability`: fetch and open the participant matrix and
+  block sheet for the meeting at point.
+- `teams4e-meeting-respond`: accept, tentatively accept, or decline once.
+- `teams4e-meeting-join`: open the event's join URL.
+- `teams4e-meeting-open-calendar`: hand advanced editing to Outlook.
 
 ### `teams4e-evil.el`
 
 Adds normal/motion bindings after Evil loads. It mirrors the ordinary major
-mode maps; business logic does not depend on Evil or Spacemacs.
+mode maps through the runtime-safe `evil-define-key*` function; business logic
+does not depend on Evil or Spacemacs.
 
 ### `bin/teams4e_graph.py`
 
@@ -104,6 +122,11 @@ Main functions:
 - `list_meeting_events_batch`: fetch linked events with bounded concurrency.
 - `get_meeting_time_suggestions`: ask Outlook to rank alternate intervals while
   preserving the linked event's duration.
+- `get_meeting_availability`: combine ranked suggestions with `getSchedule`
+  free/busy records while allowing either side to fail softly.
+- `get_meeting_schedules`: batch at most 20 participant addresses per request,
+  preserve participant order, and retain per-address errors.
+- `respond_to_meeting`: send one accept, tentative, or decline action.
 - `propose_new_meeting_time`: send one tentative response containing the chosen
   alternate interval.
 - `dispatch`: map the CLI-compatible argv protocol to one operation.
@@ -135,15 +158,27 @@ with no known start follow rows with calendar data.
 A calendar permission failure is soft: the conversation and participants
 remain available and the event is omitted.
 
-The `a p` action operates on that same attached event. It calls
-`/me/findMeetingTimes` to rank alternatives inside a configurable window and
-shows local intervals, confidence, and unavailable attendees. The chooser can
-retry with unrestricted hours, choose another range, or build a manual slot.
-An availability permission failure is also soft: the manual path remains
-available. The chosen slot is sent with
+The meeting view detects overlaps only among currently enriched active event
+attachments. It excludes cancelled, declined, duplicate-event, and
+boundary-touching rows. This gives the headers a cheap conflict warning and a
+next/conflict/response summary without polling another calendar collection.
+
+The `a p` action opens one `*Teams Availability*` buffer for that same attached
+event. The backend calls `/me/findMeetingTimes` for ranked, duration-preserving
+alternatives and `/me/calendar/getSchedule` for participant free/busy,
+working hours, and shareable blocks. `getSchedule` requests are chunked at 20
+addresses and bounded to three workers. The UI renders two projections of the
+one response: a participant matrix with selected-slot conflict detail, and a
+chronological block sheet. Missing schedule permission does not erase ranked
+suggestions; missing suggestion permission does not erase blocks. Subject and
+location are suppressed for blocks Graph marks private.
+
+The workspace can retry with work, personal, or unrestricted hours, choose
+another range, or build a manual slot. The chosen slot is sent with
 `/me/events/{id}/tentativelyAccept`, `sendResponse=true`, and an editable
-comment. This mutation is deliberately one-shot rather than persistent-server
-traffic, and diagnostic logging redacts the comment.
+comment. `a v` similarly maps accept, tentative, and decline to their Graph
+event actions. Mutations are deliberately one-shot rather than
+persistent-server traffic, and diagnostic logging redacts comments.
 
 Successful proposal state is merged into `meetingContext.proposal` on the
 existing chat. The reader banner and meeting status can therefore react
@@ -154,6 +189,12 @@ persistence. The linked event's original start/end remain authoritative for
 meeting sorting until the organizer changes the event. Sending requires
 delegated `Calendars.ReadWrite`; organizer-owned, cancelled, and
 proposal-disabled events are rejected before the mutation.
+
+Availability reading depends on tenant sharing and delegated calendar scopes.
+Free/busy may be available while another participant's subject/location is
+withheld. Organizer rescheduling, event creation, recurrence editing, and
+cancellation stay outside the package and open the linked Outlook event. This
+keeps Graph authoritative and avoids a second calendar synchronization model.
 
 ## Documentation Assets
 

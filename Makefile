@@ -15,7 +15,7 @@ test-python:
 compile:
 	$(EMACS) -Q --batch -L . -f batch-byte-compile \
 		teams4e-config.el teams4e-ui.el teams4e-advanced.el \
-		teams4e-evil.el teams4e.el
+		teams4e-meetings.el teams4e-evil.el teams4e.el
 
 clean:
 	find . -name '*.elc' -delete

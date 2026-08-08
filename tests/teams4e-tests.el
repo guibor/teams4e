@@ -44,6 +44,105 @@
     (should-not (teams4e--request-live-p request))
     (accept-process-output nil 0.05)))
 
+(defun teams4e-test-availability-context ()
+  "Return a meeting chat and representative availability payload."
+  (let* ((event
+          '((id . "event-availability")
+            (subject . "Architecture review")
+            (start . ((dateTime . "2099-08-10T09:00:00")
+                      (timeZone . "UTC")))
+            (end . ((dateTime . "2099-08-10T09:45:00")
+                    (timeZone . "UTC")))
+            (location . ((displayName . "Video room 4")))
+            (responseRequested . t)
+            (responseStatus . ((response . "notResponded")))
+            (allowNewTimeProposals . t)
+            (isOrganizer)
+            (isCancelled)
+            (webLink . "https://outlook.example/event")
+            (onlineMeeting . ((joinUrl . "https://teams.example/join")))))
+         (chat
+          `((id . "meeting-availability")
+            (chatType . "meeting")
+            (topic . "Architecture review")
+            (onlineMeetingInfo . ((calendarEventId . "event-availability")))
+            (meetingContext . ((event . ,event)))))
+         (first-slot
+          '((start . ((dateTime . "2099-08-11T09:00:00")
+                      (timeZone . "UTC")))
+            (end . ((dateTime . "2099-08-11T09:45:00")
+                    (timeZone . "UTC")))))
+         (second-slot
+          '((start . ((dateTime . "2099-08-11T10:00:00")
+                      (timeZone . "UTC")))
+            (end . ((dateTime . "2099-08-11T10:45:00")
+                    (timeZone . "UTC")))))
+         (participants
+          '(((email . "user@example.test")
+             (name . "Current User")
+             (isSelf . t)
+             (isOrganizer)
+             (response . "notResponded"))
+            ((email . "ada@example.test")
+             (name . "Ada Lovelace")
+             (isSelf)
+             (isOrganizer . t)
+             (response . "accepted"))))
+         (working-hours
+          '((daysOfWeek . ("monday" "tuesday" "wednesday"
+                           "thursday" "friday"))
+            (startTime . "08:00:00")
+            (endTime . "17:00:00")))
+         (schedules
+          `(((scheduleId . "user@example.test")
+             (scheduleItems
+              . (((status . "busy")
+                  (isPrivate . t)
+                  (subject . "Board reshuffle")
+                  (location . "Secret room")
+                  (start . ((dateTime . "2099-08-11T12:00:00")
+                            (timeZone . "UTC")))
+                  (end . ((dateTime . "2099-08-11T13:00:00")
+                          (timeZone . "UTC"))))))
+             (workingHours . ,working-hours))
+            ((scheduleId . "ada@example.test")
+             (scheduleItems
+              . (((status . "busy")
+                  (isPrivate)
+                  (subject . "Customer review")
+                  (location . "Room 12")
+                  (start . ((dateTime . "2099-08-11T10:00:00")
+                            (timeZone . "UTC")))
+                  (end . ((dateTime . "2099-08-11T11:00:00")
+                          (timeZone . "UTC"))))))
+             (workingHours . ,working-hours))))
+         (suggestions
+          `(((confidence . 100)
+             (suggestionReason . "Everyone is available")
+             (organizerAvailability . "free")
+             (attendeeAvailability
+              . (((attendee
+                   . ((emailAddress
+                       . ((address . "ada@example.test")))))
+                  (availability . "free"))))
+             (meetingTimeSlot . ,first-slot))
+            ((confidence . 50)
+             (suggestionReason . "One attendee has a conflict")
+             (organizerAvailability . "free")
+             (attendeeAvailability
+              . (((attendee
+                   . ((emailAddress
+                       . ((address . "ada@example.test")))))
+                  (availability . "busy"))))
+             (meetingTimeSlot . ,second-slot))))
+         (payload
+          `((event . ,event)
+            (participants . ,participants)
+            (schedules . ,schedules)
+            (suggestions . ,suggestions)
+            (proposalAllowed . t))))
+    `((chat . ,chat) (payload . ,payload))))
+
 (ert-deftest teams4e-payload-list-distinguishes-arrays-and-objects ()
   (let ((chats (teams4e-test-read-json "chats.json"))
         (status (teams4e-test-read-json "status.json")))
@@ -931,7 +1030,9 @@
                      teams-analyze-thread
                      teams-capture-action teams-capture-message
                      teams-capture-thread teams-unread-filter
-                     teams-propose-new-time))
+                     teams-propose-new-time teams-meetings
+                     teams-meeting-availability teams-meeting-respond
+                     teams-meeting-join teams-meeting-open-calendar))
     (should (commandp command))))
 
 (ert-deftest teams4e-public-export-and-capture-aliases-are-context-aware ()
@@ -1316,6 +1417,106 @@
     (should (equal "2099-08-12T12:45:30"
                    (teams4e--dig sent-slot 'end 'dateTime)))))
 
+(ert-deftest teams4e-meeting-workspace-renders-suggestions-and-private-blocks ()
+  (let* ((context (teams4e-test-availability-context))
+         (chat (teams4e--get context 'chat))
+         (payload (teams4e--get context 'payload)))
+    (with-temp-buffer
+      (teams4e-availability-mode)
+      (setq teams4e-availability--chat chat
+            teams4e-availability--event-id "event-availability"
+            teams4e-availability--payload payload
+            teams4e-availability--window
+            (list (date-to-time "2099-08-11T00:00:00Z")
+                  (date-to-time "2099-08-12T00:00:00Z")))
+      (teams4e-availability--render)
+      (should (= 2 (length teams4e-availability--row-ids)))
+      (should (string-match-p "Architecture review" (buffer-string)))
+      (should (string-match-p "100% confidence" (buffer-string)))
+      (should (string-match-p "Everyone is available" (buffer-string)))
+      (should (string-match-p "Ada Lovelace" (buffer-string)))
+      (teams4e-availability-next)
+      (should (string-match-p "Ada Lovelace - Busy" (buffer-string)))
+      (should (string-match-p "Customer review" (buffer-string)))
+      (teams4e-availability-show-blocks)
+      (should (string-match-p "Working hours:" (buffer-string)))
+      (should (string-match-p "Private block" (buffer-string)))
+      (should (string-match-p "Customer review" (buffer-string)))
+      (should-not (string-match-p "Board reshuffle" (buffer-string)))
+      (should-not (string-match-p "Secret room" (buffer-string)))
+      (should (eq (lookup-key teams4e-availability-mode-map (kbd "v"))
+                  #'teams4e-meeting-respond))
+      (should (eq (lookup-key teams4e-availability-mode-map (kbd "J"))
+                  #'teams4e-meeting-join)))))
+
+(ert-deftest teams4e-meeting-conflicts-use-exact-active-event-overlap ()
+  (cl-labels
+      ((meeting
+        (chat-id event-id start end &optional response cancelled)
+        `((id . ,chat-id)
+          (chatType . "meeting")
+          (topic . ,chat-id)
+          (meetingContext
+           . ((event
+               . ((id . ,event-id)
+                  (start . ((dateTime . ,start) (timeZone . "UTC")))
+                  (end . ((dateTime . ,end) (timeZone . "UTC")))
+                  (isCancelled . ,cancelled)
+                  (responseRequested . t)
+                  (responseStatus
+                   . ((response . ,(or response "accepted")))))))))))
+    (let* ((current (meeting "current" "event-current"
+                             "2099-08-11T10:00:00"
+                             "2099-08-11T11:00:00" "notResponded"))
+           (overlap (meeting "overlap" "event-overlap"
+                             "2099-08-11T10:30:00"
+                             "2099-08-11T11:30:00"))
+           (boundary (meeting "boundary" "event-boundary"
+                              "2099-08-11T11:00:00"
+                              "2099-08-11T12:00:00"))
+           (cancelled (meeting "cancelled" "event-cancelled"
+                               "2099-08-11T10:15:00"
+                               "2099-08-11T10:45:00" "accepted" t))
+           (declined (meeting "declined" "event-declined"
+                              "2099-08-11T10:15:00"
+                              "2099-08-11T10:45:00" "declined"))
+           (duplicate (meeting "duplicate" "event-current"
+                               "2099-08-11T10:00:00"
+                               "2099-08-11T11:00:00"))
+           (teams4e--chats
+            (list current overlap boundary cancelled declined duplicate)))
+      (should (equal '("overlap")
+                     (mapcar #'teams4e--chat-id
+                             (teams4e--meeting-conflicts current))))
+      (let ((label (teams4e--meeting-row-label current)))
+        (should (string-match-p "Conflict" label))
+        (should (string-match-p "Needs response" label))))))
+
+(ert-deftest teams4e-meeting-response-sends-once-and-refreshes-canonical-event ()
+  (let* ((context (teams4e-test-availability-context))
+         (chat (teams4e--get context 'chat))
+         (event (copy-tree (teams4e--get (teams4e--get context 'payload)
+                                         'event)))
+         request)
+    (setf (alist-get 'responseStatus event)
+          '((response . "accepted") (time . "2099-08-08T08:00:00Z")))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _args) "Accept"))
+              ((symbol-function 'read-string)
+               (lambda (&rest _args) "Works for me"))
+              ((symbol-function 'teams4e--run-json)
+               (lambda (args callback &optional _error-callback)
+                 (setq request args)
+                 (funcall callback `((event . ,event)))
+                 'fake-request))
+              ((symbol-function 'teams4e--meeting-refresh-displays) #'ignore))
+      (teams4e-meeting-respond chat))
+    (should (equal '("teams" "meeting" "respond")
+                   (seq-take request 3)))
+    (should (equal "accepted" (cadr (member "--response" request))))
+    (should (equal "Works for me" (cadr (member "--comment" request))))
+    (should (eq 'accepted (teams4e--meeting-response chat)))))
+
 (ert-deftest teams4e-relevant-inbox-excludes-hidden-and-locally-muted-chats ()
   (let* ((visible '((id . "visible") (chatType . "group")))
          (hidden '((id . "hidden")
@@ -1465,7 +1666,10 @@
              ("a A" . teams4e-capture-current-thread)
              ("a j" . teams4e-jump-to-capture)
              ("a t" . teams4e-meeting-transcript)
-             ("a p" . teams4e-meeting-propose-new-time)
+             ("a p" . teams4e-meeting-availability)
+             ("a v" . teams4e-meeting-respond)
+             ("a J" . teams4e-meeting-join)
+             ("a C" . teams4e-meeting-open-calendar)
              ("a R" . teams4e-action-reply)
              ("a i" . teams4e-mark-read)
              ("a u" . teams4e-mark-unread)
@@ -3236,8 +3440,14 @@
     (should (teams4e--persistent-command-p
              program '("teams" "meeting" "propose" "suggest"
                        "--eventId" "one")))
+    (should (teams4e--persistent-command-p
+             program '("teams" "meeting" "availability"
+                       "--eventId" "one")))
     (should-not (teams4e--persistent-command-p
                  program '("teams" "meeting" "propose" "send"
+                           "--eventId" "one")))
+    (should-not (teams4e--persistent-command-p
+                 program '("teams" "meeting" "respond"
                            "--eventId" "one")))
     (should-not (teams4e--persistent-command-p
                  program '("teams" "chat" "message" "send" "--message" "x")))

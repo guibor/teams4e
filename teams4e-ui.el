@@ -239,6 +239,11 @@
   "Face for Teams channel labels."
   :group 'teams4e)
 
+(defface teams4e-meeting-conflict
+  '((t :inherit font-lock-warning-face :weight bold))
+  "Face for meeting overlap warnings."
+  :group 'teams4e)
+
 ;; Recalculate existing frames when this layer is reloaded in a live session.
 (face-spec-set 'teams4e-unread '((t :weight bold))
                'face-defface-spec)
@@ -416,7 +421,9 @@ when non-nil, receives the exit status and combined diagnostic text."
         (teams4e--args-prefix-p '("teams" "search") args)
         (and (teams4e--args-prefix-p '("teams" "meeting") args)
              (not (teams4e--args-prefix-p
-                   '("teams" "meeting" "propose" "send") args)))
+                   '("teams" "meeting" "propose" "send") args))
+             (not (teams4e--args-prefix-p
+                   '("teams" "meeting" "respond") args)))
         (teams4e--args-prefix-p '("teams" "team" "list") args)
         (teams4e--args-prefix-p '("teams" "channel" "list") args)
         (teams4e--args-prefix-p '("teams" "channel" "message" "list") args)
@@ -2897,6 +2904,35 @@ When DATE-ONLY is non-nil, omit the time of day."
                              'responseStatus 'response)))
     (intern (downcase response))))
 
+(defun teams4e--meeting-active-event-p (chat)
+  "Return non-nil when CHAT has a non-declined, non-cancelled meeting event."
+  (let ((event (teams4e--meeting-event chat)))
+    (and event
+         (not (teams4e--get event 'isCancelled))
+         (not (eq (teams4e--meeting-response chat) 'declined)))))
+
+(defun teams4e--meeting-conflicts (chat)
+  "Return loaded meeting chats whose event times overlap meeting CHAT."
+  (let* ((chat-id (teams4e--chat-id chat))
+         (event-id (teams4e--get (teams4e--meeting-event chat) 'id))
+         (start (teams4e--meeting-start-time chat))
+         (end (teams4e--meeting-end-time chat)))
+    (when (and start end (teams4e--meeting-active-event-p chat))
+      (seq-filter
+       (lambda (other)
+         (let ((other-start (teams4e--meeting-start-time other))
+               (other-end (teams4e--meeting-end-time other))
+               (other-event-id
+                (teams4e--get (teams4e--meeting-event other) 'id)))
+           (and (teams4e--meeting-chat-p other)
+                (not (equal chat-id (teams4e--chat-id other)))
+                (not (and event-id (equal event-id other-event-id)))
+                (teams4e--meeting-active-event-p other)
+                other-start other-end
+                (time-less-p start other-end)
+                (time-less-p other-start end))))
+       teams4e--chats))))
+
 (defun teams4e--meeting-proposal (chat)
   "Return the current account's new-time proposal for meeting CHAT."
   (or (teams4e--get (teams4e--get chat 'meetingContext) 'proposal)
@@ -2926,6 +2962,9 @@ When DATE-ONLY is non-nil, omit the time of day."
       "In progress")
      ((eq (teams4e--meeting-response chat) 'tentativelyaccepted)
       "Tentative")
+     ((and (teams4e--get event 'responseRequested)
+           (memq (teams4e--meeting-response chat) '(nil none notresponded)))
+      "Needs response")
      (t nil))))
 
 (defun teams4e--meeting-upcoming-p (chat)
@@ -2961,6 +3000,9 @@ When DATE-ONLY is non-nil, omit the time of day."
            (end (teams4e--meeting-end-time chat))
            (all-day (teams4e--get event 'isAllDay))
            (status (teams4e--meeting-status-label chat))
+           (conflict (when (teams4e--meeting-conflicts chat)
+                       (propertize "Conflict"
+                                   'face 'teams4e-meeting-conflict)))
            (location (teams4e--meeting-location-label chat))
            (schedule
             (cond
@@ -2982,7 +3024,8 @@ When DATE-ONLY is non-nil, omit the time of day."
               "Loading calendar...")
              ((teams4e--get (teams4e--get chat 'meetingContext) 'eventError)
               "Calendar unavailable"))))
-      (string-join (delq nil (list schedule status location)) " | "))))
+      (string-join
+       (delq nil (list schedule conflict status location)) " | "))))
 
 (defun teams4e--meeting-time-label (chat)
   "Return a readable local start/end label for meeting CHAT."
@@ -3049,6 +3092,7 @@ When DATE-ONLY is non-nil, omit the time of day."
             (when-let ((proposal
                         (teams4e--meeting-proposal teams4e--chat)))
               (teams4e--meeting-slot-time-label proposal)))
+           (conflicts (teams4e--meeting-conflicts teams4e--chat))
            (join-url
             (or (teams4e--dig context 'event 'onlineMeeting 'joinUrl)
                 (teams4e--dig context 'onlineMeetingInfo 'joinWebUrl)
@@ -3060,6 +3104,12 @@ When DATE-ONLY is non-nil, omit the time of day."
         (insert (format "Proposed: %s\n" proposal-label)))
       (when where-label (insert (format "Where: %s\n" where-label)))
       (when status-label (insert (format "Status: %s\n" status-label)))
+      (when conflicts
+        (insert (propertize
+                 (format "Conflicts: %s\n"
+                         (string-join
+                          (mapcar #'teams4e--chat-label conflicts) ", "))
+                 'face 'teams4e-meeting-conflict)))
       (insert (format "Participants: %s\n"
                       (if participants
                           (string-join participants ", ")

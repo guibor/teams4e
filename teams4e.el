@@ -19,6 +19,7 @@
 (require 'teams4e-config)
 (require 'teams4e-ui)
 (require 'teams4e-advanced)
+(require 'teams4e-meetings)
 (require 'teams4e-evil)
 
 ;;;###autoload

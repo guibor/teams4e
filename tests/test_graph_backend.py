@@ -391,6 +391,202 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual([], result["suggestions"])
     self.assertIn("403", result["suggestionError"])
 
+  def test_meeting_participants_are_deduplicated_with_self_first(self) -> None:
+    profile = {
+        "displayName": "Current User",
+        "mail": "user@example.test",
+        "userPrincipalName": "USER@example.test",
+    }
+    event = {
+        "isOrganizer": False,
+        "responseStatus": {"response": "notResponded"},
+        "organizer": {
+            "emailAddress": {
+                "name": "Grace Hopper",
+                "address": "grace@example.test",
+            }
+        },
+        "attendees": [
+            {
+                "type": "required",
+                "status": {"response": "accepted"},
+                "emailAddress": {
+                    "name": "Current User",
+                    "address": "user@example.test",
+                },
+            },
+            {
+                "type": "required",
+                "status": {"response": "accepted"},
+                "emailAddress": {
+                    "name": "Grace Hopper",
+                    "address": "GRACE@example.test",
+                },
+            },
+            {
+                "type": "optional",
+                "emailAddress": {
+                    "name": "Ada Lovelace",
+                    "address": "ada@example.test",
+                },
+            },
+        ],
+    }
+
+    participants = backend.meeting_schedule_participants(event, profile)
+
+    self.assertEqual(
+        ["user@example.test", "grace@example.test", "ada@example.test"],
+        [participant["email"].casefold() for participant in participants],
+    )
+    self.assertTrue(participants[0]["isSelf"])
+    self.assertTrue(participants[1]["isOrganizer"])
+    self.assertEqual("accepted", participants[0]["response"])
+
+  def test_get_schedule_posts_documented_utc_payload(self) -> None:
+    graph_result = {
+        "value": [{"scheduleId": "user@example.test", "scheduleItems": []}]
+    }
+    with mock.patch.object(
+        backend, "graph_json", return_value=graph_result
+    ) as request:
+      result = backend.get_schedule_batch(
+          ["user@example.test", "ada@example.test"],
+          "2026-08-10T09:00:00+03:00",
+          "2026-08-10T18:00:00+03:00",
+          30,
+          "token",
+      )
+
+    self.assertEqual("user@example.test", result[0]["scheduleId"])
+    request.assert_called_once()
+    self.assertEqual("/me/calendar/getSchedule", request.call_args.args[0])
+    self.assertEqual("POST", request.call_args.kwargs["method"])
+    self.assertEqual(
+        {"Prefer": 'outlook.timezone="UTC"'},
+        request.call_args.kwargs["request_headers"],
+    )
+    payload = request.call_args.kwargs["payload"]
+    self.assertEqual(
+        ["user@example.test", "ada@example.test"], payload["schedules"]
+    )
+    self.assertEqual(
+        {"dateTime": "2026-08-10T06:00:00", "timeZone": "UTC"},
+        payload["startTime"],
+    )
+    self.assertEqual(30, payload["availabilityViewInterval"])
+
+  def test_get_schedules_batches_at_twenty_and_preserves_order(self) -> None:
+    participants = [
+        {"email": f"person-{index:02d}@example.test"}
+        for index in range(23)
+    ]
+    calls: list[list[str]] = []
+
+    def schedule_batch(
+        addresses: list[str], *_args: object
+    ) -> list[dict[str, object]]:
+      calls.append(addresses)
+      if addresses[0] == "person-20@example.test":
+        raise backend.BackendError("calendar sharing denied")
+      return [
+          {"scheduleId": address, "scheduleItems": []}
+          for address in reversed(addresses)
+      ]
+
+    with mock.patch.object(
+        backend, "get_schedule_batch", side_effect=schedule_batch
+    ):
+      schedules, errors = backend.get_meeting_schedules(
+          participants,
+          "2026-08-10T00:00:00Z",
+          "2026-08-12T00:00:00Z",
+          30,
+          "token",
+      )
+
+    self.assertEqual([3, 20], sorted(len(call) for call in calls))
+    self.assertEqual(
+        [participant["email"] for participant in participants],
+        [schedule["scheduleId"] for schedule in schedules],
+    )
+    self.assertEqual(["calendar sharing denied"], errors)
+    self.assertIn("denied", schedules[-1]["error"]["message"])
+
+  def test_meeting_availability_keeps_suggestions_when_schedules_fail(self) -> None:
+    event = {
+        "id": "event-id",
+        "start": {"dateTime": "2026-08-10T07:30:00", "timeZone": "UTC"},
+        "end": {"dateTime": "2026-08-10T08:00:00", "timeZone": "UTC"},
+        "allowNewTimeProposals": True,
+        "isOrganizer": False,
+        "isCancelled": False,
+        "organizer": {
+            "emailAddress": {
+                "name": "Grace",
+                "address": "grace@example.test",
+            }
+        },
+    }
+    suggestion_result = {
+        "suggestions": [{"confidence": 90}],
+        "search": {"activityDomain": "work"},
+    }
+    with (
+        mock.patch.object(backend, "get_calendar_event", return_value=event),
+        mock.patch.object(
+            backend,
+            "meeting_profile",
+            return_value={"mail": "user@example.test"},
+        ),
+        mock.patch.object(
+            backend,
+            "find_meeting_time_suggestions",
+            return_value=suggestion_result,
+        ),
+        mock.patch.object(
+            backend,
+            "get_meeting_schedules",
+            return_value=(
+                [{"scheduleId": "user@example.test", "error": {}}],
+                ["getSchedule denied"],
+            ),
+        ),
+    ):
+      result = backend.get_meeting_availability(
+          "event-id",
+          "2026-08-10T00:00:00Z",
+          "2026-08-12T00:00:00Z",
+          "token",
+      )
+
+    self.assertEqual(90, result["suggestions"][0]["confidence"])
+    self.assertIn("getSchedule denied", result["scheduleError"])
+    self.assertTrue(result["proposalAllowed"])
+
+  def test_meeting_response_uses_documented_event_action(self) -> None:
+    event = {"id": "event:id", "isOrganizer": False, "isCancelled": False}
+    with (
+        mock.patch.object(backend, "get_calendar_event", return_value=event),
+        mock.patch.object(backend, "graph_json", return_value={}) as request,
+    ):
+      result = backend.respond_to_meeting(
+          "event:id", "tentativelyAccepted", "I may be late", "token"
+      )
+
+    self.assertEqual(
+        "/me/events/event%3Aid/tentativelyAccept",
+        request.call_args.args[0],
+    )
+    self.assertEqual("POST", request.call_args.kwargs["method"])
+    self.assertEqual(
+        {"comment": "I may be late", "sendResponse": True},
+        request.call_args.kwargs["payload"],
+    )
+    self.assertEqual(
+        "tentativelyAccepted", result["event"]["responseStatus"]["response"]
+    )
+
   def test_propose_new_meeting_time_posts_tentative_response(self) -> None:
     event = {
         "id": "event:id",
@@ -953,6 +1149,41 @@ class GraphBackendTests(unittest.TestCase):
         if attendee["emailAddress"]["address"] == "user@example.test"
     )
     self.assertEqual(slot, current["proposedNewTime"])
+
+  def test_mock_meeting_availability_and_response_round_trip(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      state_path = Path(directory) / "tenant.json"
+      tenant = MockTenant(state_path)
+      availability = tenant.execute([
+          "teams", "meeting", "availability",
+          "--eventId", "mock-event-architecture-review",
+          "--searchStart", "2026-08-09T00:00:00Z",
+          "--searchEnd", "2026-08-14T00:00:00Z",
+          "--activityDomain", "work",
+      ])
+      response = tenant.execute([
+          "teams", "meeting", "respond",
+          "--eventId", "mock-event-architecture-review",
+          "--response", "accepted",
+          "--comment", "Works for me",
+      ])
+      reloaded = MockTenant(state_path)
+      context = reloaded.execute([
+          "teams", "meeting", "context",
+          "--chatId", "mock-chat-future-meeting",
+      ])
+
+    self.assertGreaterEqual(len(availability["participants"]), 2)
+    self.assertEqual(
+        len(availability["participants"]), len(availability["schedules"])
+    )
+    self.assertTrue(availability["suggestions"])
+    self.assertTrue(any(
+        schedule.get("scheduleItems")
+        for schedule in availability["schedules"]
+    ))
+    self.assertEqual("accepted", response["response"])
+    self.assertEqual("accepted", context["event"]["responseStatus"]["response"])
 
   def test_mock_attachment_round_trip_uses_private_local_copy(self) -> None:
     with tempfile.TemporaryDirectory() as directory:

@@ -16,6 +16,7 @@
 (require 'tabulated-list)
 
 (declare-function teams4e-transient "advanced")
+(declare-function teams4e-meeting-availability "teams4e-meetings")
 (declare-function agent-shell--resolve-config-designator "agent-shell"
                   (designator))
 (declare-function agent-shell-insert "agent-shell" (&rest arguments))
@@ -32,6 +33,7 @@
 (defvar teams4e-draft-directory)
 (defvar teams4e-mock-mode)
 (defvar teams4e-meeting-proposal-activity-domain)
+(defvar teams4e-meeting-availability-interval)
 (defvar teams4e-meeting-proposal-default-comment)
 (defvar teams4e-meeting-proposal-max-candidates)
 (defvar teams4e-meeting-proposal-minimum-confidence)
@@ -426,6 +428,37 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
       (teams4e--meeting-only-query-p teams4e--active-query)
     (memq teams4e--active-view '(meeting upcoming))))
 
+(defun teams4e--meeting-view-header-summary (visible)
+  "Return compact next-meeting, conflict, and response context for VISIBLE."
+  (when (teams4e--meeting-view-p)
+    (let* ((now (current-time))
+           (next (seq-find
+                  (lambda (chat)
+                    (and (teams4e--meeting-active-event-p chat)
+                         (when-let ((boundary
+                                     (or (teams4e--meeting-end-time chat)
+                                         (teams4e--meeting-start-time chat))))
+                           (time-less-p now boundary))))
+                  visible))
+           (conflicts
+            (seq-count (lambda (chat) (teams4e--meeting-conflicts chat))
+                       visible))
+           (responses
+            (seq-count
+             (lambda (chat)
+               (equal (teams4e--meeting-status-label chat) "Needs response"))
+             visible)))
+      (format " - next %s - %d conflict%s - %d to respond"
+              (if-let ((start (and next
+                                   (teams4e--meeting-start-time next))))
+                  (if (and (not (time-less-p now start))
+                           (when-let ((end (teams4e--meeting-end-time next)))
+                             (time-less-p now end)))
+                      "now"
+                    (format-time-string "%a %H:%M" start))
+                "none")
+              conflicts (if (= conflicts 1) "" "s") responses))))
+
 (defun teams4e--order-visible-chats (chats)
   "Return a newly sorted copy of visible CHATS for the active view."
   (sort (copy-sequence chats)
@@ -611,14 +644,15 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
           (mapcar #'teams4e--recent-entry-advanced visible)
           header-line-format
           (format (concat "Teams %s - %d shown - %d unread - "
-                          "%d selected - %d queued%s%s%s")
+                          "%d selected - %d queued%s%s%s%s")
                   (teams4e--active-filter-label)
                   (length visible) unread-count
                   (hash-table-count teams4e--selections)
                   (hash-table-count teams4e--marks)
                   (if teams4e-offline-mode " - OFFLINE" "")
                   (if teams4e-mock-mode " - MOCK" "")
-                  (teams4e--inbox-source-suffix)))
+                  (teams4e--inbox-source-suffix)
+                  (or (teams4e--meeting-view-header-summary visible) "")))
     (teams4e--set-mode-line
      (format "%d unread%s" unread-count
              (if teams4e-mock-mode " mock" "")))
@@ -2259,7 +2293,7 @@ AFTER-EXPORT with its saved path when that callback is non-nil."
             index time-label confidence
             (teams4e--proposal-unavailable-label suggestion event))))
 
-(defun teams4e--proposal-refresh-displays (chat)
+(defun teams4e--meeting-refresh-displays (chat)
   "Refresh headers and the singleton reader after changing meeting CHAT."
   (teams4e--refresh-visible-recent)
   (when-let ((reader (get-buffer teams4e--read-buffer-name)))
@@ -2272,8 +2306,13 @@ AFTER-EXPORT with its saved path when that callback is non-nil."
               (teams4e--get chat 'meetingContext))
         (teams4e--render-chat)))))
 
-(defun teams4e--proposal-send (chat event-id slot)
-  "Send SLOT as a proposed new time for CHAT's linked EVENT-ID."
+(defalias 'teams4e--proposal-refresh-displays
+  #'teams4e--meeting-refresh-displays)
+
+(defun teams4e--proposal-send (chat event-id slot &optional after-send)
+  "Send SLOT as a proposed new time for CHAT's linked EVENT-ID.
+
+Invoke AFTER-SEND with the backend payload after a successful mutation."
   (let* ((old-label (or (teams4e--meeting-time-label chat) "current time"))
          (new-label (or (teams4e--meeting-slot-time-label slot) "new time"))
          (organizer
@@ -2301,10 +2340,11 @@ AFTER-EXPORT with its saved path when that callback is non-nil."
              (proposal (teams4e--get payload 'proposal)))
          (teams4e--apply-meeting-context
           chat `((event . ,event) (proposal . ,proposal)))
-         (teams4e--proposal-refresh-displays chat)
+         (teams4e--meeting-refresh-displays chat)
          (message "Proposed %s for %s"
                   (or (teams4e--meeting-slot-time-label proposal) new-label)
-                  (teams4e--chat-label chat))))
+                  (teams4e--chat-label chat))
+         (when after-send (funcall after-send payload))))
      (lambda (status detail)
        (teams4e--report-error args status detail)
        (message "New-time proposal was not sent: %s"
@@ -2432,12 +2472,14 @@ The selected slot preserves the current meeting duration.  Choosing a slot and
 submitting the editable organizer note sends the proposal without another
 confirmation prompt."
   (interactive)
-  (teams4e--require-online)
-  (let ((chat (or (teams4e--chat-at-point)
-                  (user-error "No Teams chat here"))))
-    (unless (teams4e--meeting-chat-p chat)
-      (user-error "The current Teams conversation is not a meeting chat"))
-    (teams4e--proposal-start chat)))
+  (if (fboundp 'teams4e-meeting-availability)
+      (call-interactively #'teams4e-meeting-availability)
+    (teams4e--require-online)
+    (let ((chat (or (teams4e--chat-at-point)
+                    (user-error "No Teams chat here"))))
+      (unless (teams4e--meeting-chat-p chat)
+        (user-error "The current Teams conversation is not a meeting chat"))
+      (teams4e--proposal-start chat))))
 
 (defun teams4e-capture-current-summary ()
   "Capture title, source, date, and last-message context without a transcript.
@@ -3457,8 +3499,11 @@ shared by the terminal Teams client."
              teams4e-jump-to-capture)
             ("Open latest meeting transcript" .
              teams4e-meeting-transcript)
-            ("Propose a new meeting time" .
-             teams4e-meeting-propose-new-time)
+            ("Meeting availability / propose time" .
+             teams4e-meeting-availability)
+            ("Respond to meeting invitation" . teams4e-meeting-respond)
+            ("Join meeting" . teams4e-meeting-join)
+            ("Open linked calendar event" . teams4e-meeting-open-calendar)
             ("Capture complete thread to Org" .
              teams4e-capture-current-thread)
             ("Open in Teams web" . teams4e-open-current-in-browser)
@@ -3665,8 +3710,12 @@ shared by the terminal Teams client."
              teams4e-jump-to-capture)
             ("Open latest meeting transcript" .
              teams4e-meeting-transcript)
-            ("Propose a new meeting time" .
-             teams4e-meeting-propose-new-time)
+            ("Open upcoming meetings" . teams4e-meetings)
+            ("Inspect meeting availability" .
+             teams4e-meeting-availability)
+            ("Respond to meeting invitation" . teams4e-meeting-respond)
+            ("Join meeting" . teams4e-meeting-join)
+            ("Open linked calendar event" . teams4e-meeting-open-calendar)
             ("Copy complete thread as Markdown" .
              teams4e-copy-current-thread-markdown)
             ("Analyze complete thread with agent" .
@@ -3702,6 +3751,7 @@ shared by the terminal Teams client."
         "Native Microsoft Teams commands."
         [["Read"
           ("i" "inbox" teams4e-inbox)
+          ("m" "meetings" teams4e-meetings)
           ("c" "channels" teams4e-channels)
          ("/" "search" teams4e-search)
           ("?" "server search" teams4e-server-search)
@@ -3714,7 +3764,9 @@ shared by the terminal Teams client."
           ("d" "drafts" teams4e-compose-drafts)
           ("n" "new chat" teams4e-create-chat)
           ("p" "person" teams4e-user)
-          ("P" "propose meeting time" teams4e-meeting-propose-new-time)
+          ("P" "meeting availability" teams4e-meeting-availability)
+          ("V" "meeting response" teams4e-meeting-respond)
+          ("J" "join meeting" teams4e-meeting-join)
           ("a" "capture action" teams4e-capture-current-summary)
           ("A" "capture full thread" teams4e-capture-current-thread)
           ("y" "copy Markdown" teams4e-copy-current-thread-markdown)

@@ -323,6 +323,15 @@ The prompt remains editable and accepts an empty comment."
   :type 'string
   :group 'teams4e)
 
+(defcustom teams4e-meeting-availability-interval 30
+  "Free/busy interval in minutes requested for the availability workspace.
+
+Microsoft Graph accepts values from 5 through 1440.  Calendar blocks retain
+their exact start and end times; this value controls the merged availability
+view returned beside them."
+  :type 'integer
+  :group 'teams4e)
+
 (defconst teams4e--previous-confirm-send-standard
   (condition-case nil
       (eval (car (get 'teams4e-confirm-send 'standard-value)))

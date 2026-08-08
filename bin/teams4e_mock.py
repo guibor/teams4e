@@ -563,13 +563,15 @@ class MockTenant:
         "timeZone": "UTC",
     }
 
-  def _meeting_time_suggestions(self, args: list[str]) -> dict[str, Any]:
+  def _meeting_time_suggestions(
+      self, args: list[str], *, validate_proposal: bool = True
+  ) -> dict[str, Any]:
     event = self._meeting_event(str(option(args, "--eventId")))
-    if event.get("isCancelled"):
+    if validate_proposal and event.get("isCancelled"):
       raise ValueError("Cannot propose a new time for a cancelled mock meeting")
-    if event.get("isOrganizer"):
+    if validate_proposal and event.get("isOrganizer"):
       raise ValueError("You organize this mock meeting")
-    if event.get("allowNewTimeProposals") is False:
+    if validate_proposal and event.get("allowNewTimeProposals") is False:
       raise ValueError("The organizer does not allow new time proposals")
     start = self._meeting_datetime(str(event["start"]["dateTime"]))
     end = self._meeting_datetime(str(event["end"]["dateTime"]))
@@ -639,6 +641,137 @@ class MockTenant:
             "end": self._meeting_date_time(search_end),
             "activityDomain": activity_domain,
         },
+    }
+
+  def _meeting_availability(self, args: list[str]) -> dict[str, Any]:
+    event = self._meeting_event(str(option(args, "--eventId")))
+    suggestions = self._meeting_time_suggestions(
+        args, validate_proposal=False
+    )
+    profile = copy.deepcopy(self.state["profile"])
+    self_address = str(profile.get("mail") or "")
+    contacts = [
+        {
+            "email": self_address,
+            "name": profile.get("displayName") or self_address,
+            "type": "required",
+            "isSelf": True,
+            "isOrganizer": bool(event.get("isOrganizer")),
+            "response": event.get("responseStatus", {}).get("response"),
+        }
+    ]
+    seen = {self_address.casefold()}
+    organizer = event.get("organizer")
+    attendees = event.get("attendees", [])
+    for contact, is_organizer in [
+        (organizer, True),
+        *((attendee, False) for attendee in attendees),
+    ]:
+      email = contact.get("emailAddress", {}) if isinstance(contact, dict) else {}
+      address = str(email.get("address") or "")
+      if not address or address.casefold() in seen:
+        continue
+      seen.add(address.casefold())
+      contacts.append({
+          "email": address,
+          "name": email.get("name") or address,
+          "type": contact.get("type") or "required",
+          "isSelf": False,
+          "isOrganizer": is_organizer,
+          "response": contact.get("status", {}).get("response"),
+      })
+
+    event_start = self._meeting_datetime(str(event["start"]["dateTime"]))
+    event_end = self._meeting_datetime(str(event["end"]["dateTime"]))
+    candidate_two = event_start + timedelta(days=2, hours=1)
+    event_item = {
+        "isPrivate": False,
+        "status": "busy",
+        "subject": event.get("subject") or "Architecture review",
+        "location": event.get("location", {}).get("displayName"),
+        "start": self._meeting_date_time(event_start),
+        "end": self._meeting_date_time(event_end),
+    }
+    schedules = []
+    for index, participant in enumerate(contacts):
+      items = [copy.deepcopy(event_item)]
+      if participant["isSelf"]:
+        focus_start = event_start + timedelta(days=1, hours=-2)
+        items.append({
+            "isPrivate": False,
+            "status": "busy",
+            "subject": "Focus block",
+            "location": "Home office",
+            "start": self._meeting_date_time(focus_start),
+            "end": self._meeting_date_time(focus_start + timedelta(hours=1)),
+        })
+      elif index == len(contacts) - 1:
+        items.append({
+            "isPrivate": False,
+            "status": "busy",
+            "subject": "Customer review",
+            "location": "Room 12",
+            "start": self._meeting_date_time(candidate_two),
+            "end": self._meeting_date_time(candidate_two + timedelta(hours=1)),
+        })
+      schedules.append({
+          "scheduleId": participant["email"],
+          "availabilityView": "",
+          "scheduleItems": items,
+          "workingHours": {
+              "daysOfWeek": [
+                  "monday", "tuesday", "wednesday", "thursday", "friday"
+              ],
+              "startTime": "08:00:00",
+              "endTime": "17:00:00",
+              "timeZone": {"name": "UTC"},
+          },
+      })
+    reason = None
+    if event.get("isCancelled"):
+      reason = "This meeting is cancelled"
+    elif event.get("isOrganizer"):
+      reason = "You organize this meeting; use the calendar event to reschedule"
+    elif event.get("allowNewTimeProposals") is False:
+      reason = "The organizer does not allow new time proposals"
+    return {
+        **suggestions,
+        "profile": profile,
+        "participants": contacts,
+        "schedules": schedules,
+        "scheduleError": None,
+        "proposalAllowed": reason is None,
+        "proposalUnavailableReason": reason,
+    }
+
+  def _respond_to_meeting(self, args: list[str]) -> dict[str, Any]:
+    event = self._meeting_event(str(option(args, "--eventId")))
+    response = str(option(args, "--response"))
+    if response not in {"accepted", "tentativelyAccepted", "declined"}:
+      raise ValueError(f"Unsupported mock meeting response: {response}")
+    if event.get("isCancelled"):
+      raise ValueError("Cannot respond to a cancelled mock meeting")
+    if event.get("isOrganizer"):
+      raise ValueError("The mock meeting organizer cannot RSVP as an attendee")
+    response_time = now_iso()
+    event["responseStatus"] = {
+        "response": response,
+        "time": response_time,
+    }
+    self_address = str(self.state["profile"].get("mail") or "").casefold()
+    for attendee in event.get("attendees", []):
+      address = str(attendee.get("emailAddress", {}).get("address") or "")
+      if address.casefold() == self_address:
+        attendee["status"] = {
+            "response": response,
+            "time": response_time,
+        }
+        break
+    self._write()
+    return {
+        "status": "responded",
+        "response": response,
+        "event": copy.deepcopy(event),
     }
 
   def _propose_meeting_time(self, args: list[str]) -> dict[str, Any]:
@@ -1110,6 +1243,10 @@ class MockTenant:
       return self._meeting_time_suggestions(args)
     if args[:4] == ["teams", "meeting", "propose", "send"]:
       return self._propose_meeting_time(args)
+    if args[:3] == ["teams", "meeting", "availability"]:
+      return self._meeting_availability(args)
+    if args[:3] == ["teams", "meeting", "respond"]:
+      return self._respond_to_meeting(args)
     if args[:3] == ["teams", "meeting", "context"]:
       chat_id = str(option(args, "--chatId"))
       chat = self._chat(chat_id)

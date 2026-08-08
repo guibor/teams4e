@@ -9,12 +9,12 @@
 
 (require 'teams4e-advanced)
 
-(declare-function evil-define-key "evil-core")
+(declare-function evil-define-key* "evil-core")
 (declare-function evil-set-initial-state "evil-core")
 
 (with-eval-after-load 'evil
   (evil-set-initial-state 'teams4e-compose-mode 'insert)
-  (evil-define-key '(normal motion) teams4e-recent-mode-map
+  (evil-define-key* '(normal motion) teams4e-recent-mode-map
     (kbd "RET") #'teams4e-recent-open
     (kbd "l") #'teams4e-recent-open
     (kbd "y") #'teams4e-select-preview
@@ -65,7 +65,7 @@
     (kbd "S") #'teams4e-sort
     (kbd "H") #'teams-dispatch
     (kbd "q") #'teams4e-quit)
-  (evil-define-key '(normal motion) teams4e-chat-mode-map
+  (evil-define-key* '(normal motion) teams4e-chat-mode-map
     (kbd "g r") #'teams4e-chat-refresh-headers
     (kbd "M-g") #'teams4e-chat-refresh
     (kbd "G") #'teams4e-chat-load-all
@@ -132,7 +132,7 @@
     (kbd "M-F") #'teams4e-chat-toggle-unread-filter
     (kbd "h") #'teams4e-chat-back-to-inbox
     (kbd "q") #'teams4e-chat-view-quit)
-  (evil-define-key '(normal motion) teams4e-channel-index-mode-map
+  (evil-define-key* '(normal motion) teams4e-channel-index-mode-map
     (kbd "RET") #'teams4e-channel-open-thread
     (kbd "l") #'teams4e-channel-open-thread
     (kbd "j") #'teams4e-channel-next
@@ -147,7 +147,7 @@
     (kbd "/") #'teams4e-search
     (kbd "?") #'teams-dispatch
     (kbd "q") #'teams4e-quit)
-  (evil-define-key '(normal motion) teams4e-channel-thread-mode-map
+  (evil-define-key* '(normal motion) teams4e-channel-thread-mode-map
     (kbd "g r") #'teams4e-channel-thread-refresh
     (kbd "S") #'teams4e-toggle-message-order
     (kbd "j") #'teams4e-channel-thread-next

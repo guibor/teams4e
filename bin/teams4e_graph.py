@@ -39,6 +39,7 @@ MEETING_EVENT_SELECT = (
     "location,locations,organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink,"
     "allowNewTimeProposals,isOrganizer,responseRequested,type"
 )
+GET_SCHEDULE_BATCH_LIMIT = 20
 
 
 class BackendError(RuntimeError):
@@ -842,18 +843,15 @@ def meeting_suggestion_attendees(
   return result
 
 
-def get_meeting_time_suggestions(
-    event_id: str,
-    search_start: str,
-    search_end: str,
-    access_token: str,
-    *,
-    max_candidates: int = 8,
-    minimum_confidence: int = 50,
-    activity_domain: str = "work",
-) -> dict[str, Any]:
-  """Return availability-ranked alternate times for linked EVENT_ID."""
-  event = get_calendar_event(event_id, access_token)
+def meeting_profile(access_token: str) -> dict[str, Any]:
+  """Return the signed-in identity fields used by meeting workflows."""
+  return graph_json(
+      "/me?$select=displayName,mail,userPrincipalName", access_token
+  )
+
+
+def validate_new_time_proposal(event: dict[str, Any]) -> None:
+  """Reject EVENT when the signed-in user cannot propose another time."""
   if event.get("isCancelled"):
     raise BackendError("Cannot propose a new time for a cancelled meeting")
   if event.get("isOrganizer"):
@@ -862,13 +860,26 @@ def get_meeting_time_suggestions(
     )
   if event.get("allowNewTimeProposals") is False:
     raise BackendError("The organizer does not allow new time proposals")
+
+
+def find_meeting_time_suggestions(
+    event: dict[str, Any],
+    profile: dict[str, Any],
+    search_start: str,
+    search_end: str,
+    access_token: str,
+    *,
+    max_candidates: int = 8,
+    minimum_confidence: int = 50,
+    activity_domain: str = "work",
+) -> dict[str, Any]:
+  """Return availability-ranked alternate times for EVENT and PROFILE."""
   if activity_domain not in {"work", "personal", "unrestricted"}:
     raise BackendError(f"Unsupported meeting activity domain: {activity_domain}")
   search_start_value = graph_utc_date_time(search_start)
   search_end_value = graph_utc_date_time(search_end)
   if parse_graph_datetime(search_end) <= parse_graph_datetime(search_start):
     raise BackendError("Meeting suggestion search must end after it starts")
-  profile = graph_json("/me?$select=mail,userPrincipalName", access_token)
   payload = {
       "attendees": meeting_suggestion_attendees(event, profile),
       "timeConstraint": {
@@ -891,7 +902,6 @@ def get_meeting_time_suggestions(
     )
   except BackendError as exception:
     return {
-        "event": event,
         "suggestions": [],
         "suggestionError": str(exception),
         "search": {
@@ -902,7 +912,6 @@ def get_meeting_time_suggestions(
     }
   result = suggestions.get("meetingTimeSuggestions")
   return {
-      "event": event,
       "suggestions": result if isinstance(result, list) else [],
       "emptySuggestionsReason": suggestions.get("emptySuggestionsReason"),
       "search": {
@@ -911,6 +920,301 @@ def get_meeting_time_suggestions(
           "activityDomain": activity_domain,
       },
   }
+
+
+def get_meeting_time_suggestions(
+    event_id: str,
+    search_start: str,
+    search_end: str,
+    access_token: str,
+    *,
+    max_candidates: int = 8,
+    minimum_confidence: int = 50,
+    activity_domain: str = "work",
+) -> dict[str, Any]:
+  """Return availability-ranked alternate times for linked EVENT_ID."""
+  event = get_calendar_event(event_id, access_token)
+  validate_new_time_proposal(event)
+  profile = meeting_profile(access_token)
+  result = find_meeting_time_suggestions(
+      event,
+      profile,
+      search_start,
+      search_end,
+      access_token,
+      max_candidates=max_candidates,
+      minimum_confidence=minimum_confidence,
+      activity_domain=activity_domain,
+  )
+  return {"event": event, **result}
+
+
+def meeting_schedule_participants(
+    event: dict[str, Any], profile: dict[str, Any]
+) -> list[dict[str, Any]]:
+  """Return de-duplicated event participants with the current account first."""
+  self_addresses = {
+      str(profile.get(key)).casefold()
+      for key in ("mail", "userPrincipalName")
+      if isinstance(profile.get(key), str) and profile.get(key)
+  }
+  records: dict[str, dict[str, Any]] = {}
+  order: list[str] = []
+
+  def add(contact: dict[str, Any], *, organizer: bool = False) -> None:
+    email = contact.get("emailAddress")
+    email = email if isinstance(email, dict) else {}
+    address = email.get("address")
+    if not isinstance(address, str) or not address.strip():
+      return
+    key = address.casefold()
+    status = contact.get("status")
+    status = status if isinstance(status, dict) else {}
+    if key not in records:
+      order.append(key)
+      records[key] = {
+          "email": address,
+          "name": email.get("name") or address,
+          "type": contact.get("type") or "required",
+          "isSelf": key in self_addresses,
+          "isOrganizer": organizer,
+          "response": status.get("response"),
+      }
+    else:
+      record = records[key]
+      record["isOrganizer"] = bool(record.get("isOrganizer") or organizer)
+      record["isSelf"] = bool(record.get("isSelf") or key in self_addresses)
+      if not record.get("response"):
+        record["response"] = status.get("response")
+
+  organizer = event.get("organizer")
+  if isinstance(organizer, dict):
+    add({"type": "required", **organizer}, organizer=True)
+  attendees = event.get("attendees")
+  if isinstance(attendees, list):
+    for attendee in attendees:
+      if isinstance(attendee, dict):
+        add(attendee)
+
+  self_address = next(
+      (
+          str(profile.get(key))
+          for key in ("mail", "userPrincipalName")
+          if isinstance(profile.get(key), str) and profile.get(key)
+      ),
+      None,
+  )
+  if self_address and self_address.casefold() not in records:
+    key = self_address.casefold()
+    order.append(key)
+    response = event.get("responseStatus")
+    response = response if isinstance(response, dict) else {}
+    records[key] = {
+        "email": self_address,
+        "name": profile.get("displayName") or self_address,
+        "type": "required",
+        "isSelf": True,
+        "isOrganizer": bool(event.get("isOrganizer")),
+        "response": response.get("response"),
+    }
+  for record in records.values():
+    if record.get("isSelf") and not record.get("response"):
+      response = event.get("responseStatus")
+      response = response if isinstance(response, dict) else {}
+      record["response"] = response.get("response")
+  order_index = {key: index for index, key in enumerate(order)}
+  return [
+      records[key]
+      for key in sorted(
+          order,
+          key=lambda item: (
+              not bool(records[item].get("isSelf")),
+              not bool(records[item].get("isOrganizer")),
+              order_index[item],
+          ),
+      )
+  ]
+
+
+def get_schedule_batch(
+    addresses: list[str],
+    search_start: str,
+    search_end: str,
+    interval_minutes: int,
+    access_token: str,
+) -> list[dict[str, Any]]:
+  """Return one Graph getSchedule batch for ADDRESSES."""
+  result = graph_json(
+      "/me/calendar/getSchedule",
+      access_token,
+      method="POST",
+      payload={
+          "schedules": addresses,
+          "startTime": graph_utc_date_time(search_start),
+          "endTime": graph_utc_date_time(search_end),
+          "availabilityViewInterval": interval_minutes,
+      },
+      request_headers={"Prefer": 'outlook.timezone="UTC"'},
+  )
+  value = result.get("value")
+  return (
+      [item for item in value if isinstance(item, dict)]
+      if isinstance(value, list)
+      else []
+  )
+
+
+def get_meeting_schedules(
+    participants: list[dict[str, Any]],
+    search_start: str,
+    search_end: str,
+    interval_minutes: int,
+    access_token: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+  """Return free/busy schedules for PARTICIPANTS in bounded Graph batches."""
+  addresses = [
+      str(participant["email"])
+      for participant in participants
+      if isinstance(participant.get("email"), str) and participant.get("email")
+  ]
+  batches = [
+      addresses[index:index + GET_SCHEDULE_BATCH_LIMIT]
+      for index in range(0, len(addresses), GET_SCHEDULE_BATCH_LIMIT)
+  ]
+  if not batches:
+    return [], []
+  records: list[dict[str, Any]] = []
+  errors: list[str] = []
+  workers = min(3, len(batches))
+  with ThreadPoolExecutor(max_workers=workers) as executor:
+    futures = {
+        executor.submit(
+            get_schedule_batch,
+            batch,
+            search_start,
+            search_end,
+            interval_minutes,
+            access_token,
+        ): batch
+        for batch in batches
+    }
+    for future in as_completed(futures):
+      batch = futures[future]
+      try:
+        records.extend(future.result())
+      except BackendError as exception:
+        detail = str(exception)
+        errors.append(detail)
+        records.extend(
+            {"scheduleId": address, "error": {"message": detail}}
+            for address in batch
+        )
+  by_address = {
+      str(record.get("scheduleId")).casefold(): record
+      for record in records
+      if isinstance(record.get("scheduleId"), str)
+  }
+  for record in records:
+    error = record.get("error")
+    message = error.get("message") if isinstance(error, dict) else None
+    if isinstance(message, str) and message and message not in errors:
+      errors.append(message)
+  return [
+      by_address.get(
+          address.casefold(),
+          {"scheduleId": address, "error": {"message": "No schedule returned"}},
+      )
+      for address in addresses
+  ], errors
+
+
+def get_meeting_availability(
+    event_id: str,
+    search_start: str,
+    search_end: str,
+    access_token: str,
+    *,
+    max_candidates: int = 8,
+    minimum_confidence: int = 50,
+    activity_domain: str = "work",
+    interval_minutes: int = 30,
+) -> dict[str, Any]:
+  """Return ranked times and participant calendar blocks for EVENT_ID."""
+  event = get_calendar_event(event_id, access_token)
+  start_time = parse_graph_datetime(search_start)
+  end_time = parse_graph_datetime(search_end)
+  if end_time <= start_time:
+    raise BackendError("Meeting availability search must end after it starts")
+  if (end_time - start_time).total_seconds() >= 62 * 24 * 60 * 60:
+    raise BackendError("Meeting availability searches must be shorter than 62 days")
+  profile = meeting_profile(access_token)
+  participants = meeting_schedule_participants(event, profile)
+  suggestions = find_meeting_time_suggestions(
+      event,
+      profile,
+      search_start,
+      search_end,
+      access_token,
+      max_candidates=max_candidates,
+      minimum_confidence=minimum_confidence,
+      activity_domain=activity_domain,
+  )
+  schedules, schedule_errors = get_meeting_schedules(
+      participants,
+      search_start,
+      search_end,
+      max(5, min(interval_minutes, 1440)),
+      access_token,
+  )
+  proposal_reason = None
+  if event.get("isCancelled"):
+    proposal_reason = "This meeting is cancelled"
+  elif event.get("isOrganizer"):
+    proposal_reason = "You organize this meeting; use the calendar event to reschedule"
+  elif event.get("allowNewTimeProposals") is False:
+    proposal_reason = "The organizer does not allow new time proposals"
+  return {
+      "event": event,
+      "profile": profile,
+      "participants": participants,
+      "schedules": schedules,
+      "scheduleError": "; ".join(dict.fromkeys(schedule_errors)) or None,
+      "proposalAllowed": proposal_reason is None,
+      "proposalUnavailableReason": proposal_reason,
+      **suggestions,
+  }
+
+
+def respond_to_meeting(
+    event_id: str,
+    response: str,
+    comment: str,
+    access_token: str,
+) -> dict[str, Any]:
+  """Accept, tentatively accept, or decline EVENT_ID and notify its organizer."""
+  actions = {
+      "accepted": "accept",
+      "tentativelyAccepted": "tentativelyAccept",
+      "declined": "decline",
+  }
+  if response not in actions:
+    raise BackendError(f"Unsupported meeting response: {response}")
+  event = get_calendar_event(event_id, access_token)
+  if event.get("isCancelled"):
+    raise BackendError("Cannot respond to a cancelled meeting")
+  if event.get("isOrganizer"):
+    raise BackendError("The meeting organizer cannot RSVP as an attendee")
+  graph_json(
+      f"/me/events/{quoted_id(event_id)}/{actions[response]}",
+      access_token,
+      method="POST",
+      payload={"comment": comment, "sendResponse": True},
+  )
+  event["responseStatus"] = {
+      "response": response,
+      "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+  }
+  return {"status": "responded", "response": response, "event": event}
 
 
 def propose_new_meeting_time(
@@ -922,14 +1226,7 @@ def propose_new_meeting_time(
 ) -> dict[str, Any]:
   """Tentatively accept EVENT_ID while proposing alternate START and END."""
   event = get_calendar_event(event_id, access_token)
-  if event.get("isCancelled"):
-    raise BackendError("Cannot propose a new time for a cancelled meeting")
-  if event.get("isOrganizer"):
-    raise BackendError(
-        "You organize this meeting; proposing a new time is an attendee action"
-    )
-  if event.get("allowNewTimeProposals") is False:
-    raise BackendError("The organizer does not allow new time proposals")
+  validate_new_time_proposal(event)
   if parse_graph_datetime(end) <= parse_graph_datetime(start):
     raise BackendError("Proposed meeting end must be after its start")
   proposal = {
@@ -2111,6 +2408,30 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
         str(option(args, "--eventId")),
         str(option(args, "--start")),
         str(option(args, "--end")),
+        str(option(args, "--comment", required=False) or ""),
+        access_token,
+    )
+  elif args[:3] == ["teams", "meeting", "availability"]:
+    result = get_meeting_availability(
+        str(option(args, "--eventId")),
+        str(option(args, "--searchStart")),
+        str(option(args, "--searchEnd")),
+        access_token,
+        max_candidates=integer_option(args, "--maxCandidates", 8, minimum=1),
+        minimum_confidence=integer_option(
+            args, "--minimumConfidence", 50, minimum=0
+        ),
+        activity_domain=str(
+            option(args, "--activityDomain", required=False) or "work"
+        ),
+        interval_minutes=integer_option(
+            args, "--availabilityInterval", 30, minimum=5
+        ),
+    )
+  elif args[:3] == ["teams", "meeting", "respond"]:
+    result = respond_to_meeting(
+        str(option(args, "--eventId")),
+        str(option(args, "--response")),
         str(option(args, "--comment", required=False) or ""),
         access_token,
     )

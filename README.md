@@ -44,6 +44,9 @@ and handing a complete thread to another Emacs workflow.
   bulk actions, and undo.
 - Linked calendar context for meetings: start/end interval, location,
   response, participants, organizer, and join link.
+- A focused meeting workspace with overlap warnings, RSVP and join actions,
+  ranked alternate times, a participant availability matrix, and a
+  privacy-aware calendar-block sheet.
 - Complete chronological Markdown export, clipboard copy, compact Org capture,
   full-thread Org capture, and optional `agent-shell` analysis.
 - SQLite cache, cache-first opening, offline reads, background sync, and local
@@ -118,10 +121,12 @@ Then declare the package normally:
 
 Tenant policy and the token's delegated permissions determine which Graph
 actions are available. Calendar enrichment is optional; meeting chats remain
-readable when calendar access is unavailable. Ranked alternate-time suggestions
-use Outlook availability, while sending a proposal requires delegated
-`Calendars.ReadWrite`. If availability lookup is unavailable, the proposal
-flow still offers a manual time while preserving the meeting duration.
+readable when calendar access is unavailable. The availability workspace uses
+`getSchedule` and `findMeetingTimes`; reading free/busy commonly needs
+`Calendars.ReadBasic` and ranked suggestions commonly need
+`Calendars.Read.Shared`. RSVP and new-time proposals need
+`Calendars.ReadWrite`. Sharing policy may hide another participant's block
+title or location even when free/busy is visible.
 
 ## Authentication
 
@@ -201,7 +206,9 @@ thread.
 | `a a` / `a A` | Capture a summary / complete thread to Org |
 | `a e` / `a y` | Export / copy complete Markdown |
 | `a g` | Export and analyze with `agent-shell` |
-| `a p` | Propose an availability-ranked new meeting time |
+| `a p` | Open the meeting availability workspace |
+| `a v` / `a J` | RSVP / join the meeting |
+| `a C` | Open the linked Outlook calendar event |
 | `G` / `L` | Load complete history / load more |
 | `M-j` / `M-k` | Next/previous message inside the transcript |
 | `q` | Close the reader or restore the previous window layout |
@@ -233,22 +240,46 @@ resolves that event with bounded concurrency and merges it into the existing
 chat alist. The meeting-only headers schedule column and reader banner both
 render from that one attachment.
 
-### Propose a new time
+### Meeting workspace
 
-From `b m`, `b M`, or an open meeting reader, press `a p`. `teams4e` preserves
-the meeting duration and asks Outlook for ranked alternatives, displayed in
-local time with confidence and the people who are busy. The same chooser can
-expand beyond work hours, search a different date range, or enter an exact
-start manually. Selecting a time opens an editable note to the organizer;
-submitting that note sends the proposal without a second confirmation.
+`M-x teams-meetings` or `b m` is the calendar-light daily entry point. It is
+designed around five journeys:
 
-The action is also available as `M-x teams-propose-new-time`. It sends an
-Outlook tentative response with the proposed interval. It does not locally move
-the organizer's event: until the organizer accepts and updates the meeting, the
-original interval remains the event's sort key and the reader shows the pending
-proposal separately. A later event refresh recovers that pending interval from
-the signed-in attendee's Graph metadata, without a local proposal store.
-Organizer-owned, cancelled, and proposal-disabled events fail explicitly.
+1. **Scan:** see upcoming and in-progress meetings in start-time order, with
+   complete intervals, response state, location, overlap warnings, and a header
+   summary for the next meeting, conflicts, and invitations awaiting response.
+2. **Inspect:** open the singleton reader for participants, organizer, join
+   link, pending proposal, and the meeting chat without losing the headers row.
+3. **Act:** use `a v` to accept/tentatively accept/decline, `a J` to join, or
+   `a C` to open the linked Outlook event for advanced calendar editing.
+4. **Negotiate:** use `a p` for the full-window `*Teams Availability*` buffer.
+   It combines ranked Outlook suggestions with per-participant status and an
+   exact calendar-block sheet. Private blocks never expose returned subject or
+   location through this UI.
+5. **Prepare and follow up:** use the existing compact Org capture, transcript,
+   complete Markdown export, and agent-analysis actions from the same chat.
+
+The availability buffer is a singleton and has two views. In **Suggestions**,
+`j`/`k` selects a ranked interval and updates its exact conflict details;
+`RET` sends that interval as a new-time proposal. In **Calendar blocks**,
+`j`/`k` inspects returned participant blocks and working hours. Use `s`/`b` to
+switch views, `r` to change the date range, `w` to cycle work, personal, and
+unrestricted hours, `m` for an exact manual start, `v` to RSVP, `J` to join,
+`o` to open Outlook, and `q` to restore the previous Teams layout.
+
+`M-x teams-propose-new-time` and `M-x teams-meeting-availability` both enter
+this workspace. A selected proposal is sent as an Outlook tentative response
+with an editable note and no redundant final confirmation. It does not locally
+move the organizer's event: the original interval remains the sort key until
+Graph reports an organizer update, and a later event refresh recovers any
+pending proposal from attendee metadata. Organizer-owned, cancelled, and
+proposal-disabled events remain inspectable but cannot send an attendee
+proposal.
+
+This is intentionally not a complete calendar replacement. Creating events,
+editing recurrence, cancelling organizer-owned meetings, moving an event as
+organizer, and other high-risk calendar operations remain in Outlook through
+`a C`; `teams4e` does not persist another calendar or proposal database.
 
 ```elisp
 (setq teams4e-meeting-enrichment-limit 32
@@ -257,6 +288,7 @@ Organizer-owned, cancelled, and proposal-disabled events fail explicitly.
       teams4e-meeting-proposal-max-candidates 8
       teams4e-meeting-proposal-minimum-confidence 50
       teams4e-meeting-proposal-activity-domain 'work
+      teams4e-meeting-availability-interval 30
       teams4e-meeting-proposal-default-comment
       "Could we move this meeting to the proposed time?")
 ```
