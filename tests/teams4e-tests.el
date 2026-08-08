@@ -387,12 +387,26 @@
 (ert-deftest teams4e-read-override-expires-when-new-message-arrives ()
   (let* ((chat (car (teams4e-test-read-json "chats.json")))
          (teams4e--read-overrides (make-hash-table :test #'equal)))
-    (puthash "chat-1" '(read . "2026-08-02T07:30:00Z")
+    (puthash "chat-1" '(read . "message-2")
              teams4e--read-overrides)
     (should-not (teams4e--unread-p chat))
-    (setf (alist-get 'lastUpdatedDateTime chat) "2026-08-02T08:00:00Z")
+    (setf (alist-get 'id (alist-get 'lastMessagePreview chat)) "message-3"
+          (alist-get 'createdDateTime (alist-get 'lastMessagePreview chat))
+          "2026-08-02T08:00:00Z")
     (should (teams4e--unread-p chat))
     (should-not (gethash "chat-1" teams4e--read-overrides))))
+
+(ert-deftest teams4e-chat-metadata-update-does-not-create-unread-message ()
+  (let ((chat
+         '((id . "meeting-stub")
+           (chatType . "meeting")
+           (lastUpdatedDateTime . "2026-08-09T10:00:00Z")
+           (viewpoint . ((lastMessageReadDateTime
+                          . "2026-08-08T10:00:00Z")))))
+        (teams4e--read-overrides (make-hash-table :test #'equal)))
+    (should-not (teams4e--unread-p chat))
+    (setf (alist-get 'lastUpdatedDateTime chat) "2026-08-09T11:00:00Z")
+    (should-not (teams4e--unread-p chat))))
 
 (ert-deftest teams4e-favorites-and-mutes-round-trip-private-local-state ()
   (let* ((directory (make-temp-file "teams4e-state-" t))
@@ -1188,6 +1202,11 @@
             (lastMessagePreview
              . ((id . "message-1")
                 (createdDateTime . "2026-08-08T11:00:00Z")))))
+         (incomplete-meeting
+          '((id . "incomplete-meeting")
+            (chatType . "meeting")
+            (lastMessagePreview
+             . ((createdDateTime . "2026-08-08T11:30:00Z")))))
          (empty-group
           '((id . "empty-group")
             (chatType . "group")
@@ -1202,6 +1221,7 @@
           (teams4e--active-query nil))
       (should-not (teams4e--view-chat-p empty-meeting))
       (should (teams4e--view-chat-p active-meeting))
+      (should-not (teams4e--view-chat-p incomplete-meeting))
       (should (teams4e--view-chat-p empty-group)))
     (let ((teams4e--active-view 'inbox)
           (teams4e--active-query "unread"))
@@ -1603,9 +1623,11 @@
         (teams4e-bookmark-jump))
       (should (eq 'inbox teams4e--active-query))
       (should (= 1 (length tabulated-list-entries)))
+      (setq teams4e--unread-filter-enabled t)
       (cl-letf (((symbol-function 'read-char) (lambda (&rest _args) ?a)))
         (teams4e-bookmark-jump))
       (should (eq 'all teams4e--active-query))
+      (should-not teams4e--unread-filter-enabled)
       (should (= 3 (length tabulated-list-entries))))))
 
 (ert-deftest teams4e-unread-filter-composes-with-active-query ()
@@ -2027,7 +2049,8 @@
                             (timeZone . "UTC")))
                     (location . ((displayName . "Video room 4")))))))
             (lastMessagePreview
-             . ((createdDateTime . "2026-08-01T09:15:00Z")
+             . ((id . "meeting-message-1")
+                (createdDateTime . "2026-08-01T09:15:00Z")
                 (messageType . "systemEventMessage")
                 (eventDetail
                  . ((@odata.type
@@ -2612,6 +2635,31 @@
                                   'start 'dateTime)))
     (should-not (gethash "meeting-1" teams4e--meeting-inflight))))
 
+(ert-deftest teams4e-meeting-enrichment-failure-is-visible-on-the-chat ()
+  (let* ((meeting
+          '((id . "meeting-1")
+            (chatType . "meeting")
+            (onlineMeetingInfo . ((calendarEventId . "event-1")))))
+         (teams4e--chats (list meeting))
+         (teams4e-meeting-enrichment-limit 12)
+         (teams4e-offline-mode nil)
+         (teams4e--meeting-inflight (make-hash-table :test #'equal))
+         reported)
+    (cl-letf (((symbol-function 'teams4e--run-json)
+               (lambda (args _callback &optional error-callback)
+                 (funcall error-callback 403 "calendar denied")
+                 'fake-process))
+              ((symbol-function 'teams4e--report-error)
+               (lambda (args status detail)
+                 (setq reported (list args status detail))))
+              ((symbol-function 'teams4e--refresh-visible-recent)
+               #'ignore))
+      (teams4e--enrich-meetings teams4e--chats))
+    (should (equal "Calendar metadata request failed"
+                   (teams4e--dig meeting 'meetingContext 'eventError)))
+    (should (= 403 (nth 1 reported)))
+    (should-not (gethash "meeting-1" teams4e--meeting-inflight))))
+
 (ert-deftest teams4e-upcoming-view-shows-calendar-enrichment-in-flight ()
   (let* ((meeting '((id . "meeting-1") (chatType . "meeting")))
          (teams4e--meeting-inflight (make-hash-table :test #'equal)))
@@ -2625,7 +2673,8 @@
             (chatType . "meeting")
             (lastUpdatedDateTime . "2026-08-08T12:00:00Z")
             (lastMessagePreview
-             . ((createdDateTime . "2026-08-08T12:00:00Z")))))
+             . ((id . "message-1")
+                (createdDateTime . "2026-08-08T12:00:00Z")))))
          (calendar-stub
           '((id . "calendar-stub")
             (chatType . "meeting")
@@ -2660,6 +2709,19 @@
       (teams4e--with-status (lambda () (setq callback-called t))))
     (should callback-called)
     (should-not status-called)))
+
+(ert-deftest teams4e-logged-out-status-runs-unavailable-callback-only ()
+  (let ((teams4e-offline-mode nil)
+        (teams4e--connected-as nil)
+        success-called unavailable-called)
+    (cl-letf (((symbol-function 'teams4e--status-request)
+               (lambda (callback &optional _error-callback)
+                 (funcall callback "Logged out"))))
+      (teams4e--with-status
+       (lambda () (setq success-called t))
+       (lambda () (setq unavailable-called t))))
+    (should unavailable-called)
+    (should-not success-called)))
 
 (ert-deftest teams4e-preview-reuses-unchanged-recent-transcript ()
   (let* ((chat '((id . "chat-cached")

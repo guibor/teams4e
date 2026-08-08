@@ -65,6 +65,8 @@ Main entry points:
 - `teams4e-send` and `teams4e-reply`: create native compose buffers.
 - `teams4e--run-json`: issue one backend request and dispatch parsed JSON.
 - `teams4e--enrich-meetings`: attach linked event data to existing chat rows.
+- `teams4e--unread-p`: compare the real last-message timestamp with Graph's
+  read marker; chat metadata timestamps are deliberately excluded.
 
 ### `teams4e-advanced.el`
 
@@ -106,7 +108,9 @@ Main entry points:
 
 Adds normal/motion bindings after Evil loads. It mirrors the ordinary major
 mode maps through the runtime-safe `evil-define-key*` function; business logic
-does not depend on Evil or Spacemacs.
+does not depend on Evil or Spacemacs. `teams4e-evil-refresh-bookmark-bindings`
+reasserts the `b`/`B` prefix when a headers or reader mode starts and when the
+inbox opens, repairing maps changed by a later Evil Collection reload.
 
 ### `bin/teams4e_graph.py`
 
@@ -157,15 +161,19 @@ useful for calendar-created future meetings.
 The meeting-only schedule column, meeting predicates/sort, and reader banner
 all read this same attachment. Message-oriented views use the compact headers
 schema without a meeting column and sort descending by `lastMessagePreview`
-time, so calendar-only changes neither consume inbox width nor reorder the
-inbox. They also suppress meeting chats with no usable last-message timestamp,
-which prevents calendar-created chat stubs from becoming undated unread rows.
+time, so calendar-only changes neither consume inbox width, reorder the inbox,
+nor change unread state. A message-bearing row requires both the preview id and
+timestamp. Meeting chats without that complete preview are suppressed, which
+prevents calendar-created chat stubs from becoming undated unread rows.
 Meeting-only views retain those same canonical chats, switch the schema and row
 projection together, sort ascending by event start, and display the complete
 start/end interval. Rows with no known start follow rows with calendar data.
 
 A calendar permission failure is soft: the conversation and participants
-remain available and the event is omitted.
+remain available, `meetingContext.eventError` is attached to the same canonical
+chat, the failure count appears in meeting headers, and diagnostics go to
+`*M365 Errors*`. A missing shared OAuth identity is shown directly in the inbox
+header with the `teams4e-login` recovery command.
 
 The meeting view detects overlaps only among currently enriched active event
 attachments. It excludes cancelled, declined, duplicate-event, and

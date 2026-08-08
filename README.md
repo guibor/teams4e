@@ -226,20 +226,24 @@ calendar inbox or synchronized copies.
 | Bookmark | View | Default order |
 | --- | --- | --- |
 | `b i` | Relevant inbox | Newest last message first |
-| `b a` | All chats | Newest last message first |
+| `b a` | All chats, clearing unread-only and other overlays | Newest last message first |
 | `b u` | Unread chats | Newest last message first |
 | `b m` | Upcoming/in-progress meetings | Earliest meeting start first |
 | `b M` | All meeting chats | Earliest known meeting start first |
 
-Message-oriented views derive their date and sort key from
-`lastMessagePreview`; a calendar update does not make a quiet conversation
-jump to the top, and these views omit the meeting interval column. A meeting
-chat with no usable last-message timestamp is omitted from message-oriented
-views instead of appearing as an undated unread row; it remains available in
-`b m`, `b M`, and explicit meeting queries. Meeting-only views add the schedule
-column, sort by the linked event start, and show the complete start/end
-interval. Meetings without calendar permission fall behind meetings with known
-start times.
+Message-oriented views derive their date, unread state, and sort key from a
+complete `lastMessagePreview` containing both an id and timestamp. A calendar,
+membership, or topic update does not make a quiet conversation jump to the top
+or become unread, and these views omit the meeting interval column. A meeting
+chat without a complete message preview is omitted from message-oriented views
+instead of appearing as an undated unread row; it remains available in `b m`,
+`b M`, and explicit meeting queries. Meeting-only views add the schedule column,
+sort by the linked event start, and show the complete start/end interval.
+
+When the external token provider is logged out, the headers say to run
+`M-x teams4e-login` instead of presenting an unexplained empty inbox. Calendar
+request failures are recorded in `*M365 Errors*` and summarized in meeting-only
+headers; chat and participant data remain usable.
 
 Graph chat data may expose `onlineMeetingInfo.calendarEventId`. The backend
 resolves that event with bounded concurrency and merges it into the existing

@@ -10,7 +10,23 @@
 (require 'teams4e-advanced)
 
 (declare-function evil-define-key* "evil-core")
+(declare-function evil-normalize-keymaps "evil-core")
 (declare-function evil-set-initial-state "evil-core")
+
+(defun teams4e-evil-refresh-bookmark-bindings ()
+  "Repair bookmark-prefix bindings after Evil or Evil Collection reloads."
+  (when (featurep 'evil)
+    (evil-define-key* '(normal motion) teams4e-recent-mode-map
+      (kbd "b") #'teams4e-bookmark-jump
+      (kbd "B") #'teams4e-bookmark-edit)
+    (evil-define-key* '(normal motion) teams4e-chat-mode-map
+      (kbd "b") #'teams4e-chat-run-headers-command
+      (kbd "B") #'teams4e-chat-run-headers-command)
+    (when (derived-mode-p 'teams4e-recent-mode 'teams4e-chat-mode)
+      (evil-normalize-keymaps))))
+
+(add-hook 'teams4e-recent-mode-hook #'teams4e-evil-refresh-bookmark-bindings)
+(add-hook 'teams4e-chat-mode-hook #'teams4e-evil-refresh-bookmark-bindings)
 
 (with-eval-after-load 'evil
   (evil-set-initial-state 'teams4e-compose-mode 'insert)
@@ -176,7 +192,8 @@
     (kbd "u") #'teams4e-undo-action
     (kbd "h") #'teams4e-channel-back-to-index
     (kbd "b") #'teams4e-channel-back-to-index
-    (kbd "q") #'teams4e-channel-view-quit))
+    (kbd "q") #'teams4e-channel-view-quit)
+  (teams4e-evil-refresh-bookmark-bindings))
 
 (provide 'teams4e-evil)
 

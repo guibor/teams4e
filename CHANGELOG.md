@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Repaired `b`/`B` after live Evil Collection reloads and made `b a` return to
+  an unfiltered All Chats view by clearing the unread-only overlay.
+- Based unread detection and local read-override expiry on the actual last
+  message rather than `lastUpdatedDateTime`, so calendar, membership, and topic
+  changes do not create false unread rows.
+- Required a complete last-message preview before a calendar-created meeting
+  chat may appear in message or unread views.
+- Made logged-out OAuth and calendar-enrichment failures visible in headers and
+  `*M365 Errors*` instead of leaving an unexplained empty meeting view.
+
 ## 0.1.0 - 2026-08-08
 
 - Initial standalone package extraction.

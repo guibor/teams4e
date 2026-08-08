@@ -449,8 +449,13 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
             (seq-count
              (lambda (chat)
                (equal (teams4e--meeting-status-label chat) "Needs response"))
-             visible)))
-      (format " - next %s - %d conflict%s - %d to respond"
+             visible))
+           (calendar-errors
+            (seq-count
+             (lambda (chat)
+               (teams4e--dig chat 'meetingContext 'eventError))
+             teams4e--chats)))
+      (format " - next %s - %d conflict%s - %d to respond%s"
               (if-let ((start (and next
                                    (teams4e--meeting-start-time next))))
                   (if (and (not (time-less-p now start))
@@ -459,7 +464,10 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
                       "now"
                     (format-time-string "%a %H:%M" start))
                 "none")
-              conflicts (if (= conflicts 1) "" "s") responses))))
+              conflicts (if (= conflicts 1) "" "s") responses
+              (if (> calendar-errors 0)
+                  (format " - %d calendar unavailable" calendar-errors)
+                "")))))
 
 (defun teams4e--order-visible-chats (chats)
   "Return a newly sorted copy of visible CHATS for the active view."
@@ -664,6 +672,10 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
 
 (defun teams4e--apply-inbox-query (query name)
   "Apply inbox QUERY under display NAME and redraw the headers buffer."
+  (when (or (eq query 'all)
+            (and (stringp query)
+                 (string-equal (string-trim query) "all")))
+    (setq teams4e--unread-filter-enabled nil))
   (setq teams4e--active-query query
         teams4e--active-filter-name name
         tabulated-list-sort-key nil)
@@ -1135,7 +1147,7 @@ normal reader without adding a second search cache."
             args
             (lambda (_payload)
               (puthash chat-id
-                       (cons action (teams4e--get chat 'lastUpdatedDateTime))
+                       (cons action (teams4e--last-message-marker chat))
                        teams4e--read-overrides)
               (remhash chat-id teams4e--marks)
               (teams4e--execute-mark-list

@@ -1053,6 +1053,21 @@ activity.  Message-oriented views therefore use only the preview timestamp."
     (or (teams4e--get message 'createdDateTime)
         (teams4e--get message 'lastModifiedDateTime))))
 
+(defun teams4e--chat-has-last-message-p (chat)
+  "Return non-nil when CHAT has a complete last-message preview.
+
+Graph returns a preview id and creation time for chats with messages.  Requiring
+both keeps calendar-created meeting stubs out of message-oriented views even
+when chat metadata itself has a recent update time."
+  (and (stringp (teams4e--dig chat 'lastMessagePreview 'id))
+       (stringp (teams4e--last-message-date-time chat))))
+
+(defun teams4e--last-message-marker (chat)
+  "Return CHAT's stable last-message marker, or nil without a real message."
+  (when (teams4e--chat-has-last-message-p chat)
+    (or (teams4e--dig chat 'lastMessagePreview 'id)
+        (teams4e--last-message-date-time chat))))
+
 (defun teams4e--mentioned-user-p (message)
   "Return non-nil when MESSAGE explicitly mentions the connected user."
   (seq-some
@@ -1146,9 +1161,9 @@ activity.  Message-oriented views therefore use only the preview timestamp."
   (equal (teams4e--get chat 'chatType) "meeting"))
 
 (defun teams4e--message-less-meeting-p (chat)
-  "Return non-nil when meeting CHAT has no usable message timestamp."
+  "Return non-nil when meeting CHAT has no usable message preview."
   (and (teams4e--meeting-chat-p chat)
-       (not (stringp (teams4e--last-message-date-time chat)))))
+       (not (teams4e--chat-has-last-message-p chat))))
 
 (defun teams4e--meeting-context-args (chat)
   "Return backend arguments used to resolve metadata for meeting CHAT."
@@ -1402,19 +1417,22 @@ chronological input."
            (teams4e--message-order-label)))
 
 (defun teams4e--unread-p (chat)
-  "Return non-nil when CHAT appears newer than its read marker."
+  "Return non-nil when CHAT's last real message is newer than its read marker."
   (let* ((chat-id (teams4e--chat-id chat))
          (override (gethash chat-id teams4e--read-overrides))
-         (updated (teams4e--get chat 'lastUpdatedDateTime))
+         (marker (teams4e--last-message-marker chat))
+         (message-time (teams4e--last-message-date-time chat))
          (read (teams4e--dig chat 'viewpoint 'lastMessageReadDateTime)))
-    (when (and override (not (equal (cdr override) updated)))
+    (when (and override (not (equal (cdr override) marker)))
       (remhash chat-id teams4e--read-overrides)
       (setq override nil))
     (pcase (car-safe override)
       ('read nil)
       ('unread t)
-      (_ (and (stringp updated)
-              (or (not (stringp read)) (string< read updated)))))))
+      (_ (and marker
+              (stringp message-time)
+              (or (not (stringp read))
+                  (string< read message-time)))))))
 
 (defun teams4e--status-request (callback &optional error-callback)
   "Fetch shared OAuth status and invoke CALLBACK with it.
@@ -1430,15 +1448,24 @@ ERROR-CALLBACK, when non-nil, handles backend failures."
      (funcall callback status))
    error-callback))
 
-(defun teams4e--with-status (callback)
-  "Invoke CALLBACK after ensuring shared M365 credentials are present."
+(defun teams4e--with-status (callback &optional unavailable-callback)
+  "Invoke CALLBACK after ensuring shared M365 credentials are present.
+
+When authentication is unavailable, invoke UNAVAILABLE-CALLBACK when non-nil
+and leave CALLBACK untouched."
   (if (or teams4e-offline-mode teams4e--connected-as)
       (funcall callback)
     (teams4e--status-request
      (lambda (_status)
        (if teams4e--connected-as
            (funcall callback)
-         (message "Shared M365 OAuth is unavailable; run M-x teams4e-login"))))))
+         (when unavailable-callback
+           (funcall unavailable-callback))
+         (message "Shared M365 OAuth is unavailable; run M-x teams4e-login")))
+     (lambda (status detail)
+       (when unavailable-callback
+         (funcall unavailable-callback))
+       (teams4e--report-error '("status") status detail)))))
 
 (defun teams4e--require-online ()
   "Reject a server mutation while cache-only mode is active."
@@ -1860,10 +1887,15 @@ omitted by the chat-list response; explicit meeting views use this path."
                (teams4e--apply-meeting-context chat record)))
            (dolist (id ids) (remhash id teams4e--meeting-inflight))
            (teams4e--refresh-visible-recent))
-         (lambda (_status _detail)
-           ;; Calendar permission is optional; chat and member data stay useful.
+         (lambda (status detail)
+           ;; Calendar permission is optional; chat and member data stay useful,
+           ;; but meeting views must explain why their calendar fields are empty.
            (dolist (id ids)
-             (remhash id teams4e--meeting-inflight))
+             (remhash id teams4e--meeting-inflight)
+             (when-let ((chat (teams4e--find-chat id)))
+               (teams4e--apply-meeting-context
+                chat '((eventError . "Calendar metadata request failed")))))
+           (teams4e--report-error args status detail)
            (teams4e--refresh-visible-recent)))))))
 
 (defvar teams4e-recent-mode-map
@@ -1954,7 +1986,16 @@ omitted by the chat-list response; explicit meeting views use this path."
                    (setq header-line-format
                          "Teams inbox load failed - see *M365 Errors*"))))
              (teams4e--report-error
-              (teams4e--chat-list-args) status detail)))))))))
+              (teams4e--chat-list-args) status detail)))))))
+   (lambda ()
+     (when (buffer-live-p buffer)
+       (with-current-buffer buffer
+         (setq teams4e--process nil
+               teams4e--inbox-source-label "logged out")
+         (if cached-shown
+             (teams4e--render-recent)
+           (setq header-line-format
+                 "Teams logged out - run M-x teams4e-login")))))))
 
 (defun teams4e--start-cache-first-inbox-load (buffer)
   "Render BUFFER from the existing SQLite cache, then refresh it from Graph."
@@ -2028,6 +2069,8 @@ omitted by the chat-list response; explicit meeting views use this path."
     (puthash (selected-frame) (current-window-configuration)
              teams4e--window-configurations))
   (teams4e-recent)
+  (when (fboundp 'teams4e-evil-refresh-bookmark-bindings)
+    (teams4e-evil-refresh-bookmark-bindings))
   (delete-other-windows))
 
 (defun teams4e--cancel-frame-preview-timers (frame)
@@ -2344,7 +2387,7 @@ STATE is the symbol `read' or `unread'.  QUIET suppresses success messages."
      (list "teams" "chat" "mark" (symbol-name state) "--chatId" chat-id)
      (lambda (_payload)
        (puthash chat-id
-                (cons state (teams4e--get chat 'lastUpdatedDateTime))
+                (cons state (teams4e--last-message-marker chat))
                 teams4e--read-overrides)
        (teams4e--refresh-visible-recent)
        (unless quiet (message "Marked %s %s" label state))))))
