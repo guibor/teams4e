@@ -933,6 +933,7 @@
          (body . ((contentType . "text") (content . "Late update")))))
       (let ((rendered (buffer-string)))
         (should (string-match-p "---.*[A-Z][a-z]+.*---" rendered))
+        (should-not (string-match-p "August  [0-9]" rendered))
         (should (string-match-p "Ada  [0-9][0-9]:[0-9][0-9]" rendered))
         (should (string-match-p "  Late update" rendered))
         (should-not (string-match-p "Ada  2026-" rendered))))))

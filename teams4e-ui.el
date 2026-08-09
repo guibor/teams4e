@@ -753,7 +753,11 @@ ERROR-CALLBACK has the same contract as in `teams4e--run'."
                            ((equal day yesterday) "Yesterday - ")
                            (t ""))))
         (concat prefix
-                (format-time-string "%A, %B %e, %Y" time)))
+                (format "%s, %s %d, %s"
+                        (format-time-string "%A" time)
+                        (format-time-string "%B" time)
+                        (string-to-number (format-time-string "%d" time))
+                        (format-time-string "%Y" time))))
     (error value)))
 
 (defun teams4e--message-time-label (value)
