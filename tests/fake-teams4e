@@ -60,6 +60,28 @@ def main() -> int:
       sys.stdout.write("[]")
     return 0
 
+  if command[:5] == ["teams", "chat", "message", "export", "--chatId"]:
+    chat_id = option(args, "--chatId")
+    messages = (
+        json.loads((FIXTURES / "messages-chat-1.json").read_text(encoding="utf-8"))
+        if chat_id == "chat-1" else []
+    )
+    created = sorted(
+        message["createdDateTime"] for message in messages
+        if message.get("createdDateTime")
+    )
+    sys.stdout.write(json.dumps({
+        "value": messages,
+        "history": {
+            "complete": True,
+            "pageCount": 1 if messages else 0,
+            "messageCount": len(messages),
+            "oldestDateTime": created[0] if created else None,
+            "newestDateTime": created[-1] if created else None,
+        },
+    }))
+    return 0
+
   if command[:5] == ["teams", "chat", "message", "list", "--chatId"]:
     chat_id = option(args, "--chatId")
     if chat_id == "chat-1":

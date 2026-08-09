@@ -182,6 +182,51 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual([{"id": "one"}, {"id": "two"}], result)
     self.assertEqual(next_url, request.call_args_list[1].args[0])
 
+  def test_graph_collection_metadata_proves_unbounded_exhaustion(self) -> None:
+    next_url = "https://graph.microsoft.com/v1.0/chats/chat/messages?page=2"
+    pages = [
+        {"value": [{"id": "new"}], "@odata.nextLink": next_url},
+        {"value": [{"id": "old"}]},
+    ]
+    with mock.patch.object(backend, "graph_json", side_effect=pages):
+      items, page_count, complete = backend.graph_collection_with_metadata(
+          "/chats/chat/messages?$top=50", "token"
+      )
+    self.assertEqual([{"id": "new"}, {"id": "old"}], items)
+    self.assertEqual(2, page_count)
+    self.assertTrue(complete)
+
+  def test_graph_collection_metadata_marks_in_page_truncation_partial(self) -> None:
+    page = {"value": [{"id": "one"}, {"id": "two"}]}
+    with mock.patch.object(backend, "graph_json", return_value=page):
+      items, page_count, complete = backend.graph_collection_with_metadata(
+          "/chats/chat/messages?$top=50", "token", limit=1
+      )
+    self.assertEqual([{"id": "one"}], items)
+    self.assertEqual(1, page_count)
+    self.assertFalse(complete)
+
+  def test_export_message_history_reports_count_range_and_pages(self) -> None:
+    messages = [
+        {"id": "new", "createdDateTime": "2026-08-02T11:00:00Z"},
+        {"id": "old", "createdDateTime": "2026-07-01T09:00:00Z"},
+    ]
+    with mock.patch.object(
+        backend,
+        "graph_collection_with_metadata",
+        return_value=(messages, 7, True),
+    ) as request:
+      result = backend.export_message_history("chat:id", "token")
+    self.assertIn("chat%3Aid", request.call_args.args[0])
+    self.assertEqual(messages, result["value"])
+    self.assertEqual({
+        "complete": True,
+        "pageCount": 7,
+        "messageCount": 2,
+        "oldestDateTime": "2026-07-01T09:00:00Z",
+        "newestDateTime": "2026-08-02T11:00:00Z",
+    }, result["history"])
+
   def test_graph_collection_rejects_repeated_next_link(self) -> None:
     repeated = "https://graph.microsoft.com/v1.0/me/chats?$skiptoken=loop"
     with mock.patch.object(

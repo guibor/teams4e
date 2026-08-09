@@ -657,9 +657,19 @@
 (ert-deftest teams4e-markdown-export-preserves-structure-and-source ()
   (let* ((chat (car (teams4e-test-read-json "chats.json")))
          (messages (teams4e-test-read-json "messages-chat-1.json"))
-         (markdown (teams4e--thread-markdown chat messages)))
+         (history '((complete . t)
+                    (pageCount . 3)
+                    (messageCount . 2)
+                    (oldestDateTime . "2026-08-02T08:00:00Z")
+                    (newestDateTime . "2026-08-02T09:00:00Z")))
+         (markdown (teams4e--thread-markdown chat messages history)))
     (should (string-match-p "# One-to-one chat" markdown))
     (should (string-match-p "## 2026-08-02" markdown))
+    (should (string-match-p "Messages: 2" markdown))
+    (should (string-match-p "Complete Microsoft Graph pagination (3 pages)"
+                            markdown))
+    (should (string-match-p "Range: 2026-08-02" markdown))
+    (should (string-match-p "### [0-9][0-9]:[0-9][0-9] - " markdown))
     (should (string-match-p (regexp-quote "Hello **Michael**") markdown))
     (should (string-match-p
              (regexp-quote "[review.pdf](https://example.com/review.pdf)")
@@ -828,18 +838,28 @@
                   (from . ((user . ((displayName . "Ada")))))
                   (body . ((contentType . "text") (content . "First")))))
          captured-args
-         captured-markdown)
+         captured-markdown
+         (history '((complete . t)
+                    (pageCount . 2)
+                    (messageCount . 2)
+                    (oldestDateTime . "2026-08-01T10:00:00Z")
+                    (newestDateTime . "2026-08-01T11:00:00Z"))))
     (cl-letf (((symbol-function 'teams4e--run-json)
                (lambda (args callback &optional _error-callback)
                  (setq captured-args args)
-                 (funcall callback (list newer older))
+                 (funcall callback `((value . (,newer ,older))
+                                     (history . ,history)))
                  'fake-process))
               ((symbol-function 'kill-new)
                (lambda (text &optional _replace)
                  (setq captured-markdown text))))
       (teams4e--copy-chat-thread-markdown chat))
+    (should (equal '("teams" "chat" "message" "export")
+                   (seq-take captured-args 4)))
     (should-not (member "--limit" captured-args))
     (should-not (member "--modifiedStartDateTime" captured-args))
+    (should (string-match-p "Complete Microsoft Graph pagination"
+                            captured-markdown))
     (should (< (string-match "First" captured-markdown)
                (string-match "Second" captured-markdown)))))
 
@@ -852,6 +872,11 @@
                       (from . ((user . ((displayName . "Ada")))))
                       (body . ((contentType . "text")
                                (content . "Analyze this"))))))
+         (history '((complete . t)
+                    (pageCount . 1)
+                    (messageCount . 1)
+                    (oldestDateTime . "2026-08-06T10:00:00Z")
+                    (newestDateTime . "2026-08-06T10:00:00Z")))
          (config '((:identifier . cursor)))
          request-args start-args insert-args start-directory)
     (unwind-protect
@@ -865,7 +890,8 @@
                   ((symbol-function 'teams4e--run-json)
                    (lambda (args callback &optional _error-callback)
                      (setq request-args args)
-                     (funcall callback messages)
+                     (funcall callback `((value . ,messages)
+                                         (history . ,history)))
                      'fake-process))
                   ((symbol-function 'agent-shell-start)
                    (lambda (&rest args)
@@ -878,6 +904,8 @@
           (teams4e-analyze-current-thread)
           (should (file-exists-p path))
           (should (= #o600 (file-modes path)))
+          (should (equal '("teams" "chat" "message" "export")
+                         (seq-take request-args 4)))
           (should-not (member "--limit" request-args))
           (should-not (member "--modifiedStartDateTime" request-args))
           (should (equal config (plist-get start-args :config)))
@@ -888,6 +916,26 @@
            (equal (format "$thread-analysis of this thread: %s" path)
                   (plist-get insert-args :text))))
       (delete-directory directory t))))
+
+(ert-deftest teams4e-complete-export-refuses-partial-offline-cache ()
+  (let ((teams4e-offline-mode t)
+        (chat '((id . "chat-offline"))))
+    (should-error (teams4e--full-history-args chat) :type 'user-error)))
+
+(ert-deftest teams4e-transcript-groups-and-labels-local-time-consistently ()
+  (let ((created "2026-08-02T22:30:00Z"))
+    (with-temp-buffer
+      (teams4e--insert-day-separator created)
+      (teams4e--insert-message
+       `((id . "late-message")
+         (createdDateTime . ,created)
+         (from . ((user . ((displayName . "Ada")))))
+         (body . ((contentType . "text") (content . "Late update")))))
+      (let ((rendered (buffer-string)))
+        (should (string-match-p "---.*[A-Z][a-z]+.*---" rendered))
+        (should (string-match-p "Ada  [0-9][0-9]:[0-9][0-9]" rendered))
+        (should (string-match-p "  Late update" rendered))
+        (should-not (string-match-p "Ada  2026-" rendered))))))
 
 (ert-deftest teams4e-thread-analysis-resolves-the-customized-agent-symbol ()
   (let ((teams4e-thread-analysis-agent 'cursor)
@@ -2683,10 +2731,35 @@
               ((symbol-function 'teams4e--refresh-visible-recent)
                #'ignore))
       (teams4e--enrich-meetings teams4e--chats))
-    (should (equal "Calendar metadata request failed"
+    (should (equal "Calendar metadata request failed (403): calendar denied"
                    (teams4e--dig meeting 'meetingContext 'eventError)))
+    (let ((credentials (make-temp-file "teams4e-calendar-credentials-")))
+      (unwind-protect
+          (let ((teams4e-credentials-file credentials)
+                (teams4e-token-command nil)
+                (teams4e-mock-mode nil))
+            (should (equal "Calendar permission denied"
+                           (teams4e--calendar-unavailable-label meeting))))
+        (delete-file credentials)))
     (should (= 403 (nth 1 reported)))
     (should-not (gethash "meeting-1" teams4e--meeting-inflight))))
+
+(ert-deftest teams4e-calendar-label-distinguishes-login-from-event-linkage ()
+  (let ((teams4e-credentials-file
+         (expand-file-name "missing-teams4e-credentials.json"
+                           temporary-file-directory))
+        (teams4e-token-command nil)
+        (teams4e-mock-mode nil)
+        (meeting '((meetingContext
+                    . ((eventError . "No linked calendar event ID"))))))
+    (should (equal "Sign in required (M-x teams4e-login)"
+                   (teams4e--calendar-unavailable-label meeting)))
+    (let ((credentials (make-temp-file "teams4e-calendar-credentials-")))
+      (unwind-protect
+          (let ((teams4e-credentials-file credentials))
+            (should (equal "No linked calendar event"
+                           (teams4e--calendar-unavailable-label meeting))))
+        (delete-file credentials)))))
 
 (ert-deftest teams4e-upcoming-view-shows-calendar-enrichment-in-flight ()
   (let* ((meeting '((id . "meeting-1") (chatType . "meeting")))

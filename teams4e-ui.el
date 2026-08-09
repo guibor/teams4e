@@ -249,7 +249,7 @@
                'face-defface-spec)
 
 (defface teams4e-day-separator
-  '((t :inherit shadow :weight bold :overline t))
+  '((t :inherit shadow :weight semi-bold))
   "Face for transcript date separators."
   :group 'teams4e)
 
@@ -731,6 +731,37 @@ ERROR-CALLBACK has the same contract as in `teams4e--run'."
     (condition-case nil
         (format-time-string (if long "%Y-%m-%d %H:%M" "%b %e %H:%M")
                             (date-to-time value))
+      (error value))))
+
+(defun teams4e--local-day-key (value)
+  "Return VALUE's calendar day in the local Emacs time zone."
+  (when (and (stringp value) (not (string-empty-p value)))
+    (condition-case nil
+        (format-time-string "%Y-%m-%d" (date-to-time value))
+      (error (car (split-string value "T"))))))
+
+(defun teams4e--day-heading (value)
+  "Return a readable local day heading for ISO timestamp VALUE."
+  (condition-case nil
+      (let* ((time (date-to-time value))
+             (day (format-time-string "%Y-%m-%d" time))
+             (today (format-time-string "%Y-%m-%d"))
+             (yesterday
+              (format-time-string
+               "%Y-%m-%d" (time-subtract nil (days-to-time 1))))
+             (prefix (cond ((equal day today) "Today - ")
+                           ((equal day yesterday) "Yesterday - ")
+                           (t ""))))
+        (concat prefix
+                (format-time-string "%A, %B %e, %Y" time)))
+    (error value)))
+
+(defun teams4e--message-time-label (value)
+  "Return VALUE as a compact local transcript time."
+  (if (not (and (stringp value) (not (string-empty-p value))))
+      "Time unavailable"
+    (condition-case nil
+        (format-time-string "%H:%M" (date-to-time value))
       (error value))))
 
 (defun teams4e--org-date (value)
@@ -1908,7 +1939,15 @@ omitted by the chat-list response; explicit meeting views use this path."
              (remhash id teams4e--meeting-inflight)
              (when-let ((chat (teams4e--find-chat id)))
                (teams4e--apply-meeting-context
-                chat '((eventError . "Calendar metadata request failed")))))
+                chat
+                `((eventError
+                   . ,(format
+                       "Calendar metadata request failed (%s): %s"
+                       status
+                       (truncate-string-to-width
+                        (string-trim
+                         (teams4e--redacted-detail args (or detail "")))
+                        500 nil nil t)))))))
            (teams4e--report-error args status detail)
            (teams4e--refresh-visible-recent)))))))
 
@@ -2898,12 +2937,23 @@ nonfatal unavailable label instead."
 
 (defun teams4e--insert-day-separator (created)
   "Insert a day separator for ISO timestamp CREATED."
-  (let ((label
-         (condition-case nil
-             (format-time-string "%A, %B %e, %Y" (date-to-time created))
-           (error created))))
-    (insert (propertize (format "\n%s\n\n" label)
-                        'face 'teams4e-day-separator))))
+  (let* ((label (teams4e--day-heading created))
+         (content (format " %s " label))
+         (rule-width 72)
+         (remaining (max 4 (- rule-width (string-width content))))
+         (left (/ remaining 2))
+         (right (- remaining left)))
+    (insert "\n"
+            (propertize
+             (concat (make-string left ?-) content (make-string right ?-))
+             'face 'teams4e-day-separator)
+            "\n\n")))
+
+(defun teams4e--insert-indented-message-body (body &optional face)
+  "Insert multiline message BODY with a quiet two-column inset and FACE."
+  (dolist (line (split-string body "\n" nil))
+    (unless (string-empty-p line) (insert "  "))
+    (insert (if face (propertize line 'face face) line) "\n")))
 
 (defun teams4e--insert-message (message)
   "Insert one Teams MESSAGE into the current transcript."
@@ -2918,23 +2968,22 @@ nonfatal unavailable label instead."
                         'face (if own
                                   'teams4e-own-sender
                                 'teams4e-other-sender)))
-    (insert (propertize (format "  %s" (teams4e--format-date created t))
-                        'face 'shadow))
+    (insert (propertize (format "  %s" (teams4e--message-time-label created))
+                        'face 'shadow
+                        'help-echo (or created "Timestamp unavailable")))
     (when (teams4e--get message 'lastEditedDateTime)
       (insert (propertize "  edited" 'face 'shadow)))
     (insert "\n")
     (teams4e--insert-message-reference message)
     (cond
      ((not (string-empty-p body))
-      (insert (if (teams4e--system-event-p message)
-                  (propertize body 'face 'teams4e-event)
-                body)
-              "\n"))
+      (teams4e--insert-indented-message-body
+       body (and (teams4e--system-event-p message) 'teams4e-event)))
      ((and (null images)
            (null (seq-remove
                   #'teams4e--reference-attachment-p
                   (teams4e--get message 'attachments))))
-      (insert (propertize "[Empty message]\n" 'face 'shadow))))
+      (insert (propertize "  [Empty message]\n" 'face 'shadow))))
     (teams4e--insert-message-images message images)
     (teams4e--insert-attachments message)
     (when (and reactions (not (string-empty-p reactions)))
@@ -2968,6 +3017,34 @@ When DATE-ONLY is non-nil, omit the time of day."
 (defun teams4e--meeting-event (chat)
   "Return the linked calendar event attached to meeting CHAT."
   (teams4e--get (teams4e--get chat 'meetingContext) 'event))
+
+(defun teams4e--calendar-error-detail (chat)
+  "Return CHAT's linked-calendar failure detail, when present."
+  (teams4e--get (teams4e--get chat 'meetingContext) 'eventError))
+
+(defun teams4e--calendar-unavailable-label (chat)
+  "Return a concise, actionable calendar status label for CHAT."
+  (let ((detail (teams4e--calendar-error-detail chat)))
+    (cond
+     ((and (not teams4e-mock-mode)
+           (null teams4e-token-command)
+           (stringp teams4e-credentials-file)
+           (not (file-exists-p (expand-file-name teams4e-credentials-file))))
+      "Sign in required (M-x teams4e-login)")
+     ((and (stringp detail)
+           (string-match-p
+            "\\(?:403\\|access.*denied\\|forbidden\\|permission\\)"
+            (downcase detail)))
+      "Calendar permission denied")
+     ((and (stringp detail)
+           (string-match-p "no linked calendar event" (downcase detail)))
+      "No linked calendar event")
+     ((and (stringp detail)
+           (string-match-p
+            "\\(?:oauth\\|credential\\|graph token\\|logged out\\|bootstrap\\)"
+            (downcase detail)))
+      "Sign in required (M-x teams4e-login)")
+     (t "Calendar unavailable (see *M365 Errors*)"))))
 
 (defun teams4e--meeting-start-time (chat)
   "Return meeting CHAT's start as an Emacs time value."
@@ -3129,8 +3206,8 @@ When DATE-ONLY is non-nil, omit the time of day."
              ((gethash (teams4e--chat-id chat)
                        teams4e--meeting-inflight)
               "Loading calendar...")
-             ((teams4e--get (teams4e--get chat 'meetingContext) 'eventError)
-              "Calendar unavailable"))))
+             ((teams4e--calendar-error-detail chat)
+              (teams4e--calendar-unavailable-label chat)))))
       (string-join
        (delq nil (list schedule conflict status location)) " | "))))
 
@@ -3190,7 +3267,7 @@ When DATE-ONLY is non-nil, omit the time of day."
                 (if (teams4e--request-live-p
                      teams4e--meeting-process)
                     "Loading calendar details..."
-                  "Unavailable from the linked calendar")))
+                  (teams4e--calendar-unavailable-label teams4e--chat))))
            (where-label
             (teams4e--meeting-location-label teams4e--chat))
            (status-label
@@ -3265,6 +3342,17 @@ When DATE-ONLY is non-nil, omit the time of day."
             (with-current-buffer buffer
               (when (= request-id teams4e--meeting-request-id)
                 (setq teams4e--meeting-process nil))))
+          (teams4e--apply-meeting-context
+           chat
+           `((eventError
+              . ,(format
+                  "Calendar metadata request failed (%s): %s"
+                  status
+                  (truncate-string-to-width
+                   (string-trim
+                    (teams4e--redacted-detail
+                     (teams4e--meeting-context-args chat) (or detail "")))
+                   500 nil nil t)))))
           (teams4e--report-error
            (teams4e--meeting-context-args chat) status detail)))))))
 
@@ -3301,7 +3389,7 @@ When DATE-ONLY is non-nil, omit the time of day."
                  (teams4e--messages-for-display
                   teams4e--messages))
           (let* ((created (or (teams4e--get message 'createdDateTime) ""))
-                 (day (car (split-string created "T"))))
+                 (day (teams4e--local-day-key created)))
             (unless (equal day last-day)
               (setq last-day day)
               (teams4e--insert-day-separator created))
@@ -4219,7 +4307,8 @@ When COMMAND is nil, delegate to `browse-url'."
           (push (if (stringp url) (format "[%s](%s)" name url) name)
                 attachments))))
     (concat
-     (format "### %s - %s\n\n" sender (teams4e--format-date created t))
+     (format "### %s - %s\n\n"
+             (teams4e--message-time-label created) sender)
      (when reference
        (let ((quoted-sender
               (or (teams4e--dig reference 'messageSender 'user 'displayName)
@@ -4237,26 +4326,55 @@ When COMMAND is nil, delegate to `browse-url'."
      (when (and reactions (not (string-empty-p reactions)))
        (format "*Reactions: %s*\n\n" reactions)))))
 
-(defun teams4e--thread-markdown (chat messages)
-  "Return complete CHAT MESSAGES as a portable Markdown document."
-  (let ((title (teams4e--chat-label chat))
-        (url (teams4e--get chat 'webUrl))
-        (last-day nil))
+(defun teams4e--export-time-label (value)
+  "Return ISO VALUE as a precise local export timestamp."
+  (when (and (stringp value) (not (string-empty-p value)))
+    (condition-case nil
+        (format-time-string "%Y-%m-%d %H:%M %Z" (date-to-time value))
+      (error value))))
+
+(defun teams4e--thread-markdown (chat messages &optional history)
+  "Return complete CHAT MESSAGES as a portable Markdown document.
+
+HISTORY is backend pagination metadata for a verified full-chat export."
+  (let* ((title (teams4e--chat-label chat))
+         (url (teams4e--get chat 'webUrl))
+         (normalized (teams4e--normalize-messages messages))
+         (oldest
+          (or (teams4e--get history 'oldestDateTime)
+              (teams4e--get (car normalized) 'createdDateTime)))
+         (newest
+          (or (teams4e--get history 'newestDateTime)
+              (teams4e--get (car (last normalized)) 'createdDateTime)))
+         (pages (teams4e--get history 'pageCount))
+         (last-day nil))
     (concat
      "# " title "\n\n"
      (format "- Exported: %s\n" (format-time-string "%Y-%m-%d %H:%M %Z"))
      (format "- Teams chat ID: `%s`\n" (teams4e--chat-id chat))
+     (format "- Messages: %d\n" (length normalized))
+     (when history
+       (format "- History: Complete Microsoft Graph pagination%s\n"
+               (if (numberp pages)
+                   (format " (%d page%s)" pages (if (= pages 1) "" "s"))
+                 "")))
+     (when (or oldest newest)
+       (format "- Range: %s to %s\n"
+               (or (teams4e--export-time-label oldest) "unknown")
+               (or (teams4e--export-time-label newest) "unknown")))
      (when (stringp url) (format "- [Open in Microsoft Teams](%s)\n" url))
      "\n"
      (mapconcat
       (lambda (message)
         (let* ((created (or (teams4e--get message 'createdDateTime) ""))
-               (day (car (split-string created "T")))
+               (day (teams4e--local-day-key created))
                (heading (unless (equal day last-day)
                           (setq last-day day)
-                          (format "## %s\n\n" day))))
+                          (format "## %s - %s\n\n"
+                                  (or day "Date unavailable")
+                                  (teams4e--day-heading created)))))
           (concat heading (teams4e--message-markdown message))))
-      (teams4e--normalize-messages messages)
+      normalized
       ""))))
 
 (defun teams4e--export-path (chat)
@@ -4272,23 +4390,23 @@ When COMMAND is nil, delegate to `browse-url'."
              (teams4e--short-id chat))
      teams4e-export-directory)))
 
-(defun teams4e--write-thread-export (path chat messages)
-  "Write CHAT MESSAGES to Markdown PATH with private permissions."
+(defun teams4e--write-thread-export (path chat messages &optional history)
+  "Write CHAT MESSAGES and HISTORY to Markdown PATH with private permissions."
   (make-directory (file-name-directory path) t)
   (with-temp-file path
-    (insert (teams4e--thread-markdown chat messages)))
+    (insert (teams4e--thread-markdown chat messages history)))
   (set-file-modes path #o600)
   path)
 
 (defun teams4e--finish-thread-export
-    (chat messages open &optional after-export)
+    (chat messages open &optional after-export history)
   "Write complete CHAT MESSAGES and finish the export operation.
 
 When OPEN is non-nil, visit the file.  When AFTER-EXPORT is non-nil, call it
 with the absolute saved path after the mode-0600 file has been written."
   (let* ((path (teams4e--export-path chat))
          (saved-path
-          (teams4e--write-thread-export path chat messages)))
+          (teams4e--write-thread-export path chat messages history)))
     (cond
      (after-export
       (funcall after-export saved-path))
@@ -4299,23 +4417,47 @@ with the absolute saved path after the mode-0600 file has been written."
                (abbreviate-file-name saved-path))))
     saved-path))
 
-(defun teams4e--copy-thread-markdown (chat messages)
-  "Copy complete CHAT MESSAGES to the kill ring as Markdown."
-  (let ((markdown (teams4e--thread-markdown chat messages)))
+(defun teams4e--copy-thread-markdown (chat messages &optional history)
+  "Copy complete CHAT MESSAGES and HISTORY to the kill ring as Markdown."
+  (let ((markdown (teams4e--thread-markdown chat messages history)))
     (kill-new markdown)
     (message "Copied complete Teams thread as Markdown (%d messages)"
              (length messages))
     markdown))
+
+(defun teams4e--full-history-args (chat)
+  "Return a live, explicitly exhaustive history request for CHAT."
+  (when teams4e-offline-mode
+    (user-error
+     "Complete thread export requires online mode; cached history may be partial"))
+  (list "teams" "chat" "message" "export"
+        "--chatId" (teams4e--chat-id chat)))
+
+(defun teams4e--full-history-result (payload)
+  "Validate PAYLOAD and return its messages and completion metadata."
+  (let* ((history (teams4e--get payload 'history))
+         (messages
+          (teams4e--normalize-messages
+           (teams4e--payload-list (teams4e--get payload 'value))))
+         (reported-count (teams4e--get history 'messageCount)))
+    (unless (eq t (teams4e--get history 'complete))
+      (error "Teams backend did not confirm complete history pagination"))
+    (when (and (numberp reported-count)
+               (/= reported-count (length messages)))
+      (error "Teams history count mismatch: backend %d, received %d"
+             reported-count (length messages)))
+    (list :messages messages :history history)))
 
 (defun teams4e--copy-chat-thread-markdown (chat)
   "Fetch and copy complete CHAT history as Markdown."
   (message "Copying complete Teams history for %s..."
            (teams4e--chat-label chat))
   (teams4e--run-json
-   (teams4e--message-args chat t)
+   (teams4e--full-history-args chat)
    (lambda (payload)
-     (teams4e--copy-thread-markdown
-      chat (teams4e--payload-list payload)))))
+     (let ((result (teams4e--full-history-result payload)))
+       (teams4e--copy-thread-markdown
+        chat (plist-get result :messages) (plist-get result :history))))))
 
 (defun teams4e--export-thread (chat open &optional after-export)
   "Export complete CHAT history, visiting the output when OPEN is non-nil.
@@ -4324,10 +4466,12 @@ Call AFTER-EXPORT with the saved path when it is non-nil."
   (message "Exporting complete Teams history for %s..."
            (teams4e--chat-label chat))
   (teams4e--run-json
-   (teams4e--message-args chat t)
+   (teams4e--full-history-args chat)
    (lambda (payload)
-     (teams4e--finish-thread-export
-      chat (teams4e--payload-list payload) open after-export))))
+     (let ((result (teams4e--full-history-result payload)))
+       (teams4e--finish-thread-export
+        chat (plist-get result :messages) open after-export
+        (plist-get result :history))))))
 
 (defun teams4e-export-thread (&optional open)
   "Download a complete Teams thread as Markdown.

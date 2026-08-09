@@ -92,6 +92,28 @@ Main entry points:
   meeting interval through the meeting workspace, with a legacy minibuffer
   fallback when that module is not loaded.
 
+Chat export and agent analysis use a separate full-history backend command,
+not the bounded reader or SQLite cache. `export_message_history` follows Graph
+until no `@odata.nextLink` remains and returns the same message objects with a
+small completion envelope: page count, message count, and oldest/newest
+timestamps. Emacs validates that envelope before writing the mode-0600 file or
+starting an agent. The Markdown header records that evidence; no second message
+cache or transcript representation is created.
+
+Transcript day grouping and display both derive from the local Emacs timezone;
+the previous raw-UTC day split could disagree with local message times around
+midnight. `teams4e--local-day-key`, `teams4e--day-heading`, and
+`teams4e--message-time-label` feed both the reader and Markdown renderer.
+Reader day rules provide the primary temporal separation, with compact
+sender/time headers and a consistent body inset. Export headings retain an ISO
+day key alongside the readable local day name.
+
+Calendar errors stay attached to `meetingContext.eventError`, but the visible
+label classifies the useful recovery: missing local credentials request login,
+Graph access failures identify calendar permission, missing event IDs say the
+chat has no linked event, and unknown failures point to `*M365 Errors*`. The
+diagnostic retains a bounded, redacted backend detail.
+
 ### `teams4e-meetings.el`
 
 Implements the calendar-light meeting experience on the canonical chat/event

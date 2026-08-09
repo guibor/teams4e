@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Made chat export and agent analysis use a dedicated live history operation
+  that exhausts Graph pagination, verifies returned count/completion metadata,
+  records page count and oldest/newest timestamps in Markdown, and refuses to
+  describe a partial offline cache as complete.
+- Grouped reader and Markdown messages by the displayed local date instead of
+  the raw UTC date. Reader day rules are stronger, message headers use compact
+  local times, bodies have a consistent inset, and Markdown has readable day
+  headings plus export count/range metadata.
+- Replaced the generic calendar-unavailable label with actionable login,
+  permission, missing-event-link, or diagnostic states while retaining the
+  redacted backend detail in `*M365 Errors*`.
 - Repaired `b`/`B` after live Evil Collection reloads and made `b a` return to
   an unfiltered All Chats view by clearing the unread-only overlay.
 - Resolved built-in bookmark symbols before callable symbols, preventing

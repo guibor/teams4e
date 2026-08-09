@@ -693,21 +693,38 @@ def graph_collection(
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
   """Read Graph collection pages, stopping after optional LIMIT items."""
+  items, _, _ = graph_collection_with_metadata(
+      path_or_url, access_token, limit=limit
+  )
+  return items
+
+
+def graph_collection_with_metadata(
+    path_or_url: str,
+    access_token: str,
+    *,
+    limit: int | None = None,
+) -> tuple[list[dict[str, Any]], int, bool]:
+  """Read Graph pages and return items, page count, and exhaustion state."""
   items: list[dict[str, Any]] = []
   next_url: str | None = path_or_url
   seen_urls: set[str] = set()
+  page_count = 0
   while next_url and (limit is None or len(items) < limit):
     if next_url in seen_urls:
       raise BackendError("Microsoft Graph pagination repeated a page URL")
     seen_urls.add(next_url)
     page = graph_json(next_url, access_token)
+    page_count += 1
     values = page.get("value", [])
     if not isinstance(values, list):
       raise BackendError("Microsoft Graph collection has no value array")
     items.extend(item for item in values if isinstance(item, dict))
     candidate = page.get("@odata.nextLink")
     next_url = candidate if isinstance(candidate, str) and candidate else None
-  return items if limit is None else items[:limit]
+  selected = items if limit is None else items[:limit]
+  complete = next_url is None and len(selected) == len(items)
+  return selected, page_count, complete
 
 
 def collection_path(path: str, parameters: list[tuple[str, str]]) -> str:
@@ -1474,6 +1491,35 @@ def list_messages(
       f"/chats/{quoted_id(chat_id)}/messages", parameters
   )
   return graph_collection(path, access_token, limit=limit)
+
+
+def export_message_history(
+    chat_id: str,
+    access_token: str,
+) -> dict[str, Any]:
+  """Return an explicitly exhausted chat history with pagination metadata."""
+  path = collection_path(
+      f"/chats/{quoted_id(chat_id)}/messages",
+      [("$top", "50"), ("$orderby", "lastModifiedDateTime desc")],
+  )
+  messages, page_count, complete = graph_collection_with_metadata(
+      path, access_token
+  )
+  created = sorted(
+      value
+      for message in messages
+      if isinstance((value := message.get("createdDateTime")), str) and value
+  )
+  return {
+      "value": messages,
+      "history": {
+          "complete": complete,
+          "pageCount": page_count,
+          "messageCount": len(messages),
+          "oldestDateTime": created[0] if created else None,
+          "newestDateTime": created[-1] if created else None,
+      },
+  }
 
 
 def list_joined_teams(access_token: str) -> list[dict[str, Any]]:
@@ -2484,6 +2530,11 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
     result = list_members(chat_id, access_token)
     with TeamsCache() as cache:
       cache.upsert_resources("member", result, parent_id=chat_id)
+  elif args[:4] == ["teams", "chat", "message", "export"]:
+    chat_id = str(option(args, "--chatId"))
+    result = export_message_history(chat_id, access_token)
+    with TeamsCache() as cache:
+      cache.upsert_messages("chat", chat_id, result["value"])
   elif args[:4] == ["teams", "chat", "message", "list"]:
     chat_id = str(option(args, "--chatId"))
     requested_limit = option(args, "--limit", required=False)

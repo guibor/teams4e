@@ -1283,6 +1283,25 @@ class MockTenant:
       }
     if args[:4] == ["teams", "chat", "member", "list"]:
       return self.state["chatMembers"].get(str(option(args, "--chatId")), [])
+    if args[:4] == ["teams", "chat", "message", "export"]:
+      messages = copy.deepcopy(self.state["chatMessages"].get(
+          str(option(args, "--chatId")), []
+      ))
+      created = sorted(
+          value
+          for message in messages
+          if isinstance((value := message.get("createdDateTime")), str) and value
+      )
+      return {
+          "value": messages,
+          "history": {
+              "complete": True,
+              "pageCount": 1 if messages else 0,
+              "messageCount": len(messages),
+              "oldestDateTime": created[0] if created else None,
+              "newestDateTime": created[-1] if created else None,
+          },
+      }
     if args[:4] == ["teams", "chat", "message", "list"]:
       messages = self.state["chatMessages"].get(
           str(option(args, "--chatId")), []

@@ -326,6 +326,18 @@ with a prompt containing that path:
 (setq teams4e-thread-analysis-agent 'codex)
 ```
 
+Chat export and analysis do not reuse the visible reader window or a partial
+offline cache. They make a dedicated live request, follow every Graph
+pagination link, verify that pagination ended, and write message count, page
+count, and oldest/newest timestamps into the Markdown header. The document is
+chronological, grouped by readable local-day headings, and uses compact local
+times for individual messages. If online completion cannot be established, the
+agent is not started with a misleadingly partial file.
+
+Reader transcripts use the same local-time grouping as exports. A strong day
+rule separates dates; each message then has a compact sender/time header and an
+indented body. Hovering the time retains the source timestamp.
+
 ## Configuration
 
 Common settings:
