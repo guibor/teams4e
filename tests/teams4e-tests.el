@@ -2745,6 +2745,12 @@
     (should (= 403 (nth 1 reported)))
     (should-not (gethash "meeting-1" teams4e--meeting-inflight))))
 
+(ert-deftest teams4e-utf8-safe-string-removes-invalid-codepoints ()
+  (should (equal "hello"
+                 (teams4e--utf8-safe-string "hello")))
+  (should (equal "ab"
+                 (teams4e--utf8-safe-string (concat "a\0b")))))
+
 (ert-deftest teams4e-calendar-label-distinguishes-login-from-event-linkage ()
   (let ((teams4e-credentials-file
          (expand-file-name "missing-teams4e-credentials.json"
@@ -2761,6 +2767,51 @@
             (should (equal "No linked calendar event"
                            (teams4e--calendar-unavailable-label meeting))))
         (delete-file credentials)))))
+
+(ert-deftest teams4e-calendar-label-reports-missing-calendar-row ()
+  (let ((meeting
+         '((meetingContext
+            . ((eventError
+               . "No calendar event matched the meeting join URL"))))))
+    (should (equal "Not on your calendar"
+                   (teams4e--calendar-unavailable-label meeting)))))
+
+(ert-deftest teams4e-calendar-error-retriable-p-recognizes-join-url-fallback ()
+  (should (teams4e--calendar-error-retriable-p
+           "The meeting chat has no linked calendar event ID"))
+  (should (teams4e--calendar-error-retriable-p
+           "No calendar event matched the meeting join URL"))
+  (should (teams4e--calendar-error-retriable-p
+           "Microsoft Graph HTTP 404: item not found"))
+  (should-not (teams4e--calendar-error-retriable-p
+               "Microsoft Graph HTTP 403: denied")))
+
+(ert-deftest teams4e-enrich-meetings-retries-after-retriable-calendar-error ()
+  (let* ((meeting
+          '((id . "meeting-1")
+            (chatType . "meeting")
+            (meetingContext
+             . ((eventError
+                 . "The meeting chat has no linked calendar event ID")))))
+         (teams4e--chats (list meeting))
+         (teams4e-meeting-enrichment-limit 32)
+         (teams4e-meeting-enrichment-concurrency 1)
+         (teams4e-offline-mode nil)
+         (teams4e--meeting-inflight (make-hash-table :test #'equal))
+         observed)
+    (cl-letf (((symbol-function 'teams4e--run-json)
+               (lambda (args _callback &optional _error-callback)
+                 (setq observed args)
+                 'fake-process))
+              ((symbol-function 'teams4e--refresh-visible-recent)
+               (lambda () nil)))
+      (teams4e--enrich-meetings teams4e--chats t))
+    (should observed)
+    (let ((requests
+           (json-parse-string (nth 5 observed)
+                              :object-type 'alist :array-type 'list)))
+      (should (= 1 (length requests)))
+      (should (equal "meeting-1" (teams4e--get (car requests) 'chatId)))))
 
 (ert-deftest teams4e-upcoming-view-shows-calendar-enrichment-in-flight ()
   (let* ((meeting '((id . "meeting-1") (chatType . "meeting")))

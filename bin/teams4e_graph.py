@@ -15,8 +15,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,13 @@ MEETING_EVENT_SELECT = (
     "location,locations,organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink,"
     "allowNewTimeProposals,isOrganizer,responseRequested,type"
 )
+CALENDAR_LOOKUP_PAST_DAYS = 30
+CALENDAR_LOOKUP_PAST_FALLBACK_DAYS = 21
+CALENDAR_LOOKUP_FUTURE_DAYS = 45
+CALENDAR_LOOKUP_PAGE_SIZE = 50
+CALENDAR_LOOKUP_CHUNK_DAYS = 7
+CALENDAR_LOOKUP_MAX_PAGES_PER_CHUNK = 2
+CALENDAR_LOOKUP_MAX_PAST_CHUNKS = 3
 GET_SCHEDULE_BATCH_LIMIT = 20
 
 
@@ -691,10 +699,14 @@ def graph_collection(
     access_token: str,
     *,
     limit: int | None = None,
+    request_headers: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
   """Read Graph collection pages, stopping after optional LIMIT items."""
   items, _, _ = graph_collection_with_metadata(
-      path_or_url, access_token, limit=limit
+      path_or_url,
+      access_token,
+      limit=limit,
+      request_headers=request_headers,
   )
   return items
 
@@ -704,6 +716,7 @@ def graph_collection_with_metadata(
     access_token: str,
     *,
     limit: int | None = None,
+    request_headers: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], int, bool]:
   """Read Graph pages and return items, page count, and exhaustion state."""
   items: list[dict[str, Any]] = []
@@ -714,7 +727,11 @@ def graph_collection_with_metadata(
     if next_url in seen_urls:
       raise BackendError("Microsoft Graph pagination repeated a page URL")
     seen_urls.add(next_url)
-    page = graph_json(next_url, access_token)
+    page = graph_json(
+        next_url,
+        access_token,
+        request_headers=request_headers,
+    )
     page_count += 1
     values = page.get("value", [])
     if not isinstance(values, list):
@@ -767,6 +784,323 @@ def get_calendar_event(event_id: str, access_token: str) -> dict[str, Any]:
       access_token,
       request_headers={"Prefer": 'outlook.timezone="UTC"'},
   )
+
+
+def normalize_meeting_join_url(url: str | None) -> str | None:
+  """Return a case-insensitive join URL key for calendar/chat matching."""
+  if not isinstance(url, str) or not url.strip():
+    return None
+  return url.strip().casefold()
+
+
+def meeting_thread_key_from_chat_id(chat_id: str | None) -> str | None:
+  """Return the stable meeting-thread prefix used in chat IDs and join URLs."""
+  if not isinstance(chat_id, str) or not chat_id:
+    return None
+  lowered = chat_id.casefold()
+  if "meeting_" not in lowered:
+    return None
+  at = lowered.find("@")
+  return lowered[:at] if at > 0 else lowered
+
+
+def meeting_thread_key_from_join_url(url: str | None) -> str | None:
+  """Return the meeting-thread prefix embedded in JOIN_URL."""
+  if not isinstance(url, str) or not url:
+    return None
+  decoded = urllib.parse.unquote(url).casefold()
+  for marker in ("19:meeting_", "meeting_"):
+    idx = decoded.find(marker)
+    if idx < 0:
+      continue
+    segment = decoded[idx:]
+    for stop in ("@", "/", "?"):
+      stop_at = segment.find(stop)
+      if stop_at > 0:
+        segment = segment[:stop_at]
+    if segment.startswith("meeting_"):
+      segment = f"19:{segment}"
+    return segment
+  return None
+
+
+def calendar_event_thread_key(event: dict[str, Any]) -> str | None:
+  """Return the meeting-thread prefix for EVENT's join URL, when present."""
+  meeting = event.get("onlineMeeting")
+  meeting = meeting if isinstance(meeting, dict) else {}
+  join_url = meeting.get("joinUrl")
+  return meeting_thread_key_from_join_url(
+      join_url if isinstance(join_url, str) else None
+  )
+
+
+def calendar_view_events(
+    access_token: str,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[dict[str, Any]]:
+  """Return calendar rows in UTC between START and END."""
+  return list(iterate_calendar_view_events(access_token, start=start, end=end))
+
+
+def iterate_calendar_view_events(
+    access_token: str,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    max_pages: int | None = None,
+    page_size: int | None = None,
+) -> Iterator[dict[str, Any]]:
+  """Yield calendar rows in UTC between START and END."""
+  now = datetime.now(timezone.utc)
+  start_time = start or (now - timedelta(days=CALENDAR_LOOKUP_PAST_DAYS))
+  end_time = end or (now + timedelta(days=CALENDAR_LOOKUP_FUTURE_DAYS))
+  top = page_size or CALENDAR_LOOKUP_PAGE_SIZE
+  path = collection_path(
+      "/me/calendarView",
+      [
+          ("startDateTime", start_time.strftime("%Y-%m-%dT%H:%M:%SZ")),
+          ("endDateTime", end_time.strftime("%Y-%m-%dT%H:%M:%SZ")),
+          ("$select", MEETING_EVENT_SELECT),
+          ("$top", str(top)),
+      ],
+  )
+  next_url: str | None = path
+  seen_urls: set[str] = set()
+  request_headers = {"Prefer": 'outlook.timezone="UTC"'}
+  pages = 0
+  while next_url:
+    if max_pages is not None and pages >= max_pages:
+      break
+    if next_url in seen_urls:
+      raise BackendError("Microsoft Graph pagination repeated a page URL")
+    seen_urls.add(next_url)
+    page = graph_json(
+        next_url,
+        access_token,
+        request_headers=request_headers,
+    )
+    pages += 1
+    values = page.get("value", [])
+    if not isinstance(values, list):
+      raise BackendError("Microsoft Graph collection has no value array")
+    for item in values:
+      if isinstance(item, dict):
+        yield item
+    candidate = page.get("@odata.nextLink")
+    next_url = candidate if isinstance(candidate, str) and candidate else None
+
+
+def calendar_event_start(
+    event: dict[str, Any],
+) -> datetime | None:
+  """Return EVENT's UTC start time when available."""
+  start = event.get("start")
+  start = start if isinstance(start, dict) else {}
+  value = start.get("dateTime")
+  if not isinstance(value, str) or not value:
+    return None
+  normalized = value.replace("Z", "+00:00")
+  if len(normalized) >= 19 and normalized[19] not in "+-":
+    normalized = f"{normalized[:19]}+00:00"
+  try:
+    parsed = datetime.fromisoformat(normalized)
+  except ValueError:
+    return None
+  if parsed.tzinfo is None:
+    parsed = parsed.replace(tzinfo=timezone.utc)
+  return parsed.astimezone(timezone.utc)
+
+
+def prefer_calendar_event(
+    current: dict[str, Any] | None,
+    candidate: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+  """Return the better of two calendar rows that share one join URL."""
+  if current is None:
+    return candidate
+  now = now or datetime.now(timezone.utc)
+  current_start = calendar_event_start(current)
+  candidate_start = calendar_event_start(candidate)
+  if current_start is None:
+    return candidate
+  if candidate_start is None:
+    return current
+  current_future = current_start >= now
+  candidate_future = candidate_start >= now
+  if current_future and not candidate_future:
+    return current
+  if candidate_future and not current_future:
+    return candidate
+  if candidate_future:
+    return candidate if candidate_start < current_start else current
+  return candidate if candidate_start > current_start else current
+
+
+def calendar_events_by_join_url(
+    access_token: str,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    needed_join_urls: set[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+  """Index calendar events by normalized onlineMeeting.joinUrl.
+
+  Lookup uses short calendar windows and page caps so dense calendars do not
+  require scanning hundreds of unrelated rows in one request.
+  """
+  if not needed_join_urls:
+    return {}
+  remaining = {
+      normalized
+      for url in needed_join_urls
+      for normalized in [normalize_meeting_join_url(url)]
+      if normalized
+  }
+  if not remaining:
+    return {}
+  thread_keys = {
+      key
+      for url in needed_join_urls
+      for key in [meeting_thread_key_from_join_url(url)]
+      if key
+  }
+  now = datetime.now(timezone.utc)
+  indexed: dict[str, dict[str, Any]] = {}
+  lookup_end = end or (now + timedelta(days=CALENDAR_LOOKUP_FUTURE_DAYS))
+  lookup_start = start or now
+
+  def scan_chunk(chunk_start: datetime, chunk_end: datetime, *, past: bool) -> None:
+    for event in iterate_calendar_view_events(
+        access_token,
+        start=chunk_start,
+        end=chunk_end,
+        max_pages=CALENDAR_LOOKUP_MAX_PAGES_PER_CHUNK,
+    ):
+      event_thread = calendar_event_thread_key(event)
+      if thread_keys and event_thread is not None and event_thread not in thread_keys:
+        continue
+      meeting = event.get("onlineMeeting")
+      meeting = meeting if isinstance(meeting, dict) else {}
+      join_url = normalize_meeting_join_url(meeting.get("joinUrl"))
+      if not join_url or join_url not in remaining:
+        continue
+      if past:
+        indexed[join_url] = prefer_calendar_event(
+            indexed.get(join_url), event, now=now
+        )
+      else:
+        indexed[join_url] = event
+        remaining.remove(join_url)
+
+  offset = 0
+  while lookup_start + timedelta(days=offset) < lookup_end and remaining:
+    chunk_start = lookup_start + timedelta(days=offset)
+    chunk_end = min(
+        lookup_start + timedelta(days=offset + CALENDAR_LOOKUP_CHUNK_DAYS),
+        lookup_end,
+    )
+    scan_chunk(chunk_start, chunk_end, past=False)
+    offset += CALENDAR_LOOKUP_CHUNK_DAYS
+
+  if not remaining:
+    return indexed
+
+  past_chunks = 0
+  offset = 0
+  while (
+      offset < CALENDAR_LOOKUP_PAST_FALLBACK_DAYS
+      and remaining
+      and past_chunks < CALENDAR_LOOKUP_MAX_PAST_CHUNKS
+  ):
+    chunk_end = now - timedelta(days=offset)
+    chunk_start = now - timedelta(
+        days=min(
+            offset + CALENDAR_LOOKUP_CHUNK_DAYS,
+            CALENDAR_LOOKUP_PAST_FALLBACK_DAYS,
+        )
+    )
+    scan_chunk(chunk_start, chunk_end, past=True)
+    offset += CALENDAR_LOOKUP_CHUNK_DAYS
+    past_chunks += 1
+  return indexed
+
+
+def find_calendar_event_by_join_url(
+    join_url: str,
+    access_token: str,
+    *,
+    events_by_join_url: dict[str, dict[str, Any]] | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> dict[str, Any] | None:
+  """Return the calendar event whose join URL matches JOIN_URL."""
+  normalized = normalize_meeting_join_url(join_url)
+  if not normalized:
+    return None
+  if events_by_join_url is not None:
+    return events_by_join_url.get(normalized)
+  return calendar_events_by_join_url(
+      access_token,
+      start=start,
+      end=end,
+      needed_join_urls={join_url},
+  ).get(normalized)
+
+
+def resolve_meeting_calendar_event(
+    meeting_info: dict[str, Any],
+    event_id: str | None,
+    access_token: str,
+    *,
+    events_by_join_url: dict[str, dict[str, Any]] | None = None,
+    chat_id: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+  """Resolve one meeting calendar EVENT or return an explanatory error."""
+  join_url = meeting_info.get("joinWebUrl")
+  join_url = join_url if isinstance(join_url, str) and join_url else None
+  calendar_error: str | None = None
+
+  if isinstance(event_id, str) and event_id:
+    try:
+      return get_calendar_event(event_id, access_token), None
+    except BackendError as exception:
+      calendar_error = str(exception)
+      is_not_found = (
+          "404" in calendar_error
+          or "not found" in calendar_error.casefold()
+      )
+      if is_not_found and not join_url and chat_id:
+        try:
+          chat = graph_json(f"/chats/{quoted_id(chat_id)}", access_token)
+        except BackendError:
+          return None, calendar_error
+        refreshed = chat.get("onlineMeetingInfo")
+        refreshed = refreshed if isinstance(refreshed, dict) else {}
+        meeting_info = {**meeting_info, **refreshed}
+        join_url = meeting_info.get("joinWebUrl")
+        join_url = join_url if isinstance(join_url, str) and join_url else None
+
+  if join_url:
+    event = find_calendar_event_by_join_url(
+        join_url,
+        access_token,
+        events_by_join_url=events_by_join_url,
+    )
+    if event is not None:
+      return event, None
+    if calendar_error:
+      return None, (
+          f"{calendar_error}; no calendar row matched the meeting join URL"
+      )
+    return None, "No calendar event matched the meeting join URL"
+
+  if calendar_error:
+    return None, calendar_error
+  return None, "The meeting chat has no linked calendar event ID"
 
 
 def parse_graph_datetime(value: str) -> datetime:
@@ -1293,43 +1627,66 @@ def get_meeting_context(chat_id: str, access_token: str) -> dict[str, Any]:
       "onlineMeetingInfo": meeting_info,
   }
   if not isinstance(event_id, str) or not event_id:
-    result["eventError"] = "The meeting chat has no linked calendar event ID"
-    return result
-  try:
-    result["event"] = get_calendar_event(event_id, access_token)
-  except BackendError as exception:
-    result["eventError"] = str(exception)
+    event_id = None
+  event, error = resolve_meeting_calendar_event(
+      meeting_info,
+      event_id,
+      access_token,
+      chat_id=chat_id,
+  )
+  if event is not None:
+    result["event"] = event
+  if error:
+    result["eventError"] = error
   return result
+
+
+def meeting_chat_metadata(chat_id: str, access_token: str) -> dict[str, Any]:
+  """Return meeting chat metadata needed for calendar enrichment."""
+  chat = graph_json(f"/chats/{quoted_id(chat_id)}", access_token)
+  if chat.get("chatType") != "meeting":
+    raise BackendError("The chat is not a meeting conversation")
+  meeting_info = chat.get("onlineMeetingInfo")
+  meeting_info = meeting_info if isinstance(meeting_info, dict) else {}
+  return {"onlineMeetingInfo": meeting_info}
 
 
 def meeting_event_record(
     chat_id: str,
     event_id: str | None,
     access_token: str,
+    *,
+    events_by_join_url: dict[str, dict[str, Any]] | None = None,
+    meeting_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
   """Resolve one meeting event, looking up omitted chat metadata if needed."""
   result: dict[str, Any] = {"chatId": chat_id}
+  resolved_meeting_info: dict[str, Any] = {}
   if not event_id:
-    try:
-      chat = graph_json(f"/chats/{quoted_id(chat_id)}", access_token)
-    except BackendError as exception:
-      result["eventError"] = str(exception)
-      return result
-    if chat.get("chatType") != "meeting":
-      result["eventError"] = "The chat is not a meeting conversation"
-      return result
-    meeting_info = chat.get("onlineMeetingInfo")
-    meeting_info = meeting_info if isinstance(meeting_info, dict) else {}
-    result["onlineMeetingInfo"] = meeting_info
-    candidate = meeting_info.get("calendarEventId")
+    if meeting_info is None:
+      try:
+        resolved_meeting_info = meeting_chat_metadata(chat_id, access_token)[
+            "onlineMeetingInfo"
+        ]
+      except BackendError as exception:
+        result["eventError"] = str(exception)
+        return result
+    else:
+      resolved_meeting_info = meeting_info
+    result["onlineMeetingInfo"] = resolved_meeting_info
+    candidate = resolved_meeting_info.get("calendarEventId")
     event_id = candidate if isinstance(candidate, str) and candidate else None
-  if not event_id:
-    result["eventError"] = "The meeting chat has no linked calendar event ID"
-    return result
-  try:
-    result["event"] = get_calendar_event(event_id, access_token)
-  except BackendError as exception:
-    result["eventError"] = str(exception)
+  event, error = resolve_meeting_calendar_event(
+      resolved_meeting_info,
+      event_id,
+      access_token,
+      events_by_join_url=events_by_join_url,
+      chat_id=chat_id,
+  )
+  if event is not None:
+    result["event"] = event
+  if error:
+    result["eventError"] = error
   return result
 
 
@@ -1359,13 +1716,53 @@ def list_meeting_events_batch(
       unique[chat_id] = normalized_event_id
   if not unique:
     return []
+  chat_prefetch: dict[str, dict[str, Any]] = {}
+  needed_join_urls: set[str] = set()
+  missing_event_ids = [chat_id for chat_id, event_id in unique.items() if not event_id]
+  if missing_event_ids:
+    prefetch_workers = max(1, min(meeting_concurrency, len(missing_event_ids)))
+    with ThreadPoolExecutor(max_workers=prefetch_workers) as executor:
+      futures = {
+          executor.submit(meeting_chat_metadata, chat_id, access_token): chat_id
+          for chat_id in missing_event_ids
+      }
+      for future in as_completed(futures):
+        chat_id = futures[future]
+        try:
+          metadata = future.result()
+        except BackendError as exception:
+          chat_prefetch[chat_id] = {"error": str(exception)}
+          continue
+        chat_prefetch[chat_id] = metadata
+        join_url = metadata["onlineMeetingInfo"].get("joinWebUrl")
+        if isinstance(join_url, str) and join_url:
+          needed_join_urls.add(join_url)
+  events_by_join_url = (
+      calendar_events_by_join_url(access_token, needed_join_urls=needed_join_urls)
+      if needed_join_urls
+      else None
+  )
   workers = max(1, min(meeting_concurrency, len(unique)))
   records: dict[str, dict[str, Any]] = {}
+
+  def resolve_record(chat_id: str, event_id: str | None) -> dict[str, Any]:
+    prefetched = chat_prefetch.get(chat_id)
+    if prefetched and "error" in prefetched:
+      return {"chatId": chat_id, "eventError": prefetched["error"]}
+    meeting_info = None
+    if prefetched is not None:
+      meeting_info = prefetched.get("onlineMeetingInfo", {})
+    return meeting_event_record(
+        chat_id,
+        event_id,
+        access_token,
+        events_by_join_url=events_by_join_url,
+        meeting_info=meeting_info,
+    )
+
   with ThreadPoolExecutor(max_workers=workers) as executor:
     futures = {
-        executor.submit(
-            meeting_event_record, chat_id, event_id, access_token
-        ): chat_id
+        executor.submit(resolve_record, chat_id, event_id): chat_id
         for chat_id, event_id in unique.items()
     }
     for future in as_completed(futures):

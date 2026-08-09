@@ -3085,7 +3085,8 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
   (when (and (derived-mode-p 'teams4e-compose-mode)
              teams4e-compose--target
              (not teams4e-compose--discarded))
-    (let ((body (buffer-substring-no-properties (point-min) (point-max)))
+    (let ((body (teams4e--utf8-safe-string
+                 (buffer-substring-no-properties (point-min) (point-max))))
           (file (or teams4e-compose--draft-file
                     (teams4e-compose--path)))
           (content-type teams4e-compose--content-type)
@@ -3105,17 +3106,18 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
                 (expand-file-name ".teams-draft-" (file-name-directory file)))))
           (unwind-protect
               (progn
-                (with-temp-file temporary
-                  (insert
-                   (json-serialize
-                    `((body . ,body)
-                      (contentType . ,content-type)
-                      (attachments . ,(vconcat attachments))
-                      (mentions . ,(vconcat mentions))
-                      (target . ,target-record)
-                      (replyTo . ,reply-record)
-                      (updatedAt . ,updated-at))))
-                  (insert "\n"))
+                (let ((coding-system-for-write 'utf-8-unix))
+                  (with-temp-file temporary
+                    (insert
+                     (json-serialize
+                      `((body . ,body)
+                        (contentType . ,content-type)
+                        (attachments . ,(vconcat attachments))
+                        (mentions . ,(vconcat mentions))
+                        (target . ,target-record)
+                        (replyTo . ,reply-record)
+                        (updatedAt . ,updated-at))))
+                    (insert "\n")))
                 (set-file-modes temporary #o600)
                 (rename-file temporary file t))
             (when (file-exists-p temporary) (delete-file temporary))))))))

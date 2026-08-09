@@ -352,6 +352,11 @@ class GraphBackendTests(unittest.TestCase):
         ) as chat_request,
         mock.patch.object(
             backend,
+            "calendar_events_by_join_url",
+            return_value={},
+        ),
+        mock.patch.object(
+            backend,
             "get_calendar_event",
             side_effect=lambda event_id, _token: {"id": event_id},
         ) as event_request,
@@ -378,6 +383,127 @@ class GraphBackendTests(unittest.TestCase):
           [{"chatId": "chat-1"}], "token"
       )
     self.assertIn("no linked calendar event ID", result[0]["eventError"])
+
+  def test_meeting_event_batch_resolves_by_join_url_when_event_id_missing(
+      self,
+  ) -> None:
+    join_url = "https://teams.microsoft.com/l/meetup-join/test"
+    meetings = [{"chatId": "chat-1"}]
+    calendar_event = {
+        "id": "event-from-calendar",
+        "onlineMeeting": {"joinUrl": join_url},
+    }
+
+    with (
+        mock.patch.object(
+            backend,
+            "graph_json",
+            return_value={
+                "chatType": "meeting",
+                "onlineMeetingInfo": {"joinWebUrl": join_url},
+            },
+        ),
+        mock.patch.object(
+            backend,
+            "calendar_events_by_join_url",
+            return_value={join_url.casefold(): calendar_event},
+        ),
+        mock.patch.object(backend, "get_calendar_event") as event_request,
+    ):
+      result = backend.list_meeting_events_batch(meetings, "token")
+
+    event_request.assert_not_called()
+    self.assertEqual("event-from-calendar", result[0]["event"]["id"])
+
+  def test_meeting_event_batch_falls_back_on_stale_event_id(self) -> None:
+    join_url = "https://teams.microsoft.com/l/meetup-join/stale"
+    meetings = [{"chatId": "chat-1", "eventId": "stale-event"}]
+    calendar_event = {
+        "id": "fresh-event",
+        "onlineMeeting": {"joinUrl": join_url},
+    }
+
+    def stale_event(event_id: str, _token: str) -> dict[str, str]:
+      if event_id == "stale-event":
+        raise backend.BackendError("HTTP 404: event not found")
+      return {"id": event_id}
+
+    with (
+        mock.patch.object(
+            backend,
+            "get_calendar_event",
+            side_effect=stale_event,
+        ),
+        mock.patch.object(
+            backend,
+            "graph_json",
+            return_value={
+                "chatType": "meeting",
+                "onlineMeetingInfo": {"joinWebUrl": join_url},
+            },
+        ),
+        mock.patch.object(
+            backend,
+            "find_calendar_event_by_join_url",
+            return_value=calendar_event,
+        ),
+    ):
+      result = backend.list_meeting_events_batch(meetings, "token")
+
+    self.assertEqual("fresh-event", result[0]["event"]["id"])
+
+  def test_get_meeting_context_resolves_by_join_url(self) -> None:
+    join_url = "https://teams.microsoft.com/l/meetup-join/context"
+    calendar_event = {
+        "id": "event-context",
+        "start": {"dateTime": "2026-08-10T08:30:00", "timeZone": "UTC"},
+        "onlineMeeting": {"joinUrl": join_url},
+    }
+
+    with (
+        mock.patch.object(
+            backend,
+            "graph_json",
+            return_value={
+                "chatType": "meeting",
+                "onlineMeetingInfo": {"joinWebUrl": join_url},
+            },
+        ),
+        mock.patch.object(backend, "list_members", return_value=[]),
+        mock.patch.object(
+            backend,
+            "find_calendar_event_by_join_url",
+            return_value=calendar_event,
+        ) as lookup,
+    ):
+      result = backend.get_meeting_context("chat-1", "token")
+
+    lookup.assert_called_once()
+    self.assertEqual("event-context", result["event"]["id"])
+    self.assertNotIn("eventError", result)
+
+  def test_calendar_events_by_join_url_exits_early_when_join_url_matches(self) -> None:
+    join_url = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_test%40thread.v2/0"
+    matched = {
+        "id": "event-1",
+        "onlineMeeting": {"joinUrl": join_url},
+    }
+
+    with mock.patch.object(
+        backend,
+        "iterate_calendar_view_events",
+        side_effect=[
+            iter([matched]),
+            iter([matched]),
+        ],
+    ) as iterator:
+      result = backend.calendar_events_by_join_url(
+          "token",
+          needed_join_urls={join_url},
+      )
+
+    self.assertEqual(1, iterator.call_count)
+    self.assertEqual("event-1", result[join_url.casefold()]["id"])
 
   def test_meeting_suggestions_preserve_duration_and_rank_attendees(self) -> None:
     event = {
@@ -839,7 +965,7 @@ class GraphBackendTests(unittest.TestCase):
     ) as request:
       result = backend.graph_collection("/me/chats", "token", limit=1)
     self.assertEqual([{"id": "chat-1"}], result)
-    request.assert_called_once_with("/me/chats", "token")
+    request.assert_called_once_with("/me/chats", "token", request_headers=None)
 
   def test_send_posts_plain_text_to_existing_chat(self) -> None:
     with mock.patch.object(

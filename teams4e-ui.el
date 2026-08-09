@@ -768,6 +768,23 @@ ERROR-CALLBACK has the same contract as in `teams4e--run'."
         (format-time-string "%H:%M" (date-to-time value))
       (error value))))
 
+(defun teams4e--utf8-safe-string (string)
+  "Return STRING with characters that UTF-8 cannot encode removed.
+
+Compose buffers can pick up invalid codepoints from input methods or pasted
+Teams markup.  Draft persistence uses UTF-8 JSON files, so strip those before
+writing temporary files."
+  (when (stringp string)
+    (with-temp-buffer
+      (dotimes (index (length string))
+        (let ((char (aref string index)))
+          (when (and (characterp char)
+                     (<= char #x10FFFF)
+                     (not (and (>= char #xFDD0) (<= char #xFDEF)))
+                     (or (memq char '(?\n ?\t)) (>= char #x20)))
+            (insert (char-to-string char)))))
+      (buffer-string))))
+
 (defun teams4e--org-date (value)
   "Format ISO date VALUE as an inactive Org timestamp."
   (condition-case nil
@@ -1021,15 +1038,16 @@ ERROR-CALLBACK has the same contract as in `teams4e--run'."
                               (teams4e--get right 'name))))))
         (unwind-protect
             (progn
-              (with-temp-file temporary
-                (insert
-                 (json-serialize
-                  `((favorites . ,(vconcat (sort favorites #'string<)))
-                    (muted . ,(vconcat (sort muted #'string<)))
-                    (handled . ,(vconcat (sort handled record-less-p)))
-                    (snoozed . ,(vconcat (sort snoozed record-less-p)))
-                    (savedViews . ,(vconcat sorted-views)))))
-                (insert "\n"))
+              (let ((coding-system-for-write 'utf-8-unix))
+                (with-temp-file temporary
+                  (insert
+                   (json-serialize
+                    `((favorites . ,(vconcat (sort favorites #'string<)))
+                      (muted . ,(vconcat (sort muted #'string<)))
+                      (handled . ,(vconcat (sort handled record-less-p)))
+                      (snoozed . ,(vconcat (sort snoozed record-less-p)))
+                      (savedViews . ,(vconcat sorted-views)))))
+                  (insert "\n")))
               (set-file-modes temporary #o600)
               (rename-file temporary file t))
           (when (file-exists-p temporary) (delete-file temporary)))))))
@@ -1900,20 +1918,25 @@ Results are merged into the existing chat alists.  The inbox therefore has
 one conversation representation even while meeting metadata arrives later.
 When RESOLVE-MISSING is non-nil, the backend may first resolve an event ID
 omitted by the chat-list response; explicit meeting views use this path."
-  (let* ((limit (max 0 teams4e-meeting-enrichment-limit))
+  (let* ((base-limit (max 0 teams4e-meeting-enrichment-limit))
          (candidates
           (seq-filter
            (lambda (chat)
              (let* ((id (teams4e--chat-id chat))
-                    (context (teams4e--get chat 'meetingContext)))
+                    (context (teams4e--get chat 'meetingContext))
+                    (error (teams4e--get context 'eventError)))
                (and id
                     (teams4e--meeting-chat-p chat)
                     (or resolve-missing
                         (teams4e--meeting-event-id chat))
                     (not (teams4e--get context 'event))
-                    (not (teams4e--get context 'eventError))
+                    (or (not error)
+                        (teams4e--calendar-error-retriable-p error))
                     (not (gethash id teams4e--meeting-inflight)))))
            chats))
+         (limit (if resolve-missing
+                   (max base-limit (min 128 (length candidates)))
+                 base-limit))
          (selected
           (seq-take
            (if resolve-missing
@@ -1935,7 +1958,11 @@ omitted by the chat-list response; explicit meeting views use this path."
                (remhash id teams4e--meeting-inflight)
                (teams4e--apply-meeting-context chat record)))
            (dolist (id ids) (remhash id teams4e--meeting-inflight))
-           (teams4e--refresh-visible-recent))
+           (teams4e--refresh-visible-recent)
+           (when (and resolve-missing
+                      (= (length selected) limit)
+                      (< limit (length candidates)))
+             (teams4e--enrich-meetings chats resolve-missing)))
          (lambda (status detail)
            ;; Calendar permission is optional; chat and member data stay useful,
            ;; but meeting views must explain why their calendar fields are empty.
@@ -3026,6 +3053,13 @@ When DATE-ONLY is non-nil, omit the time of day."
   "Return CHAT's linked-calendar failure detail, when present."
   (teams4e--get (teams4e--get chat 'meetingContext) 'eventError))
 
+(defun teams4e--calendar-error-retriable-p (detail)
+  "Return non-nil when linked-calendar enrichment should be retried for DETAIL."
+  (and (stringp detail)
+       (string-match-p
+        "\\(?:no linked calendar event\\|no calendar event matched\\|\\(?:^\\|[^0-9]\\)404\\|not found\\|stale\\)"
+        (downcase detail))))
+
 (defun teams4e--calendar-unavailable-label (chat)
   "Return a concise, actionable calendar status label for CHAT."
   (let ((detail (teams4e--calendar-error-detail chat)))
@@ -3043,6 +3077,9 @@ When DATE-ONLY is non-nil, omit the time of day."
      ((and (stringp detail)
            (string-match-p "no linked calendar event" (downcase detail)))
       "No linked calendar event")
+     ((and (stringp detail)
+           (string-match-p "no calendar event matched" (downcase detail)))
+      "Not on your calendar")
      ((and (stringp detail)
            (string-match-p
             "\\(?:oauth\\|credential\\|graph token\\|logged out\\|bootstrap\\)"
@@ -3922,7 +3959,8 @@ With PARTICIPANT non-nil, resolve a one-to-one chat by participant email."
 (define-derived-mode teams4e-compose-mode text-mode "Teams-Compose"
   "Major mode for composing a Microsoft Teams chat message."
   (visual-line-mode 1)
-  (setq-local require-final-newline nil))
+  (setq-local require-final-newline nil
+              buffer-file-coding-system 'utf-8-unix))
 
 (defun teams4e--target-label (target)
   "Return a human-readable label for message TARGET."
@@ -4074,8 +4112,9 @@ REPLY-TO, when non-nil, is the source message for a native quoted reply."
          (mentions teams4e-compose--mentions)
          (content-type teams4e-compose--content-type)
          (origin teams4e-compose--origin)
-         (message-text (string-trim (buffer-substring-no-properties
-                                     (point-min) (point-max))))
+         (message-text (teams4e--utf8-safe-string
+                        (string-trim (buffer-substring-no-properties
+                                      (point-min) (point-max)))))
          (label (teams4e--target-label target))
          args)
     (when (and (string-empty-p message-text) (null attachments))
