@@ -120,7 +120,9 @@
 (defvar teams4e--connected-user-id nil)
 (defvar teams4e--member-cache (make-hash-table :test #'equal))
 (defvar teams4e--member-inflight (make-hash-table :test #'equal))
+(defvar teams4e-meeting-enrichment-timeout)
 (defvar teams4e--meeting-inflight (make-hash-table :test #'equal))
+(defvar teams4e--meeting-enrichment-timeouts (make-hash-table :test #'equal))
 (defconst teams4e--no-members 'teams4e--no-members)
 (defvar teams4e--favorites (make-hash-table :test #'equal))
 (defvar teams4e--muted (make-hash-table :test #'equal))
@@ -1911,6 +1913,35 @@ wins without affecting visible message or meeting ordering."
      (right-time nil)
      (t (string< (teams4e--chat-id left) (teams4e--chat-id right))))))
 
+(defun teams4e--cancel-meeting-enrichment-timeouts (ids)
+  "Cancel enrichment timeout timers for meeting chat IDS."
+  (dolist (id ids)
+    (when-let ((timer (gethash id teams4e--meeting-enrichment-timeouts)))
+      (cancel-timer timer)
+      (remhash id teams4e--meeting-enrichment-timeouts))))
+
+(defun teams4e--meeting-enrichment-timed-out (id)
+  "Clear a stuck enrichment for meeting chat ID and show a retriable error."
+  (remhash id teams4e--meeting-enrichment-timeouts)
+  (when (gethash id teams4e--meeting-inflight)
+    (remhash id teams4e--meeting-inflight)
+    (when-let ((chat (teams4e--find-chat id)))
+      (unless (teams4e--meeting-event chat)
+        (teams4e--apply-meeting-context
+         chat
+         `((eventError
+            . "Calendar enrichment timed out; press g to retry")))))
+    (teams4e--refresh-visible-recent)))
+
+(defun teams4e--schedule-meeting-enrichment-timeouts (ids)
+  "Schedule timeout recovery for meeting enrichment of IDS."
+  (let ((delay (max 30 teams4e-meeting-enrichment-timeout)))
+    (dolist (id ids)
+      (teams4e--cancel-meeting-enrichment-timeouts (list id))
+      (puthash id
+               (run-with-timer delay nil #'teams4e--meeting-enrichment-timed-out id)
+               teams4e--meeting-enrichment-timeouts))))
+
 (defun teams4e--enrich-meetings (chats &optional resolve-missing)
   "Resolve linked calendar events for a bounded subset of meeting CHATS.
 
@@ -1935,7 +1966,7 @@ omitted by the chat-list response; explicit meeting views use this path."
                     (not (gethash id teams4e--meeting-inflight)))))
            chats))
          (limit (if resolve-missing
-                   (max base-limit (min 128 (length candidates)))
+                   (min base-limit (length candidates))
                  base-limit))
          (selected
           (seq-take
@@ -1946,12 +1977,14 @@ omitted by the chat-list response; explicit meeting views use this path."
          (ids (mapcar #'teams4e--chat-id selected)))
     (when (and ids (not teams4e-offline-mode))
       (dolist (id ids) (puthash id t teams4e--meeting-inflight))
+      (teams4e--schedule-meeting-enrichment-timeouts ids)
       (when resolve-missing
         (teams4e--refresh-visible-recent))
       (let ((args (teams4e--meeting-event-batch-args selected)))
         (teams4e--run-json
          args
          (lambda (payload)
+           (teams4e--cancel-meeting-enrichment-timeouts ids)
            (dolist (record (teams4e--payload-list payload))
              (when-let* ((id (teams4e--get record 'chatId))
                          (chat (teams4e--find-chat id)))
@@ -1966,6 +1999,7 @@ omitted by the chat-list response; explicit meeting views use this path."
          (lambda (status detail)
            ;; Calendar permission is optional; chat and member data stay useful,
            ;; but meeting views must explain why their calendar fields are empty.
+           (teams4e--cancel-meeting-enrichment-timeouts ids)
            (dolist (id ids)
              (remhash id teams4e--meeting-inflight)
              (when-let ((chat (teams4e--find-chat id)))
@@ -3057,7 +3091,7 @@ When DATE-ONLY is non-nil, omit the time of day."
   "Return non-nil when linked-calendar enrichment should be retried for DETAIL."
   (and (stringp detail)
        (string-match-p
-        "\\(?:no linked calendar event\\|no calendar event matched\\|\\(?:^\\|[^0-9]\\)404\\|not found\\|stale\\)"
+        "\\(?:no linked calendar event\\|no calendar event matched\\|timed out\\|\\(?:^\\|[^0-9]\\)404\\|not found\\|stale\\)"
         (downcase detail))))
 
 (defun teams4e--calendar-unavailable-label (chat)
@@ -3080,6 +3114,9 @@ When DATE-ONLY is non-nil, omit the time of day."
      ((and (stringp detail)
            (string-match-p "no calendar event matched" (downcase detail)))
       "Not on your calendar")
+     ((and (stringp detail)
+           (string-match-p "timed out" (downcase detail)))
+      "Calendar enrichment timed out")
      ((and (stringp detail)
            (string-match-p
             "\\(?:oauth\\|credential\\|graph token\\|logged out\\|bootstrap\\)"

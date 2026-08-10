@@ -2783,8 +2783,47 @@
            "No calendar event matched the meeting join URL"))
   (should (teams4e--calendar-error-retriable-p
            "Microsoft Graph HTTP 404: item not found"))
+  (should (teams4e--calendar-error-retriable-p
+           "Calendar enrichment timed out; press g to retry"))
   (should-not (teams4e--calendar-error-retriable-p
                "Microsoft Graph HTTP 403: denied")))
+
+(ert-deftest teams4e-meeting-enrichment-timeout-clears-inflight ()
+  (let* ((meeting '((id . "meeting-1") (chatType . "meeting")))
+         (teams4e--chats (list meeting))
+         (teams4e--meeting-inflight (make-hash-table :test #'equal))
+         (teams4e--meeting-enrichment-timeouts (make-hash-table :test #'equal)))
+    (puthash "meeting-1" t teams4e--meeting-inflight)
+    (teams4e--meeting-enrichment-timed-out "meeting-1")
+    (should-not (gethash "meeting-1" teams4e--meeting-inflight))
+    (should (teams4e--calendar-error-detail meeting))))
+
+(ert-deftest teams4e-meeting-enrichment-wave-respects-limit ()
+  (let* ((meetings
+          (mapcar
+           (lambda (id)
+             `((id . ,id) (chatType . "meeting")))
+           '("m1" "m2" "m3" "m4" "m5")))
+         (teams4e--chats meetings)
+         (teams4e-meeting-enrichment-limit 2)
+         (teams4e-meeting-enrichment-concurrency 1)
+         (teams4e-offline-mode nil)
+         (teams4e--meeting-inflight (make-hash-table :test #'equal))
+         (teams4e--meeting-enrichment-timeouts (make-hash-table :test #'equal))
+         observed)
+    (cl-letf (((symbol-function 'teams4e--run-json)
+               (lambda (args _callback &optional _error-callback)
+                 (setq observed args)
+                 'fake-process))
+              ((symbol-function 'teams4e--refresh-visible-recent)
+               #'ignore)
+              ((symbol-function 'teams4e--schedule-meeting-enrichment-timeouts)
+               #'ignore))
+      (teams4e--enrich-meetings teams4e--chats t))
+    (let ((requests
+           (json-parse-string (nth 5 observed)
+                              :object-type 'alist :array-type 'list)))
+      (should (= 2 (length requests)))))
 
 (ert-deftest teams4e-enrich-meetings-retries-after-retriable-calendar-error ()
   (let* ((meeting

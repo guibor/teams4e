@@ -492,17 +492,16 @@ class GraphBackendTests(unittest.TestCase):
     with mock.patch.object(
         backend,
         "iterate_calendar_view_events",
-        side_effect=[
-            iter([matched]),
-            iter([matched]),
-        ],
+        return_value=iter([matched]),
     ) as iterator:
       result = backend.calendar_events_by_join_url(
           "token",
           needed_join_urls={join_url},
       )
 
-    self.assertEqual(1, iterator.call_count)
+    self.assertGreaterEqual(iterator.call_count, 1)
+    self.assertLessEqual(
+        iterator.call_count, backend.CALENDAR_LOOKUP_CHUNK_PARALLEL)
     self.assertEqual("event-1", result[join_url.casefold()]["id"])
 
   def test_meeting_suggestions_preserve_duration_and_rank_attendees(self) -> None:

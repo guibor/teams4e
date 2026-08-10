@@ -47,6 +47,9 @@ CALENDAR_LOOKUP_PAGE_SIZE = 50
 CALENDAR_LOOKUP_CHUNK_DAYS = 7
 CALENDAR_LOOKUP_MAX_PAGES_PER_CHUNK = 2
 CALENDAR_LOOKUP_MAX_PAST_CHUNKS = 3
+CALENDAR_LOOKUP_MAX_FUTURE_SCAN_PAGES = 8
+CALENDAR_LOOKUP_MAX_PAST_SCAN_PAGES = 6
+CALENDAR_LOOKUP_CHUNK_PARALLEL = 4
 GET_SCHEDULE_BATCH_LIMIT = 20
 
 
@@ -940,6 +943,26 @@ def prefer_calendar_event(
   return candidate if candidate_start > current_start else current
 
 
+class _CalendarPageBudget:
+  """Thread-safe cap on calendarView pages consumed by one join-URL lookup."""
+
+  def __init__(self, maximum: int) -> None:
+    self._maximum = maximum
+    self._used = 0
+    self._lock = threading.Lock()
+
+  def reserve(self, requested: int) -> int:
+    """Return how many pages SCAN may read, reserving them from the budget."""
+    with self._lock:
+      allowed = min(requested, self._maximum - self._used)
+      self._used += allowed
+      return allowed
+
+  def exhausted(self) -> bool:
+    with self._lock:
+      return self._used >= self._maximum
+
+
 def calendar_events_by_join_url(
     access_token: str,
     *,
@@ -949,8 +972,9 @@ def calendar_events_by_join_url(
 ) -> dict[str, dict[str, Any]]:
   """Index calendar events by normalized onlineMeeting.joinUrl.
 
-  Lookup uses short calendar windows and page caps so dense calendars do not
-  require scanning hundreds of unrelated rows in one request.
+  Lookup uses short calendar windows, parallel chunk scans, and page caps so
+  dense calendars do not require scanning hundreds of unrelated rows in one
+  request.
   """
   if not needed_join_urls:
     return {}
@@ -972,60 +996,96 @@ def calendar_events_by_join_url(
   indexed: dict[str, dict[str, Any]] = {}
   lookup_end = end or (now + timedelta(days=CALENDAR_LOOKUP_FUTURE_DAYS))
   lookup_start = start or now
+  state_lock = threading.Lock()
 
-  def scan_chunk(chunk_start: datetime, chunk_end: datetime, *, past: bool) -> None:
+  def scan_chunk(
+      chunk_start: datetime,
+      chunk_end: datetime,
+      budget: _CalendarPageBudget,
+      *,
+      past: bool,
+  ) -> None:
+    if budget.exhausted():
+      return
+    max_pages = budget.reserve(CALENDAR_LOOKUP_MAX_PAGES_PER_CHUNK)
+    if max_pages <= 0:
+      return
     for event in iterate_calendar_view_events(
         access_token,
         start=chunk_start,
         end=chunk_end,
-        max_pages=CALENDAR_LOOKUP_MAX_PAGES_PER_CHUNK,
+        max_pages=max_pages,
     ):
-      event_thread = calendar_event_thread_key(event)
-      if thread_keys and event_thread is not None and event_thread not in thread_keys:
-        continue
-      meeting = event.get("onlineMeeting")
-      meeting = meeting if isinstance(meeting, dict) else {}
-      join_url = normalize_meeting_join_url(meeting.get("joinUrl"))
-      if not join_url or join_url not in remaining:
-        continue
-      if past:
-        indexed[join_url] = prefer_calendar_event(
-            indexed.get(join_url), event, now=now
-        )
-      else:
-        indexed[join_url] = event
-        remaining.remove(join_url)
+      with state_lock:
+        if not remaining:
+          break
+        event_thread = calendar_event_thread_key(event)
+        if thread_keys and event_thread is not None and event_thread not in thread_keys:
+          continue
+        meeting = event.get("onlineMeeting")
+        meeting = meeting if isinstance(meeting, dict) else {}
+        join_url = normalize_meeting_join_url(meeting.get("joinUrl"))
+        if not join_url or join_url not in remaining:
+          continue
+        if past:
+          indexed[join_url] = prefer_calendar_event(
+              indexed.get(join_url), event, now=now
+          )
+        else:
+          indexed[join_url] = event
+          remaining.remove(join_url)
 
+  def run_chunk_specs(
+      chunk_specs: list[tuple[datetime, datetime, bool]],
+      budget: _CalendarPageBudget,
+  ) -> None:
+    if not chunk_specs or not remaining:
+      return
+    parallel = min(CALENDAR_LOOKUP_CHUNK_PARALLEL, len(chunk_specs))
+    for batch_start in range(0, len(chunk_specs), parallel):
+      if not remaining or budget.exhausted():
+        break
+      batch = chunk_specs[batch_start:batch_start + parallel]
+      with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+        futures = [
+            executor.submit(scan_chunk, chunk_start, chunk_end, budget, past=past)
+            for chunk_start, chunk_end, past in batch
+        ]
+        for future in as_completed(futures):
+          future.result()
+
+  future_specs: list[tuple[datetime, datetime, bool]] = []
   offset = 0
-  while lookup_start + timedelta(days=offset) < lookup_end and remaining:
+  while lookup_start + timedelta(days=offset) < lookup_end:
     chunk_start = lookup_start + timedelta(days=offset)
     chunk_end = min(
         lookup_start + timedelta(days=offset + CALENDAR_LOOKUP_CHUNK_DAYS),
         lookup_end,
     )
-    scan_chunk(chunk_start, chunk_end, past=False)
+    future_specs.append((chunk_start, chunk_end, False))
     offset += CALENDAR_LOOKUP_CHUNK_DAYS
 
-  if not remaining:
-    return indexed
+  run_chunk_specs(future_specs, _CalendarPageBudget(CALENDAR_LOOKUP_MAX_FUTURE_SCAN_PAGES))
 
-  past_chunks = 0
-  offset = 0
-  while (
-      offset < CALENDAR_LOOKUP_PAST_FALLBACK_DAYS
-      and remaining
-      and past_chunks < CALENDAR_LOOKUP_MAX_PAST_CHUNKS
-  ):
-    chunk_end = now - timedelta(days=offset)
-    chunk_start = now - timedelta(
-        days=min(
-            offset + CALENDAR_LOOKUP_CHUNK_DAYS,
-            CALENDAR_LOOKUP_PAST_FALLBACK_DAYS,
-        )
-    )
-    scan_chunk(chunk_start, chunk_end, past=True)
-    offset += CALENDAR_LOOKUP_CHUNK_DAYS
-    past_chunks += 1
+  if remaining:
+    past_specs: list[tuple[datetime, datetime, bool]] = []
+    past_chunks = 0
+    offset = 0
+    while (
+        offset < CALENDAR_LOOKUP_PAST_FALLBACK_DAYS
+        and past_chunks < CALENDAR_LOOKUP_MAX_PAST_CHUNKS
+    ):
+      chunk_end = now - timedelta(days=offset)
+      chunk_start = now - timedelta(
+          days=min(
+              offset + CALENDAR_LOOKUP_CHUNK_DAYS,
+              CALENDAR_LOOKUP_PAST_FALLBACK_DAYS,
+          )
+      )
+      past_specs.append((chunk_start, chunk_end, True))
+      offset += CALENDAR_LOOKUP_CHUNK_DAYS
+      past_chunks += 1
+    run_chunk_specs(past_specs, _CalendarPageBudget(CALENDAR_LOOKUP_MAX_PAST_SCAN_PAGES))
   return indexed
 
 

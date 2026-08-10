@@ -288,6 +288,14 @@ recent message-less meeting stubs first, then other meeting chats."
   :type 'integer
   :group 'teams4e)
 
+(defcustom teams4e-meeting-enrichment-timeout 120
+  "Seconds before clearing in-flight calendar enrichment for one meeting.
+
+When enrichment takes longer than this, the meeting row shows a retriable
+timeout instead of staying on \"Loading calendar...\" indefinitely."
+  :type 'integer
+  :group 'teams4e)
+
 (defcustom teams4e-meeting-proposal-search-days 7
   "Calendar days searched around a meeting for alternate work-hour slots.
 
