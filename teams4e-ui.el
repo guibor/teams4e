@@ -1991,11 +1991,7 @@ omitted by the chat-list response; explicit meeting views use this path."
                (remhash id teams4e--meeting-inflight)
                (teams4e--apply-meeting-context chat record)))
            (dolist (id ids) (remhash id teams4e--meeting-inflight))
-           (teams4e--refresh-visible-recent)
-           (when (and resolve-missing
-                      (= (length selected) limit)
-                      (< limit (length candidates)))
-             (teams4e--enrich-meetings chats resolve-missing)))
+           (teams4e--refresh-visible-recent))
          (lambda (status detail)
            ;; Calendar permission is optional; chat and member data stay useful,
            ;; but meeting views must explain why their calendar fields are empty.

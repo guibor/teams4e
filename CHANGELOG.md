@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Batched direct calendar-event reads through Microsoft Graph JSON batches of
+  at most 20 requests, collapsed stale or missing event fallbacks into one
+  shared bounded `calendarView` scan, and stopped retrying failed enrichment
+  rows recursively within the same Emacs refresh.
 - Made chat export and agent analysis use a dedicated live history operation
   that exhausts Graph pagination, verifies returned count/completion metadata,
   records page count and oldest/newest timestamps in Markdown, and refuses to

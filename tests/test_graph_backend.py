@@ -315,20 +315,22 @@ class GraphBackendTests(unittest.TestCase):
         {"chatId": "chat-2", "eventId": "event-2"},
     ]
 
-    def event(event_id: str, token: str) -> dict[str, str]:
+    def events(event_ids: list[str], token: str) -> dict:
       self.assertEqual("token", token)
-      if event_id == "event-2":
-        raise backend.BackendError("calendar denied")
-      return {"id": event_id}
+      self.assertEqual(["event-1", "event-2"], event_ids)
+      return {
+          "event-1": ({"id": "event-1"}, None),
+          "event-2": (None, "calendar denied"),
+      }
 
     with mock.patch.object(
-        backend, "get_calendar_event", side_effect=event
+        backend, "get_calendar_events_batch", side_effect=events
     ) as request:
       result = backend.list_meeting_events_batch(
           meetings, "token", meeting_concurrency=2
       )
 
-    self.assertEqual(2, request.call_count)
+    request.assert_called_once()
     self.assertEqual(["chat-1", "chat-2"], [item["chatId"] for item in result])
     self.assertEqual("event-1", result[0]["event"]["id"])
     self.assertIn("denied", result[1]["eventError"])
@@ -352,13 +354,11 @@ class GraphBackendTests(unittest.TestCase):
         ) as chat_request,
         mock.patch.object(
             backend,
-            "calendar_events_by_join_url",
-            return_value={},
-        ),
-        mock.patch.object(
-            backend,
-            "get_calendar_event",
-            side_effect=lambda event_id, _token: {"id": event_id},
+            "get_calendar_events_batch",
+            side_effect=[
+                {"event-2": ({"id": "event-2"}, None)},
+                {"event-1": ({"id": "event-1"}, None)},
+            ],
         ) as event_request,
     ):
       result = backend.list_meeting_events_batch(
@@ -367,6 +367,8 @@ class GraphBackendTests(unittest.TestCase):
 
     chat_request.assert_called_once_with("/chats/chat-1", "token")
     self.assertEqual(2, event_request.call_count)
+    self.assertEqual(["event-2"], event_request.call_args_list[0].args[0])
+    self.assertEqual(["event-1"], event_request.call_args_list[1].args[0])
     self.assertEqual(["chat-1", "chat-2"], [item["chatId"] for item in result])
     self.assertEqual("event-1", result[0]["event"]["id"])
     self.assertEqual(
@@ -408,7 +410,7 @@ class GraphBackendTests(unittest.TestCase):
             "calendar_events_by_join_url",
             return_value={join_url.casefold(): calendar_event},
         ),
-        mock.patch.object(backend, "get_calendar_event") as event_request,
+        mock.patch.object(backend, "get_calendar_events_batch") as event_request,
     ):
       result = backend.list_meeting_events_batch(meetings, "token")
 
@@ -416,41 +418,90 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual("event-from-calendar", result[0]["event"]["id"])
 
   def test_meeting_event_batch_falls_back_on_stale_event_id(self) -> None:
-    join_url = "https://teams.microsoft.com/l/meetup-join/stale"
-    meetings = [{"chatId": "chat-1", "eventId": "stale-event"}]
-    calendar_event = {
-        "id": "fresh-event",
-        "onlineMeeting": {"joinUrl": join_url},
+    join_urls = {
+        "chat-1": "https://teams.microsoft.com/l/meetup-join/stale-1",
+        "chat-2": "https://teams.microsoft.com/l/meetup-join/stale-2",
+    }
+    meetings = [
+        {"chatId": "chat-1", "eventId": "stale-event-1"},
+        {"chatId": "chat-2", "eventId": "stale-event-2"},
+    ]
+    calendar_events = {
+        url.casefold(): {"id": f"fresh-event-{index}"}
+        for index, url in enumerate(join_urls.values(), start=1)
     }
 
-    def stale_event(event_id: str, _token: str) -> dict[str, str]:
-      if event_id == "stale-event":
-        raise backend.BackendError("HTTP 404: event not found")
-      return {"id": event_id}
+    def metadata(path: str, _token: str) -> dict:
+      chat_id = path.rsplit("/", 1)[-1]
+      return {
+          "chatType": "meeting",
+          "onlineMeetingInfo": {"joinWebUrl": join_urls[chat_id]},
+      }
 
     with (
         mock.patch.object(
             backend,
-            "get_calendar_event",
-            side_effect=stale_event,
-        ),
-        mock.patch.object(
-            backend,
-            "graph_json",
-            return_value={
-                "chatType": "meeting",
-                "onlineMeetingInfo": {"joinWebUrl": join_url},
+            "get_calendar_events_batch",
+            side_effect=lambda event_ids, _token: {
+                event_id: (None, "Microsoft Graph HTTP 404: event not found")
+                for event_id in event_ids
             },
         ),
         mock.patch.object(
             backend,
-            "find_calendar_event_by_join_url",
-            return_value=calendar_event,
+            "graph_json",
+            side_effect=metadata,
         ),
+        mock.patch.object(
+            backend,
+            "calendar_events_by_join_url",
+            return_value=calendar_events,
+        ) as calendar_scan,
     ):
-      result = backend.list_meeting_events_batch(meetings, "token")
+      result = backend.list_meeting_events_batch(
+          meetings, "token", meeting_concurrency=2
+      )
 
-    self.assertEqual("fresh-event", result[0]["event"]["id"])
+    calendar_scan.assert_called_once_with(
+        "token", needed_join_urls=set(join_urls.values())
+    )
+    self.assertEqual(
+        ["fresh-event-1", "fresh-event-2"],
+        [record["event"]["id"] for record in result],
+    )
+
+  def test_calendar_event_json_batch_caps_requests_and_parses_errors(self) -> None:
+    event_ids = [f"event-{index}" for index in range(21)]
+
+    def batch(_path: str, token: str, **kwargs: object) -> dict:
+      self.assertEqual("token", token)
+      self.assertEqual("POST", kwargs["method"])
+      requests = kwargs["payload"]["requests"]  # type: ignore[index]
+      self.assertLessEqual(len(requests), backend.GRAPH_JSON_BATCH_LIMIT)
+      responses = []
+      for request in requests:
+        event_id = urllib.parse.unquote(
+            request["url"].split("/events/", 1)[1].split("?", 1)[0]
+        )
+        if event_id == "event-20":
+          responses.append({
+              "id": request["id"],
+              "status": 404,
+              "body": {"error": {"message": "event not found"}},
+          })
+        else:
+          responses.append({
+              "id": request["id"], "status": 200, "body": {"id": event_id}
+          })
+      return {"responses": responses}
+
+    with mock.patch.object(backend, "graph_json", side_effect=batch) as request:
+      result = backend.get_calendar_events_batch(event_ids, "token")
+
+    self.assertEqual(2, request.call_count)
+    self.assertEqual("event-0", result["event-0"][0]["id"])
+    self.assertIsNone(result["event-20"][0])
+    self.assertIn("HTTP 404", result["event-20"][1])
 
   def test_get_meeting_context_resolves_by_join_url(self) -> None:
     join_url = "https://teams.microsoft.com/l/meetup-join/context"

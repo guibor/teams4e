@@ -66,7 +66,8 @@ Main entry points:
 - `teams4e--run-json`: issue one backend request and dispatch parsed JSON.
 - `teams4e--executable`: honor the configured backend and recover only from a
   removed versioned package path after a live package upgrade.
-- `teams4e--enrich-meetings`: attach linked event data to existing chat rows.
+- `teams4e--enrich-meetings`: attach linked event data to existing chat rows
+  with one bounded backend request per explicit refresh.
 - `teams4e--unread-p`: compare the real last-message timestamp with Graph's
   read marker; chat metadata timestamps are deliberately excluded.
 
@@ -176,13 +177,16 @@ can exercise destructive and asynchronous workflows without Graph access.
 ## Meeting Metadata
 
 Graph chat data may include `onlineMeetingInfo.calendarEventId`. The adapter
-fetches `/me/events/{id}` with a narrow field selection and returns the event
-beside the chat id. If the list row omits the ID, an explicit meeting view may
-first fetch `/chats/{id}` through the same bounded batch; normal inbox loads
-keep the event-ID-only fast path. Emacs merges the result into
-`meetingContext.event`. The explicit fallback prioritizes recent message-less
-meeting rows before message-bearing meeting history so its fixed bound is
-useful for calendar-created future meetings.
+fetches those events with a narrow field selection in Graph JSON batches of at
+most 20 requests. If a list row omits the ID, or its ID returns 404, an explicit
+meeting view may fetch `/chats/{id}` with bounded concurrency. Any rows still
+unresolved by direct IDs contribute their join URLs to exactly one bounded
+`calendarView` scan for that backend request. Emacs merges the result into
+`meetingContext.event`. One Emacs refresh sends one enrichment request; a
+retriable row is reconsidered only after the user explicitly refreshes again.
+The fallback prioritizes recent message-less meeting rows before
+message-bearing meeting history so its fixed bound remains useful for
+calendar-created future meetings.
 
 The meeting-only schedule column, meeting predicates/sort, and reader banner
 all read this same attachment. Message-oriented views use the compact headers

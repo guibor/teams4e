@@ -249,10 +249,13 @@ request failures are recorded in `*M365 Errors*` and summarized in meeting-only
 headers; chat and participant data remain usable.
 
 Graph chat data may expose `onlineMeetingInfo.calendarEventId`. The backend
-resolves that event with bounded concurrency and merges it into the existing
-chat alist. If the list response omits the event ID, an explicit meeting view
-performs one bounded chat-metadata lookup before the event lookup; ordinary
-inbox loads do not pay that fallback cost. Recent message-less meeting rows are
+resolves direct IDs through Microsoft Graph JSON batches of at most 20 event
+requests and merges the results into the existing chat alists. If a list row
+omits the event ID, or a supplied ID is stale, an explicit meeting view performs
+a bounded chat-metadata lookup. All still-unresolved join URLs then share one
+bounded `calendarView` scan rather than scanning once per chat. Ordinary inbox
+loads do not pay the missing-ID fallback cost, and one refresh never starts a
+second enrichment wave automatically. Recent message-less meeting rows are
 resolved before message-bearing meeting history within that bound. The
 meeting-only headers schedule column and reader banner both render from that
 one attachment.

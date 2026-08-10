@@ -33,6 +33,7 @@ TOKEN_REFRESH_MARGIN_MILLIS = 5 * 60 * 1000
 TOKEN_COMMAND_REFRESH_MARGIN_SECONDS = 60
 GRAPH_RETRY_ATTEMPTS = 4
 GRAPH_MAX_RETRY_SECONDS = 60
+GRAPH_JSON_BATCH_LIMIT = 20
 TOKEN_REFRESH_LOCK = threading.Lock()
 TOKEN_COMMAND_CACHE: tuple[str, int] | None = None
 MEETING_EVENT_SELECT = (
@@ -787,6 +788,76 @@ def get_calendar_event(event_id: str, access_token: str) -> dict[str, Any]:
       access_token,
       request_headers={"Prefer": 'outlook.timezone="UTC"'},
   )
+
+
+def graph_batch_error(status: int, body: Any) -> str:
+  """Return one user-facing error from an individual Graph batch response."""
+  detail: str | None = None
+  if isinstance(body, dict):
+    error = body.get("error")
+    if isinstance(error, dict) and isinstance(error.get("message"), str):
+      detail = error["message"]
+  if not detail:
+    detail = "request failed"
+  return f"Microsoft Graph HTTP {status}: {detail}"
+
+
+def get_calendar_events_batch(
+    event_ids: list[str], access_token: str
+) -> dict[str, tuple[dict[str, Any] | None, str | None]]:
+  """Resolve calendar EVENT_IDS through bounded Microsoft Graph JSON batches."""
+  unique_ids = list(dict.fromkeys(event_id for event_id in event_ids if event_id))
+  results: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
+  for offset in range(0, len(unique_ids), GRAPH_JSON_BATCH_LIMIT):
+    batch_ids = unique_ids[offset:offset + GRAPH_JSON_BATCH_LIMIT]
+    requests = []
+    request_ids: dict[str, str] = {}
+    for index, event_id in enumerate(batch_ids):
+      request_id = str(index)
+      request_ids[request_id] = event_id
+      requests.append({
+          "id": request_id,
+          "method": "GET",
+          "url": collection_path(
+              f"/me/events/{quoted_id(event_id)}",
+              [("$select", MEETING_EVENT_SELECT)],
+          ),
+          "headers": {"Prefer": 'outlook.timezone="UTC"'},
+      })
+    payload = graph_json(
+        "/$batch",
+        access_token,
+        method="POST",
+        payload={"requests": requests},
+    )
+    responses = payload.get("responses")
+    if not isinstance(responses, list):
+      raise BackendError("Microsoft Graph batch response has no responses array")
+    seen: set[str] = set()
+    for response in responses:
+      if not isinstance(response, dict):
+        continue
+      response_id = response.get("id")
+      if not isinstance(response_id, str) or response_id not in request_ids:
+        continue
+      event_id = request_ids[response_id]
+      seen.add(response_id)
+      status = response.get("status")
+      body = response.get("body")
+      if isinstance(status, int) and 200 <= status < 300 and isinstance(body, dict):
+        results[event_id] = (body, None)
+      else:
+        results[event_id] = (
+            None,
+            graph_batch_error(status if isinstance(status, int) else 500, body),
+        )
+    for request_id, event_id in request_ids.items():
+      if request_id not in seen:
+        results[event_id] = (
+            None,
+            "Microsoft Graph batch returned no response for the calendar event",
+        )
+  return results
 
 
 def normalize_meeting_join_url(url: str | None) -> str | None:
@@ -1711,57 +1782,17 @@ def meeting_chat_metadata(chat_id: str, access_token: str) -> dict[str, Any]:
   return {"onlineMeetingInfo": meeting_info}
 
 
-def meeting_event_record(
-    chat_id: str,
-    event_id: str | None,
-    access_token: str,
-    *,
-    events_by_join_url: dict[str, dict[str, Any]] | None = None,
-    meeting_info: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-  """Resolve one meeting event, looking up omitted chat metadata if needed."""
-  result: dict[str, Any] = {"chatId": chat_id}
-  resolved_meeting_info: dict[str, Any] = {}
-  if not event_id:
-    if meeting_info is None:
-      try:
-        resolved_meeting_info = meeting_chat_metadata(chat_id, access_token)[
-            "onlineMeetingInfo"
-        ]
-      except BackendError as exception:
-        result["eventError"] = str(exception)
-        return result
-    else:
-      resolved_meeting_info = meeting_info
-    result["onlineMeetingInfo"] = resolved_meeting_info
-    candidate = resolved_meeting_info.get("calendarEventId")
-    event_id = candidate if isinstance(candidate, str) and candidate else None
-  event, error = resolve_meeting_calendar_event(
-      resolved_meeting_info,
-      event_id,
-      access_token,
-      events_by_join_url=events_by_join_url,
-      chat_id=chat_id,
-  )
-  if event is not None:
-    result["event"] = event
-  if error:
-    result["eventError"] = error
-  return result
-
-
 def list_meeting_events_batch(
     meetings: list[dict[str, Any]],
     access_token: str,
     *,
     meeting_concurrency: int = 6,
 ) -> list[dict[str, Any]]:
-  """Resolve linked events for MEETINGS using bounded concurrency.
+  """Resolve linked events with JSON batches and one shared calendar scan.
 
-  Inputs may include an eventId already present in the chat-list response.  A
-  missing eventId costs one bounded chat metadata request, but never loads
-  members or messages.  This keeps ordinary inbox enrichment cheap while
-  allowing the explicit meeting workspace to resolve otherwise sparse rows.
+  Existing event IDs use Graph's 20-request JSON batch limit.  Missing or stale
+  IDs cost one bounded chat metadata lookup.  Every still-unresolved join URL
+  then shares one calendarView scan instead of starting one scan per chat.
   """
   unique: dict[str, str | None] = {}
   for meeting in meetings:
@@ -1776,59 +1807,127 @@ def list_meeting_events_batch(
       unique[chat_id] = normalized_event_id
   if not unique:
     return []
-  chat_prefetch: dict[str, dict[str, Any]] = {}
-  needed_join_urls: set[str] = set()
-  missing_event_ids = [chat_id for chat_id, event_id in unique.items() if not event_id]
-  if missing_event_ids:
-    prefetch_workers = max(1, min(meeting_concurrency, len(missing_event_ids)))
+  initial_event_ids = [event_id for event_id in unique.values() if event_id]
+  initial_events = (
+      get_calendar_events_batch(initial_event_ids, access_token)
+      if initial_event_ids
+      else {}
+  )
+  missing_or_stale = [
+      chat_id
+      for chat_id, event_id in unique.items()
+      if not event_id
+      or (
+          event_id in initial_events
+          and initial_events[event_id][0] is None
+          and "404" in (initial_events[event_id][1] or "")
+      )
+  ]
+  chat_metadata: dict[str, dict[str, Any]] = {}
+  if missing_or_stale:
+    prefetch_workers = max(1, min(meeting_concurrency, len(missing_or_stale)))
     with ThreadPoolExecutor(max_workers=prefetch_workers) as executor:
       futures = {
           executor.submit(meeting_chat_metadata, chat_id, access_token): chat_id
-          for chat_id in missing_event_ids
+          for chat_id in missing_or_stale
       }
       for future in as_completed(futures):
         chat_id = futures[future]
         try:
-          metadata = future.result()
+          chat_metadata[chat_id] = future.result()
         except BackendError as exception:
-          chat_prefetch[chat_id] = {"error": str(exception)}
-          continue
-        chat_prefetch[chat_id] = metadata
-        join_url = metadata["onlineMeetingInfo"].get("joinWebUrl")
-        if isinstance(join_url, str) and join_url:
-          needed_join_urls.add(join_url)
-  events_by_join_url = (
-      calendar_events_by_join_url(access_token, needed_join_urls=needed_join_urls)
-      if needed_join_urls
-      else None
+          chat_metadata[chat_id] = {"error": str(exception)}
+
+  refreshed_ids: dict[str, str] = {}
+  for chat_id, metadata in chat_metadata.items():
+    meeting_info = metadata.get("onlineMeetingInfo")
+    if not isinstance(meeting_info, dict):
+      continue
+    candidate = meeting_info.get("calendarEventId")
+    if (
+        isinstance(candidate, str)
+        and candidate
+        and candidate != unique[chat_id]
+    ):
+      refreshed_ids[chat_id] = candidate
+  refreshed_events = (
+      get_calendar_events_batch(list(refreshed_ids.values()), access_token)
+      if refreshed_ids
+      else {}
   )
-  workers = max(1, min(meeting_concurrency, len(unique)))
-  records: dict[str, dict[str, Any]] = {}
 
-  def resolve_record(chat_id: str, event_id: str | None) -> dict[str, Any]:
-    prefetched = chat_prefetch.get(chat_id)
-    if prefetched and "error" in prefetched:
-      return {"chatId": chat_id, "eventError": prefetched["error"]}
-    meeting_info = None
-    if prefetched is not None:
-      meeting_info = prefetched.get("onlineMeetingInfo", {})
-    return meeting_event_record(
-        chat_id,
-        event_id,
-        access_token,
-        events_by_join_url=events_by_join_url,
-        meeting_info=meeting_info,
+  unresolved: set[str] = set()
+  errors: dict[str, str] = {}
+  resolved: dict[str, dict[str, Any]] = {}
+  for chat_id, event_id in unique.items():
+    direct_event, direct_error = initial_events.get(event_id, (None, None))
+    if direct_event is not None:
+      resolved[chat_id] = direct_event
+      continue
+    metadata = chat_metadata.get(chat_id)
+    if metadata and "error" in metadata:
+      errors[chat_id] = str(metadata["error"])
+      continue
+    refreshed_id = refreshed_ids.get(chat_id)
+    refreshed_event, refreshed_error = refreshed_events.get(
+        refreshed_id, (None, None)
     )
+    if refreshed_event is not None:
+      resolved[chat_id] = refreshed_event
+      continue
+    effective_error = refreshed_error or direct_error
+    if effective_error and "404" not in effective_error:
+      errors[chat_id] = effective_error
+      continue
+    meeting_info = metadata.get("onlineMeetingInfo") if metadata else None
+    join_url = (
+        meeting_info.get("joinWebUrl")
+        if isinstance(meeting_info, dict)
+        else None
+    )
+    if isinstance(join_url, str) and join_url:
+      unresolved.add(join_url)
+      if effective_error:
+        errors[chat_id] = effective_error
+    elif effective_error:
+      errors[chat_id] = effective_error
+    else:
+      errors[chat_id] = "The meeting chat has no linked calendar event ID"
 
-  with ThreadPoolExecutor(max_workers=workers) as executor:
-    futures = {
-        executor.submit(resolve_record, chat_id, event_id): chat_id
-        for chat_id, event_id in unique.items()
-    }
-    for future in as_completed(futures):
-      chat_id = futures[future]
-      records[chat_id] = future.result()
-  return [records[chat_id] for chat_id in unique]
+  events_by_join_url = (
+      calendar_events_by_join_url(access_token, needed_join_urls=unresolved)
+      if unresolved
+      else {}
+  )
+  records: list[dict[str, Any]] = []
+  for chat_id in unique:
+    record: dict[str, Any] = {"chatId": chat_id}
+    metadata = chat_metadata.get(chat_id)
+    meeting_info = metadata.get("onlineMeetingInfo") if metadata else None
+    if isinstance(meeting_info, dict):
+      record["onlineMeetingInfo"] = meeting_info
+    event = resolved.get(chat_id)
+    join_url = (
+        meeting_info.get("joinWebUrl")
+        if isinstance(meeting_info, dict)
+        else None
+    )
+    if event is None and isinstance(join_url, str):
+      normalized = normalize_meeting_join_url(join_url)
+      event = events_by_join_url.get(normalized) if normalized else None
+    if event is not None:
+      record["event"] = event
+    else:
+      error = errors.get(chat_id)
+      if isinstance(join_url, str) and join_url:
+        error = (
+            f"{error}; no calendar row matched the meeting join URL"
+            if error
+            else "No calendar event matched the meeting join URL"
+        )
+      record["eventError"] = error or "The meeting has no calendar event"
+    records.append(record)
+  return records
 
 
 def get_meeting_transcript(chat_id: str, access_token: str) -> dict[str, Any]:

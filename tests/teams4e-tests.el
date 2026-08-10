@@ -2769,12 +2769,18 @@
         (delete-file credentials)))))
 
 (ert-deftest teams4e-calendar-label-reports-missing-calendar-row ()
-  (let ((meeting
-         '((meetingContext
-            . ((eventError
-               . "No calendar event matched the meeting join URL"))))))
-    (should (equal "Not on your calendar"
-                   (teams4e--calendar-unavailable-label meeting)))))
+  (let ((credentials (make-temp-file "teams4e-calendar-credentials-")))
+    (unwind-protect
+        (let ((teams4e-credentials-file credentials)
+              (teams4e-token-command nil)
+              (teams4e-mock-mode nil)
+              (meeting
+               '((meetingContext
+                  . ((eventError
+                     . "No calendar event matched the meeting join URL"))))))
+          (should (equal "Not on your calendar"
+                         (teams4e--calendar-unavailable-label meeting))))
+      (delete-file credentials))))
 
 (ert-deftest teams4e-calendar-error-retriable-p-recognizes-join-url-fallback ()
   (should (teams4e--calendar-error-retriable-p
@@ -2798,7 +2804,7 @@
     (should-not (gethash "meeting-1" teams4e--meeting-inflight))
     (should (teams4e--calendar-error-detail meeting))))
 
-(ert-deftest teams4e-meeting-enrichment-wave-respects-limit ()
+(ert-deftest teams4e-meeting-enrichment-makes-one-bounded-request-per-refresh ()
   (let* ((meetings
           (mapcar
            (lambda (id)
@@ -2810,20 +2816,32 @@
          (teams4e-offline-mode nil)
          (teams4e--meeting-inflight (make-hash-table :test #'equal))
          (teams4e--meeting-enrichment-timeouts (make-hash-table :test #'equal))
-         observed)
+         observed
+         (calls 0))
     (cl-letf (((symbol-function 'teams4e--run-json)
-               (lambda (args _callback &optional _error-callback)
+               (lambda (args callback &optional _error-callback)
+                 (setq calls (1+ calls))
                  (setq observed args)
+                 (funcall
+                  callback
+                  (mapcar
+                   (lambda (request)
+                     `((chatId . ,(teams4e--get request 'chatId))
+                       (eventError
+                        . "No calendar event matched the meeting join URL")))
+                   (json-parse-string
+                    (nth 5 args) :object-type 'alist :array-type 'list)))
                  'fake-process))
               ((symbol-function 'teams4e--refresh-visible-recent)
                #'ignore)
               ((symbol-function 'teams4e--schedule-meeting-enrichment-timeouts)
                #'ignore))
       (teams4e--enrich-meetings teams4e--chats t))
+    (should (= 1 calls))
     (let ((requests
            (json-parse-string (nth 5 observed)
                               :object-type 'alist :array-type 'list)))
-      (should (= 2 (length requests)))))
+      (should (= 2 (length requests))))))
 
 (ert-deftest teams4e-enrich-meetings-retries-after-retriable-calendar-error ()
   (let* ((meeting
@@ -2850,7 +2868,7 @@
            (json-parse-string (nth 5 observed)
                               :object-type 'alist :array-type 'list)))
       (should (= 1 (length requests)))
-      (should (equal "meeting-1" (teams4e--get (car requests) 'chatId)))))
+      (should (equal "meeting-1" (teams4e--get (car requests) 'chatId))))))
 
 (ert-deftest teams4e-upcoming-view-shows-calendar-enrichment-in-flight ()
   (let* ((meeting '((id . "meeting-1") (chatType . "meeting")))
