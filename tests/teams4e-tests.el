@@ -1745,8 +1745,9 @@
          '((:name "Unread" :query "unread" :key ?u)))
         (teams4e--chats (teams4e-test-read-json "chats.json"))
         (teams4e--active-view 'all)
-        (teams4e--active-query nil)
-        (teams4e--active-filter-name nil)
+        (teams4e--active-query "type:direct")
+        (teams4e--active-filter-name "Direct")
+        (teams4e--unread-filter-enabled nil)
         (teams4e--marks (make-hash-table :test #'equal))
         (teams4e--read-overrides (make-hash-table :test #'equal))
         (teams4e--favorites (make-hash-table :test #'equal))
@@ -1755,8 +1756,9 @@
       (teams4e-recent-mode)
       (cl-letf (((symbol-function 'read-char) (lambda (&rest _args) ?u)))
         (teams4e-bookmark-jump))
-      (should (equal "unread" teams4e--active-query))
-      (should (equal "Unread" teams4e--active-filter-name))
+      (should teams4e--unread-filter-enabled)
+      (should (equal "type:direct" teams4e--active-query))
+      (should (equal "Direct" teams4e--active-filter-name))
       (should (= 1 (length tabulated-list-entries))))))
 
 (ert-deftest teams4e-headers-map-combines-mu4e-and-tui-actions ()
@@ -2184,21 +2186,26 @@
                      tabulated-list-format)))
     (let* ((teams4e--active-view 'meeting)
            (meeting-columns (cadr (teams4e--recent-entry-advanced chat))))
-      (should (equal '("Status" "Message time" "Type" "Conversation"
-                       "Meeting" "Star" "Last message")
+      (should (equal '("Status" "When" "Conversation" "Response"
+                       "Location" "Star" "Last message")
                      (mapcar #'car
                              (append teams4e--meeting-recent-format nil))))
       (should (= 7 (length meeting-columns)))
-      (should (string-match-p "Aug 10.*Video room 4"
-                              (substring-no-properties
-                               (aref meeting-columns 4))))
       (should (string-match-p
                "[0-9][0-9]:[0-9][0-9]-[0-9][0-9]:[0-9][0-9]"
-               (substring-no-properties (aref meeting-columns 4))))
+               (substring-no-properties (aref meeting-columns 1))))
+      (should (equal "Architecture review"
+                     (substring-no-properties (aref meeting-columns 2))))
+      (should (string-match-p "Video room 4"
+                              (substring-no-properties
+                               (aref meeting-columns 4))))
       (should (equal "" (aref meeting-columns 5)))
       (should (string-match-p "Meeting started"
                               (substring-no-properties
-                               (aref meeting-columns 6)))))))
+                               (aref meeting-columns 6)))))
+    (with-temp-buffer
+      (teams4e-recent-mode)
+      (should (eq bidi-paragraph-direction 'left-to-right)))))
 
 (ert-deftest teams4e-status-column-has-sober-symbol-and-letter-styles ()
   (should (eq 'symbols (default-value 'teams4e-status-style)))

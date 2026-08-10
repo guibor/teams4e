@@ -162,13 +162,13 @@
   "Aligned columns used by message-oriented Teams views.")
 (defconst teams4e--meeting-recent-format
   [("Status" 6 nil)
-   ("Message time" 16 t)
-   ("Type" 8 t)
+   ("When" 27 t)
    ("Conversation" 28 t)
-   ("Meeting" 38 t)
+   ("Response" 18 t)
+   ("Location" 20 t)
    ("Star" 4 nil)
    ("Last message" 0 nil)]
-  "Aligned columns used by meeting-only Teams views.")
+  "Calendar-first aligned columns used by meeting-only Teams views.")
 
 (defvar-local teams4e--process nil)
 (defvar-local teams4e--chat nil)
@@ -1777,8 +1777,13 @@ Return non-nil when a linked reader exists, even when it already matches."
          (star (if (teams4e--favorite-p chat) "*" ""))
          (preview (propertize (teams4e--chat-preview chat) 'face face)))
     (if (teams4e--meeting-column-visible-p)
-        (vector status date type label
-                (propertize (or (teams4e--meeting-row-label chat) "")
+        (vector status
+                (propertize (or (teams4e--meeting-schedule-label chat) "")
+                            'face face)
+                label
+                (propertize (or (teams4e--meeting-row-state-label chat) "")
+                            'face face)
+                (propertize (or (teams4e--meeting-location-label chat) "")
                             'face face)
                 star preview)
       (vector status date type label star preview))))
@@ -2056,7 +2061,8 @@ omitted by the chat-list response; explicit meeting views use this path."
   (setq tabulated-list-format
         (copy-sequence (teams4e--current-recent-format)))
   (setq tabulated-list-padding 1
-        tabulated-list-sort-key nil)
+        tabulated-list-sort-key nil
+        bidi-paragraph-direction 'left-to-right)
   (add-hook 'kill-buffer-hook #'teams4e--cancel-buffer-process nil t)
   (add-hook 'post-command-hook #'teams4e--follow-selected-chat nil t)
   (tabulated-list-init-header))
@@ -3250,40 +3256,52 @@ When DATE-ONLY is non-nil, omit the time of day."
      (right-time nil)
      (t (teams4e--chat-updated-p left right)))))
 
-(defun teams4e--meeting-row-label (chat)
-  "Return compact local schedule and location text for meeting CHAT."
+(defun teams4e--meeting-schedule-label (chat)
+  "Return the compact local schedule column for meeting CHAT."
   (when (teams4e--meeting-chat-p chat)
     (let* ((event (teams4e--meeting-event chat))
            (start (teams4e--meeting-start-time chat))
            (end (teams4e--meeting-end-time chat))
            (all-day (teams4e--get event 'isAllDay))
-           (status (teams4e--meeting-status-label chat))
-           (conflict (when (teams4e--meeting-conflicts chat)
-                       (propertize "Conflict"
-                                   'face 'teams4e-meeting-conflict)))
-           (location (teams4e--meeting-location-label chat))
-           (schedule
-            (cond
-             ((and all-day start)
-              (format-time-string "%a %b %e, all day" start))
-             ((and start end
-                   (equal (format-time-string "%Y-%m-%d" start)
-                          (format-time-string "%Y-%m-%d" end)))
-              (format "%s-%s"
-                      (format-time-string "%a %b %e %H:%M" start)
-                      (format-time-string "%H:%M" end)))
-             ((and start end)
-              (format "%s - %s"
-                      (format-time-string "%a %b %e %H:%M" start)
-                      (format-time-string "%a %b %e %H:%M" end)))
-             (start (format-time-string "%a %b %e %H:%M" start))
-             ((gethash (teams4e--chat-id chat)
-                       teams4e--meeting-inflight)
-              "Loading calendar...")
-             ((teams4e--calendar-error-detail chat)
-              (teams4e--calendar-unavailable-label chat)))))
-      (string-join
-       (delq nil (list schedule conflict status location)) " | "))))
+           (same-day
+            (and start end
+                 (equal (format-time-string "%Y-%m-%d" start)
+                        (format-time-string "%Y-%m-%d" end)))))
+      (cond
+       ((and all-day start)
+        (format-time-string "%a %b %e, all day" start))
+       (same-day
+        (format "%s-%s"
+                (format-time-string "%a %b %e %H:%M" start)
+                (format-time-string "%H:%M" end)))
+       ((and start end)
+        (format "%s - %s"
+                (format-time-string "%a %b %e %H:%M" start)
+                (format-time-string "%a %b %e %H:%M" end)))
+       (start (format-time-string "%a %b %e %H:%M" start))
+       ((gethash (teams4e--chat-id chat) teams4e--meeting-inflight)
+        "Loading calendar...")
+       ((teams4e--calendar-error-detail chat)
+        (teams4e--calendar-unavailable-label chat))))))
+
+(defun teams4e--meeting-row-state-label (chat)
+  "Return conflict and response text for meeting CHAT's fixed state column."
+  (string-join
+   (delq nil
+         (list
+          (when (teams4e--meeting-conflicts chat)
+            (propertize "Conflict" 'face 'teams4e-meeting-conflict))
+          (teams4e--meeting-status-label chat)))
+   "; "))
+
+(defun teams4e--meeting-row-label (chat)
+  "Return a compact one-line schedule summary for meeting CHAT."
+  (string-join
+   (delq nil
+         (list (teams4e--meeting-schedule-label chat)
+               (teams4e--meeting-row-state-label chat)
+               (teams4e--meeting-location-label chat)))
+   " | "))
 
 (defun teams4e--meeting-time-label (chat)
   "Return a readable local start/end label for meeting CHAT."

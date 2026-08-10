@@ -230,7 +230,7 @@ with the same Emacs symbol name. Custom function bookmarks remain supported.
 | --- | --- | --- |
 | `b i` | Relevant inbox | Newest last message first |
 | `b a` | All chats, clearing unread-only and other overlays | Newest last message first |
-| `b u` | Unread chats | Newest last message first |
+| `b u` | Unread only within the current view | Current view order |
 | `b m` | Upcoming/in-progress meetings | Earliest meeting start first |
 | `b M` | All meeting chats | Earliest known meeting start first |
 
@@ -240,8 +240,10 @@ membership, or topic update does not make a quiet conversation jump to the top
 or become unread, and these views omit the meeting interval column. A meeting
 chat without a complete message preview is omitted from message-oriented views
 instead of appearing as an undated unread row; it remains available in `b m`,
-`b M`, and explicit meeting queries. Meeting-only views add the schedule column,
-sort by the linked event start, and show the complete start/end interval.
+`b M`, and explicit meeting queries. Meeting-only views use fixed When,
+Conversation, Response, and Location columns, sort by the linked event start,
+and show the complete start/end interval. The table direction remains
+left-to-right even when a conversation or location contains Hebrew.
 
 When the external token provider is logged out, the headers say to run
 `M-x teams4e-login` instead of presenting an unexplained empty inbox. Calendar
@@ -251,9 +253,10 @@ headers; chat and participant data remain usable.
 Graph chat data may expose `onlineMeetingInfo.calendarEventId`. The backend
 resolves direct IDs through Microsoft Graph JSON batches of at most 20 event
 requests and merges the results into the existing chat alists. If a list row
-omits the event ID, or a supplied ID is stale, an explicit meeting view performs
-a bounded chat-metadata lookup. All still-unresolved join URLs then share one
-bounded `calendarView` scan rather than scanning once per chat. Ordinary inbox
+omits the event ID, or a supplied ID is stale, an explicit meeting view resolves
+chat metadata through the same 20-request JSON batches. All still-unresolved
+join URLs then share one bounded `calendarView` scan rather than scanning once
+per chat. Ordinary inbox
 loads do not pay the missing-ID fallback cost, and one refresh never starts a
 second enrichment wave automatically. Recent message-less meeting rows are
 resolved before message-bearing meeting history within that bound. The

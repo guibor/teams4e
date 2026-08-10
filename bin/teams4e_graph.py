@@ -802,28 +802,36 @@ def graph_batch_error(status: int, body: Any) -> str:
   return f"Microsoft Graph HTTP {status}: {detail}"
 
 
-def get_calendar_events_batch(
-    event_ids: list[str], access_token: str
+def graph_get_json_batch(
+    keyed_paths: list[tuple[str, str]],
+    access_token: str,
+    *,
+    request_headers: dict[str, str] | None = None,
+    batch_concurrency: int = 1,
 ) -> dict[str, tuple[dict[str, Any] | None, str | None]]:
-  """Resolve calendar EVENT_IDS through bounded Microsoft Graph JSON batches."""
-  unique_ids = list(dict.fromkeys(event_id for event_id in event_ids if event_id))
-  results: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
-  for offset in range(0, len(unique_ids), GRAPH_JSON_BATCH_LIMIT):
-    batch_ids = unique_ids[offset:offset + GRAPH_JSON_BATCH_LIMIT]
-    requests = []
-    request_ids: dict[str, str] = {}
-    for index, event_id in enumerate(batch_ids):
+  """Resolve keyed Graph GET paths in parallel batches of at most 20."""
+  unique_paths = dict(keyed_paths)
+  batches = [
+      list(unique_paths.items())[offset:offset + GRAPH_JSON_BATCH_LIMIT]
+      for offset in range(0, len(unique_paths), GRAPH_JSON_BATCH_LIMIT)
+  ]
+
+  def run_batch(
+      batch: list[tuple[str, str]],
+  ) -> dict[str, tuple[dict[str, Any] | None, str | None]]:
+    requests: list[dict[str, Any]] = []
+    request_keys: dict[str, str] = {}
+    for index, (key, path) in enumerate(batch):
       request_id = str(index)
-      request_ids[request_id] = event_id
-      requests.append({
+      request_keys[request_id] = key
+      request: dict[str, Any] = {
           "id": request_id,
           "method": "GET",
-          "url": collection_path(
-              f"/me/events/{quoted_id(event_id)}",
-              [("$select", MEETING_EVENT_SELECT)],
-          ),
-          "headers": {"Prefer": 'outlook.timezone="UTC"'},
-      })
+          "url": path,
+      }
+      if request_headers:
+        request["headers"] = request_headers
+      requests.append(request)
     payload = graph_json(
         "/$batch",
         access_token,
@@ -833,31 +841,71 @@ def get_calendar_events_batch(
     responses = payload.get("responses")
     if not isinstance(responses, list):
       raise BackendError("Microsoft Graph batch response has no responses array")
+    batch_results: dict[
+        str, tuple[dict[str, Any] | None, str | None]
+    ] = {}
     seen: set[str] = set()
     for response in responses:
       if not isinstance(response, dict):
         continue
       response_id = response.get("id")
-      if not isinstance(response_id, str) or response_id not in request_ids:
+      if not isinstance(response_id, str) or response_id not in request_keys:
         continue
-      event_id = request_ids[response_id]
+      key = request_keys[response_id]
       seen.add(response_id)
       status = response.get("status")
       body = response.get("body")
       if isinstance(status, int) and 200 <= status < 300 and isinstance(body, dict):
-        results[event_id] = (body, None)
+        batch_results[key] = (body, None)
       else:
-        results[event_id] = (
+        batch_results[key] = (
             None,
             graph_batch_error(status if isinstance(status, int) else 500, body),
         )
-    for request_id, event_id in request_ids.items():
+    for request_id, key in request_keys.items():
       if request_id not in seen:
-        results[event_id] = (
+        batch_results[key] = (
             None,
-            "Microsoft Graph batch returned no response for the calendar event",
+            "Microsoft Graph batch returned no response for the requested resource",
         )
+    return batch_results
+
+  results: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
+  workers = max(1, min(batch_concurrency, len(batches)))
+  if workers == 1:
+    for batch in batches:
+      results.update(run_batch(batch))
+  elif batches:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+      futures = [executor.submit(run_batch, batch) for batch in batches]
+      for future in as_completed(futures):
+        results.update(future.result())
   return results
+
+
+def get_calendar_events_batch(
+    event_ids: list[str],
+    access_token: str,
+    *,
+    batch_concurrency: int = 1,
+) -> dict[str, tuple[dict[str, Any] | None, str | None]]:
+  """Resolve calendar EVENT_IDS through bounded Microsoft Graph JSON batches."""
+  unique_ids = list(dict.fromkeys(event_id for event_id in event_ids if event_id))
+  return graph_get_json_batch(
+      [
+          (
+              event_id,
+              collection_path(
+                  f"/me/events/{quoted_id(event_id)}",
+                  [("$select", MEETING_EVENT_SELECT)],
+              ),
+          )
+          for event_id in unique_ids
+      ],
+      access_token,
+      request_headers={"Prefer": 'outlook.timezone="UTC"'},
+      batch_concurrency=batch_concurrency,
+  )
 
 
 def normalize_meeting_join_url(url: str | None) -> str | None:
@@ -1782,6 +1830,37 @@ def meeting_chat_metadata(chat_id: str, access_token: str) -> dict[str, Any]:
   return {"onlineMeetingInfo": meeting_info}
 
 
+def get_meeting_chat_metadata_batch(
+    chat_ids: list[str],
+    access_token: str,
+    *,
+    batch_concurrency: int = 1,
+) -> dict[str, tuple[dict[str, Any] | None, str | None]]:
+  """Resolve meeting chat metadata through bounded Graph JSON batches."""
+  unique_ids = list(dict.fromkeys(chat_id for chat_id in chat_ids if chat_id))
+  raw = graph_get_json_batch(
+      [
+          (chat_id, f"/chats/{quoted_id(chat_id)}")
+          for chat_id in unique_ids
+      ],
+      access_token,
+      batch_concurrency=batch_concurrency,
+  )
+  results: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
+  for chat_id in unique_ids:
+    chat, error = raw.get(chat_id, (None, "Missing chat metadata response"))
+    if chat is None:
+      results[chat_id] = (None, error)
+      continue
+    if chat.get("chatType") != "meeting":
+      results[chat_id] = (None, "The chat is not a meeting conversation")
+      continue
+    meeting_info = chat.get("onlineMeetingInfo")
+    meeting_info = meeting_info if isinstance(meeting_info, dict) else {}
+    results[chat_id] = ({"onlineMeetingInfo": meeting_info}, None)
+  return results
+
+
 def list_meeting_events_batch(
     meetings: list[dict[str, Any]],
     access_token: str,
@@ -1809,7 +1888,11 @@ def list_meeting_events_batch(
     return []
   initial_event_ids = [event_id for event_id in unique.values() if event_id]
   initial_events = (
-      get_calendar_events_batch(initial_event_ids, access_token)
+      get_calendar_events_batch(
+          initial_event_ids,
+          access_token,
+          batch_concurrency=meeting_concurrency,
+      )
       if initial_event_ids
       else {}
   )
@@ -1825,18 +1908,18 @@ def list_meeting_events_batch(
   ]
   chat_metadata: dict[str, dict[str, Any]] = {}
   if missing_or_stale:
-    prefetch_workers = max(1, min(meeting_concurrency, len(missing_or_stale)))
-    with ThreadPoolExecutor(max_workers=prefetch_workers) as executor:
-      futures = {
-          executor.submit(meeting_chat_metadata, chat_id, access_token): chat_id
-          for chat_id in missing_or_stale
-      }
-      for future in as_completed(futures):
-        chat_id = futures[future]
-        try:
-          chat_metadata[chat_id] = future.result()
-        except BackendError as exception:
-          chat_metadata[chat_id] = {"error": str(exception)}
+    metadata_results = get_meeting_chat_metadata_batch(
+        missing_or_stale,
+        access_token,
+        batch_concurrency=meeting_concurrency,
+    )
+    for chat_id in missing_or_stale:
+      metadata, error = metadata_results.get(
+          chat_id, (None, "Missing chat metadata response")
+      )
+      chat_metadata[chat_id] = (
+          metadata if metadata is not None else {"error": error}
+      )
 
   refreshed_ids: dict[str, str] = {}
   for chat_id, metadata in chat_metadata.items():
@@ -1851,7 +1934,11 @@ def list_meeting_events_batch(
     ):
       refreshed_ids[chat_id] = candidate
   refreshed_events = (
-      get_calendar_events_batch(list(refreshed_ids.values()), access_token)
+      get_calendar_events_batch(
+          list(refreshed_ids.values()),
+          access_token,
+          batch_concurrency=meeting_concurrency,
+      )
       if refreshed_ids
       else {}
   )

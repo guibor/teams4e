@@ -727,7 +727,12 @@ the distinction between mu4e's `b' and `B' commands."
         (user-error "This Teams bookmark uses a function and cannot be edited"))
       (setq query (read-string (format "Edit %s query: " name) query)
             name (format "%s (edited)" name)))
-    (teams4e--apply-inbox-query query name)))
+    (if (and (not edit)
+             (or (eq query 'unread)
+                 (and (stringp query)
+                      (string-equal (string-trim query) "unread"))))
+        (teams4e-filter-unread)
+      (teams4e--apply-inbox-query query name))))
 
 (defun teams4e-bookmark-edit ()
   "Edit and apply a configured Teams inbox bookmark."
@@ -745,15 +750,28 @@ the distinction between mu4e's `b' and `B' commands."
   (teams4e--apply-inbox-query
    query (if (string-empty-p query) "all" query)))
 
+(defun teams4e--set-unread-filter (enabled)
+  "Set the independent unread-only overlay to ENABLED and redraw headers."
+  (setq teams4e--unread-filter-enabled (and enabled t))
+  (when-let ((buffer (if (derived-mode-p 'teams4e-recent-mode)
+                          (current-buffer)
+                        (teams4e--recent-buffer))))
+    (with-current-buffer buffer
+      (when (derived-mode-p 'teams4e-recent-mode)
+        (teams4e--render-recent)))))
+
+(defun teams4e-filter-unread ()
+  "Enable unread-only filtering without replacing the active inbox filter."
+  (interactive)
+  (teams4e--set-unread-filter t)
+  (message "Teams unread-only filter enabled for %s"
+           (or teams4e--active-filter-name
+               (symbol-name teams4e--active-view))))
+
 (defun teams4e-toggle-unread-filter ()
   "Toggle an unread-only overlay without replacing the active inbox filter."
   (interactive)
-  (setq teams4e--unread-filter-enabled
-        (not teams4e--unread-filter-enabled))
-  (when-let ((buffer (teams4e--recent-buffer)))
-    (with-current-buffer buffer
-      (when (derived-mode-p 'teams4e-recent-mode)
-        (teams4e--render-recent))))
+  (teams4e--set-unread-filter (not teams4e--unread-filter-enabled))
   (message "Teams unread-only filter %s for %s"
            (if teams4e--unread-filter-enabled "enabled" "disabled")
            (or teams4e--active-filter-name

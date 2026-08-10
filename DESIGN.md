@@ -80,6 +80,8 @@ workflows, proposal primitives, and optional agent analysis.
 Main entry points:
 
 - `teams4e-bookmark-jump`: apply a configured view/query.
+- `teams4e-filter-unread`: enable the independent unread overlay used by `b u`
+  without replacing the active bookmark/query; All Chats clears it.
 - `teams4e--query-chat-p`: resolve known built-in view symbols before callable
   predicates, then evaluate custom functions or textual query clauses.
 - `teams4e-execute-marks`: apply deferred row actions serially.
@@ -179,8 +181,9 @@ can exercise destructive and asynchronous workflows without Graph access.
 Graph chat data may include `onlineMeetingInfo.calendarEventId`. The adapter
 fetches those events with a narrow field selection in Graph JSON batches of at
 most 20 requests. If a list row omits the ID, or its ID returns 404, an explicit
-meeting view may fetch `/chats/{id}` with bounded concurrency. Any rows still
-unresolved by direct IDs contribute their join URLs to exactly one bounded
+meeting view fetches `/chats/{id}` through the same bounded JSON batch helper.
+Batch containers may run concurrently up to the configured enrichment bound.
+Any rows still unresolved by direct IDs contribute their join URLs to one bounded
 `calendarView` scan for that backend request. Emacs merges the result into
 `meetingContext.event`. One Emacs refresh sends one enrichment request; a
 retriable row is reconsidered only after the user explicitly refreshes again.
@@ -188,8 +191,10 @@ The fallback prioritizes recent message-less meeting rows before
 message-bearing meeting history so its fixed bound remains useful for
 calendar-created future meetings.
 
-The meeting-only schedule column, meeting predicates/sort, and reader banner
-all read this same attachment. Message-oriented views use the compact headers
+The meeting-only fixed When, Conversation, Response, and Location columns,
+meeting predicates/sort, and reader banner all read this same attachment. The
+headers buffer fixes its paragraph direction to left-to-right so bidirectional
+cell content cannot reorder table columns. Message-oriented views use the compact headers
 schema without a meeting column and sort descending by `lastMessagePreview`
 time, so calendar-only changes neither consume inbox width, reorder the inbox,
 nor change unread state. A message-bearing row requires both the preview id and

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Made `b u` enable the composable unread overlay without replacing the active
+  bookmark or query; `b a` remains the explicit reset.
+- Batched missing/stale meeting chat metadata reads in groups of 20 and split
+  meeting headers into fixed When, Conversation, Response, and Location
+  columns with stable left-to-right table layout.
 - Batched direct calendar-event reads through Microsoft Graph JSON batches of
   at most 20 requests, collapsed stale or missing event fallbacks into one
   shared bounded `calendarView` scan, and stopped retrying failed enrichment

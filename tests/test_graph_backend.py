@@ -315,9 +315,12 @@ class GraphBackendTests(unittest.TestCase):
         {"chatId": "chat-2", "eventId": "event-2"},
     ]
 
-    def events(event_ids: list[str], token: str) -> dict:
+    def events(
+        event_ids: list[str], token: str, *, batch_concurrency: int
+    ) -> dict:
       self.assertEqual("token", token)
       self.assertEqual(["event-1", "event-2"], event_ids)
+      self.assertEqual(2, batch_concurrency)
       return {
           "event-1": ({"id": "event-1"}, None),
           "event-2": (None, "calendar denied"),
@@ -346,10 +349,12 @@ class GraphBackendTests(unittest.TestCase):
     with (
         mock.patch.object(
             backend,
-            "graph_json",
+            "get_meeting_chat_metadata_batch",
             return_value={
-                "chatType": "meeting",
-                "onlineMeetingInfo": {"calendarEventId": "event-1"},
+                "chat-1": (
+                    {"onlineMeetingInfo": {"calendarEventId": "event-1"}},
+                    None,
+                )
             },
         ) as chat_request,
         mock.patch.object(
@@ -365,7 +370,9 @@ class GraphBackendTests(unittest.TestCase):
           meetings, "token", meeting_concurrency=2
       )
 
-    chat_request.assert_called_once_with("/chats/chat-1", "token")
+    chat_request.assert_called_once_with(
+        ["chat-1"], "token", batch_concurrency=2
+    )
     self.assertEqual(2, event_request.call_count)
     self.assertEqual(["event-2"], event_request.call_args_list[0].args[0])
     self.assertEqual(["event-1"], event_request.call_args_list[1].args[0])
@@ -378,8 +385,8 @@ class GraphBackendTests(unittest.TestCase):
   def test_meeting_event_batch_reports_chat_without_calendar_event(self) -> None:
     with mock.patch.object(
         backend,
-        "graph_json",
-        return_value={"chatType": "meeting", "onlineMeetingInfo": {}},
+        "get_meeting_chat_metadata_batch",
+        return_value={"chat-1": ({"onlineMeetingInfo": {}}, None)},
     ):
       result = backend.list_meeting_events_batch(
           [{"chatId": "chat-1"}], "token"
@@ -399,10 +406,12 @@ class GraphBackendTests(unittest.TestCase):
     with (
         mock.patch.object(
             backend,
-            "graph_json",
+            "get_meeting_chat_metadata_batch",
             return_value={
-                "chatType": "meeting",
-                "onlineMeetingInfo": {"joinWebUrl": join_url},
+                "chat-1": (
+                    {"onlineMeetingInfo": {"joinWebUrl": join_url}},
+                    None,
+                )
             },
         ),
         mock.patch.object(
@@ -431,27 +440,26 @@ class GraphBackendTests(unittest.TestCase):
         for index, url in enumerate(join_urls.values(), start=1)
     }
 
-    def metadata(path: str, _token: str) -> dict:
-      chat_id = path.rsplit("/", 1)[-1]
-      return {
-          "chatType": "meeting",
-          "onlineMeetingInfo": {"joinWebUrl": join_urls[chat_id]},
-      }
-
     with (
         mock.patch.object(
             backend,
             "get_calendar_events_batch",
-            side_effect=lambda event_ids, _token: {
+            side_effect=lambda event_ids, _token, **_kwargs: {
                 event_id: (None, "Microsoft Graph HTTP 404: event not found")
                 for event_id in event_ids
             },
         ),
         mock.patch.object(
             backend,
-            "graph_json",
-            side_effect=metadata,
-        ),
+            "get_meeting_chat_metadata_batch",
+            return_value={
+                chat_id: (
+                    {"onlineMeetingInfo": {"joinWebUrl": join_url}},
+                    None,
+                )
+                for chat_id, join_url in join_urls.items()
+            },
+        ) as metadata_batch,
         mock.patch.object(
             backend,
             "calendar_events_by_join_url",
@@ -464,6 +472,9 @@ class GraphBackendTests(unittest.TestCase):
 
     calendar_scan.assert_called_once_with(
         "token", needed_join_urls=set(join_urls.values())
+    )
+    metadata_batch.assert_called_once_with(
+        ["chat-1", "chat-2"], "token", batch_concurrency=2
     )
     self.assertEqual(
         ["fresh-event-1", "fresh-event-2"],
@@ -502,6 +513,35 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual("event-0", result["event-0"][0]["id"])
     self.assertIsNone(result["event-20"][0])
     self.assertIn("HTTP 404", result["event-20"][1])
+
+  def test_meeting_chat_metadata_uses_twenty_request_json_batches(self) -> None:
+    chat_ids = [f"chat-{index}" for index in range(21)]
+
+    def batch(_path: str, _token: str, **kwargs: object) -> dict:
+      requests = kwargs["payload"]["requests"]  # type: ignore[index]
+      self.assertLessEqual(len(requests), backend.GRAPH_JSON_BATCH_LIMIT)
+      return {
+          "responses": [
+              {
+                  "id": request["id"],
+                  "status": 200,
+                  "body": {
+                      "chatType": "meeting",
+                      "onlineMeetingInfo": {"calendarEventId": request["id"]},
+                  },
+              }
+              for request in requests
+          ]
+      }
+
+    with mock.patch.object(backend, "graph_json", side_effect=batch) as request:
+      result = backend.get_meeting_chat_metadata_batch(chat_ids, "token")
+
+    self.assertEqual(2, request.call_count)
+    self.assertEqual(chat_ids, list(result))
+    self.assertTrue(
+        all(metadata is not None for metadata, _error in result.values())
+    )
 
   def test_get_meeting_context_resolves_by_join_url(self) -> None:
     join_url = "https://teams.microsoft.com/l/meetup-join/context"
