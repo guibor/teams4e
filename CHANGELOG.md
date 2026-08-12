@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added a redacted in-memory `teams4e-performance-report` covering backend
+  operations and Emacs inbox rendering, with configurable artificial mock
+  latency for account-free responsiveness testing.
+- Removed the duplicate cache-first inbox redraw, coalesced adjacent member and
+  calendar completion redraws, and reused canonical chat objects across fresh
+  list responses.
+- Preserved matching linked meeting context briefly across cache/live chat
+  replacement, while explicit refresh, expiry, or changed event linkage still
+  invalidates it.
 - Made `b u` enable the composable unread overlay without replacing the active
   bookmark or query; `b a` remains the explicit reset.
 - Batched missing/stale meeting chat metadata reads in groups of 20 and split

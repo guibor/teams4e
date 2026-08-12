@@ -94,6 +94,24 @@ identified in status buffers and never validates tenant permissions."
   :type 'file
   :group 'teams4e)
 
+(defcustom teams4e-mock-delay-ms 0
+  "Artificial delay for each non-cache mock backend request, in milliseconds.
+
+This is useful for exercising cache-first rendering and concurrent enrichment
+without a Microsoft 365 account.  It has no effect outside mock mode."
+  :type 'natnum
+  :group 'teams4e)
+
+(defcustom teams4e-performance-history-size 200
+  "Maximum number of redacted in-memory performance events to retain."
+  :type 'natnum
+  :group 'teams4e)
+
+(defcustom teams4e-redraw-coalesce-delay 0.05
+  "Seconds used to combine adjacent asynchronous inbox redraw requests."
+  :type 'number
+  :group 'teams4e)
+
 (defcustom teams4e-cache-file
   (expand-file-name "teams4e/teams.sqlite3"
                     (or (getenv "XDG_CACHE_HOME")
@@ -294,6 +312,14 @@ recent message-less meeting stubs first, then other meeting chats."
 When enrichment takes longer than this, the meeting row shows a retriable
 timeout instead of staying on \"Loading calendar...\" indefinitely."
   :type 'integer
+  :group 'teams4e)
+
+(defcustom teams4e-meeting-context-cache-seconds 120
+  "Seconds to preserve matching in-memory meeting context across chat refreshes.
+
+The context remains attached to the canonical chat object.  An explicit inbox
+refresh discards it immediately, and changed event linkage never inherits it."
+  :type 'natnum
   :group 'teams4e)
 
 (defcustom teams4e-meeting-proposal-search-days 7

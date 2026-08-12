@@ -650,8 +650,10 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
 
 (defun teams4e--render-recent ()
   "Render the active saved/built-in inbox view and preserve selection."
+  (teams4e--cancel-recent-redraw)
   (teams4e--captured-chat-table)
-  (let* ((selected (teams4e--recent-selected-id))
+  (let* ((started (float-time))
+         (selected (teams4e--recent-selected-id))
          (visible (seq-filter #'teams4e--view-chat-p
                               teams4e--chats))
          (visible (teams4e--order-visible-chats visible))
@@ -676,7 +678,10 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
              (if teams4e-mock-mode " mock" "")))
     (tabulated-list-print t)
     (teams4e--recent-restore-selection selected)
-    (teams4e--follow-selected-chat)))
+    (teams4e--follow-selected-chat)
+    (teams4e--record-performance
+     "Inbox render" (* 1000.0 (- (float-time) started))
+     :transport "emacs" :items (length visible))))
 
 (defun teams4e--apply-inbox-query (query name)
   "Apply inbox QUERY under display NAME and redraw the headers buffer."

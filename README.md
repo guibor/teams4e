@@ -84,6 +84,11 @@ M-x teams4e
 The mock exercises the same argv/JSON backend contract as the Graph adapter.
 Messages, reactions, edits, read state, searches, channels, exports, and
 meeting metadata are real package behavior; only the remote service is fake.
+Set `teams4e-mock-delay-ms` to exercise the same asynchronous UI under
+controlled latency, then inspect `M-x teams4e-performance-report`. See
+[Local testing without a tenant](LOCAL-TESTING.md) for the complete workflow
+and the boundary between mocks, Microsoft Dev Proxy, and a real developer
+tenant.
 
 ## Installation
 
@@ -261,7 +266,10 @@ loads do not pay the missing-ID fallback cost, and one refresh never starts a
 second enrichment wave automatically. Recent message-less meeting rows are
 resolved before message-bearing meeting history within that bound. The
 meeting-only headers schedule column and reader banner both render from that
-one attachment.
+one attachment. A matching, recently fetched event attachment survives the
+cache-to-live chat-list transition on that same canonical chat object. It
+expires after `teams4e-meeting-context-cache-seconds`; `g` always discards it
+before explicitly refreshing.
 
 ### Meeting workspace
 
@@ -366,6 +374,9 @@ Other useful options include:
 - `teams4e-browser-command` and `teams4e-app-command`
 - `teams4e-capture-file` and `teams4e-export-directory`
 - `teams4e-cache-first` and `teams4e-use-persistent-backend`
+- `teams4e-redraw-coalesce-delay` and
+  `teams4e-meeting-context-cache-seconds`
+- `teams4e-performance-history-size`
 - `teams4e-background-sync-interval`
 
 Run `M-x customize-group RET teams4e RET` for the complete set.
@@ -404,6 +415,13 @@ make compile
 
 The suite uses the mock backend and patched Graph requests. It does not require
 credentials or a tenant.
+
+For a delayed interactive run, set `teams4e-mock-delay-ms`, enable/reset the
+mock, open `teams4e`, exercise `b m`, and run
+`M-x teams4e-performance-report`. The report is memory-only and excludes
+message bodies, titles, participants, IDs, URLs, and tokens. Full instructions
+and Microsoft-supported external test options are in
+[LOCAL-TESTING.md](LOCAL-TESTING.md).
 
 Launch the reproducible graphical demo with:
 

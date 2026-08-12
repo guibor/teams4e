@@ -72,6 +72,7 @@
 (defvar teams4e-image-max-width)
 (defvar teams4e-index-width)
 (defvar teams4e-mark-read-on-open)
+(defvar teams4e-mock-delay-ms)
 (defvar teams4e-member-enrichment-concurrency)
 (defvar teams4e-member-enrichment-limit)
 (defvar teams4e-meeting-enrichment-concurrency)
@@ -85,6 +86,8 @@
 (defvar teams4e-preview-cache-seconds)
 (defvar teams4e-preview-message-limit)
 (defvar teams4e-preview-on-move)
+(defvar teams4e-performance-history-size)
+(defvar teams4e-redraw-coalesce-delay)
 (defvar teams4e-state-file)
 (defvar teams4e-status-style)
 
@@ -93,6 +96,7 @@
 (defvar teams4e--server-process nil)
 (defvar teams4e--server-fingerprint nil)
 (defvar teams4e--server-pending (make-hash-table :test #'eql))
+(defvar teams4e--performance-events nil)
 (defconst teams4e--server-stdout-noise-limit 8
   "Maximum consecutive non-protocol stdout lines tolerated from the server.")
 
@@ -121,6 +125,7 @@
 (defvar teams4e--member-cache (make-hash-table :test #'equal))
 (defvar teams4e--member-inflight (make-hash-table :test #'equal))
 (defvar teams4e-meeting-enrichment-timeout)
+(defvar teams4e-meeting-context-cache-seconds)
 (defvar teams4e--meeting-inflight (make-hash-table :test #'equal))
 (defvar teams4e--meeting-enrichment-timeouts (make-hash-table :test #'equal))
 (defconst teams4e--no-members 'teams4e--no-members)
@@ -184,6 +189,7 @@
 (defvar-local teams4e--pending-message-id nil)
 (defvar-local teams4e--jump-to-bottom-on-render nil)
 (defvar-local teams4e--meeting-context nil)
+(defvar-local teams4e--recent-redraw-timer nil)
 (defvar-local teams4e--meeting-process nil)
 (defvar-local teams4e--meeting-request-id 0)
 (defvar-local teams4e--image-processes nil)
@@ -310,7 +316,10 @@
   (setenv "TEAMS4E_MOCK" (if teams4e-mock-mode "1" nil))
   (setenv "TEAMS4E_MOCK_STATE"
           (and teams4e-mock-mode
-               (expand-file-name teams4e-mock-state-file))))
+               (expand-file-name teams4e-mock-state-file)))
+  (setenv "TEAMS4E_MOCK_DELAY_MS"
+          (and teams4e-mock-mode
+               (number-to-string (max 0 teams4e-mock-delay-ms)))))
 
 (defun teams4e--redacted-args (args)
   "Return ARGS with private outgoing content hidden for diagnostics."
@@ -318,6 +327,137 @@
     (dolist (arg args (nreverse result))
       (push (if redact-next "<content redacted>" arg) result)
       (setq redact-next (member arg '("--message" "--comment"))))))
+
+(defun teams4e--performance-operation (args)
+  "Return a content-free operation label for backend ARGS."
+  (cond
+   ((teams4e--args-prefix-p '("teams" "cache" "chat" "list") args)
+    "Cache chat list")
+   ((teams4e--args-prefix-p '("teams" "chat" "list") args)
+    "Live chat list")
+   ((teams4e--args-prefix-p '("teams" "chat" "member" "batch") args)
+    "Member enrichment")
+   ((teams4e--args-prefix-p '("teams" "meeting" "event" "batch") args)
+    "Calendar event batch")
+   ((teams4e--args-prefix-p '("teams" "meeting" "context") args)
+    "Meeting context")
+   ((teams4e--args-prefix-p '("teams" "meeting") args)
+    "Meeting operation")
+   ((teams4e--args-prefix-p '("teams" "chat" "message" "list") args)
+    "Chat messages")
+   ((teams4e--args-prefix-p '("teams" "cache" "chat" "message") args)
+    "Cached chat messages")
+   ((teams4e--args-prefix-p '("teams" "sync") args) "Cache sync")
+   ((teams4e--args-prefix-p '("teams" "search") args) "Search")
+   ((teams4e--args-prefix-p '("status") args) "Status")
+   (t "Backend operation")))
+
+(defun teams4e--performance-argument-count (args)
+  "Return the non-sensitive request item count represented by ARGS."
+  (cond
+   ((teams4e--args-prefix-p '("teams" "chat" "member" "batch") args)
+    (seq-count (lambda (arg) (string-equal arg "--chatId")) args))
+   ((teams4e--args-prefix-p '("teams" "meeting" "event" "batch") args)
+    (when-let ((encoded (cadr (member "--meetings" args))))
+      (condition-case nil
+          (length (json-parse-string encoded :array-type 'list))
+        (error nil))))))
+
+(defun teams4e--performance-result-count (payload)
+  "Return a safe top-level item count for backend PAYLOAD."
+  (cond
+   ((vectorp payload) (length payload))
+   ((and (listp payload) (consp (car payload)) (consp (caar payload)))
+    (length payload))
+   ((vectorp (teams4e--get payload 'value))
+    (length (teams4e--get payload 'value)))
+   ((and (listp (teams4e--get payload 'value))
+         (teams4e--get payload 'value))
+    (length (teams4e--get payload 'value)))))
+
+(cl-defun teams4e--record-performance
+    (operation duration-ms &key transport status items)
+  "Record one redacted in-memory performance event for OPERATION."
+  (let ((limit (max 0 teams4e-performance-history-size)))
+    (when (> limit 0)
+      (push (list :time (current-time)
+                  :operation operation
+                  :transport (or transport "local")
+                  :status (or status "ok")
+                  :items items
+                  :duration-ms duration-ms)
+            teams4e--performance-events)
+      (when (> (length teams4e--performance-events) limit)
+        (setcdr (nthcdr (1- limit) teams4e--performance-events) nil)))))
+
+(defun teams4e--performance-row (event)
+  "Return one report row for redacted performance EVENT."
+  (format "%-8s  %-28s %-10s %-8s %6s %9.1f\n"
+          (format-time-string "%H:%M:%S" (plist-get event :time))
+          (truncate-string-to-width (plist-get event :operation) 28 nil nil t)
+          (truncate-string-to-width (plist-get event :transport) 10 nil nil t)
+          (truncate-string-to-width (plist-get event :status) 8 nil nil t)
+          (or (plist-get event :items) "-")
+          (plist-get event :duration-ms)))
+
+(defun teams4e--insert-performance-summary (events)
+  "Insert a per-operation timing summary for redacted EVENTS."
+  (let (summary)
+    (dolist (event events)
+      (let* ((operation (plist-get event :operation))
+             (duration (plist-get event :duration-ms))
+             (cell (assoc operation summary)))
+        (if cell
+            (setcdr cell
+                    (list (1+ (nth 0 (cdr cell)))
+                          (+ duration (nth 1 (cdr cell)))
+                          (max duration (nth 2 (cdr cell)))))
+          (setq summary
+                (append summary
+                        (list (cons operation (list 1 duration duration))))))))
+    (insert "Summary\n")
+    (insert "Operation                       Calls  Total ms   Mean ms    Max ms\n")
+    (insert "------------------------------ ----- --------- --------- ---------\n")
+    (dolist (cell summary)
+      (pcase-let ((`(,calls ,total ,maximum) (cdr cell)))
+        (insert (format "%-30s %5d %9.1f %9.1f %9.1f\n"
+                        (truncate-string-to-width (car cell) 30 nil nil t)
+                        calls total (/ total calls) maximum))))
+    (insert "\nRecent events\n")))
+
+;;;###autoload
+(defun teams4e-performance-report (&optional clear)
+  "Display redacted in-memory request and rendering timings.
+
+With prefix argument CLEAR, discard existing timings before displaying the
+report.  No message bodies, titles, participants, IDs, URLs, or tokens are
+stored or shown."
+  (interactive "P")
+  (when clear (setq teams4e--performance-events nil))
+  (let ((buffer (get-buffer-create "*Teams Performance*"))
+        (events (reverse teams4e--performance-events)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "Teams performance report\n\n")
+        (insert (format "Mode: %s | Backend: %s | Events: %d\n\n"
+                        (cond (teams4e-mock-mode "mock")
+                              (teams4e-offline-mode "offline")
+                              (t "live"))
+                        (if teams4e-use-persistent-backend
+                            "persistent" "one-shot")
+                        (length events)))
+        (when events (teams4e--insert-performance-summary events))
+        (insert "Time      Operation                    Transport  Status    Items  Duration\n")
+        (insert "--------  ---------------------------- ---------- -------- ------ ---------\n")
+        (if events
+            (dolist (event events)
+              (insert (teams4e--performance-row event)))
+          (insert "No performance events recorded yet.\n"))
+        (insert "\nThis report contains counts and timings only; content and IDs are excluded.\n")
+        (goto-char (point-min))
+        (special-mode)))
+    (pop-to-buffer buffer)))
 
 (defun teams4e--command-string (args)
   "Return a shell-quoted diagnostic command for ARGS."
@@ -463,7 +603,8 @@ when non-nil, receives the exit status and combined diagnostic text."
         (expand-file-name teams4e-cache-file)
         teams4e-mock-mode
         (and teams4e-mock-mode
-             (expand-file-name teams4e-mock-state-file))))
+             (expand-file-name teams4e-mock-state-file))
+        (and teams4e-mock-mode teams4e-mock-delay-ms)))
 
 (defun teams4e--fail-server-requests (server detail)
   "Fail pending requests owned by SERVER with DETAIL."
@@ -690,17 +831,40 @@ suffix beginning with its top-level ID field."
   "Run the Teams backend with ARGS and pass parsed JSON to CALLBACK.
 
 ERROR-CALLBACK has the same contract as in `teams4e--run'."
-  (let ((json-args (if (member "--output" args)
-                       args
-                     (append args '("--output" "json"))))
-        (program (teams4e--executable)))
-    (if (teams4e--persistent-command-p program json-args)
+  (let* ((json-args (if (member "--output" args)
+                        args
+                      (append args '("--output" "json"))))
+         (program (teams4e--executable))
+         (persistent (teams4e--persistent-command-p program json-args))
+         (operation (teams4e--performance-operation json-args))
+         (argument-count (teams4e--performance-argument-count json-args))
+         (started (float-time))
+         (success
+          (lambda (payload)
+            (teams4e--record-performance
+             operation (* 1000.0 (- (float-time) started))
+             :transport (if persistent "persistent" "one-shot")
+             :status "ok"
+             :items (or argument-count
+                        (teams4e--performance-result-count payload)))
+            (when callback (funcall callback payload))))
+         (failure
+          (lambda (status detail)
+            (teams4e--record-performance
+             operation (* 1000.0 (- (float-time) started))
+             :transport (if persistent "persistent" "one-shot")
+             :status (format "error:%s" status)
+             :items argument-count)
+            (if error-callback
+                (funcall error-callback status detail)
+              (teams4e--report-error json-args status detail)))))
+    (if persistent
         (condition-case nil
-            (teams4e--run-json-persistent
-             program json-args callback error-callback)
+            (teams4e--run-json-persistent program json-args success failure)
           (error
-           (teams4e--run-json-once json-args callback error-callback)))
-      (teams4e--run-json-once json-args callback error-callback))))
+           (setq persistent nil)
+           (teams4e--run-json-once json-args success failure)))
+      (teams4e--run-json-once json-args success failure))))
 
 (defun teams4e--get (object key)
   "Read KEY from JSON alist OBJECT using symbol or string keys."
@@ -1255,12 +1419,23 @@ when chat metadata itself has a recent update time."
       ;; CHAT is shared with the inbox.  Add the new key destructively so the
       ;; reader and capture callbacks see it through their existing reference.
       (setcdr chat (cons (cons 'meetingContext target) (cdr chat)))))
+  (let ((target (teams4e--get chat 'meetingContext)))
+    (if-let ((cell (assq 'teams4eFetchedAt target)))
+        (setcdr cell (float-time))
+      (setcdr target
+              (cons (cons 'teams4eFetchedAt (float-time)) (cdr target)))))
   (when (teams4e--get context 'membersLoaded)
     (let ((members (teams4e--get context 'members)))
       (puthash (teams4e--chat-id chat)
                (or members teams4e--no-members)
                teams4e--member-cache)))
   (teams4e--get chat 'meetingContext))
+
+(defun teams4e--discard-meeting-contexts ()
+  "Discard in-memory calendar attachments before an explicit refresh."
+  (dolist (chat teams4e--chats)
+    (when-let ((cell (assq 'meetingContext (cdr chat))))
+      (setcdr chat (delq cell (cdr chat))))))
 
 (defun teams4e--fetch-meeting-context
     (chat callback &optional error-callback)
@@ -1612,15 +1787,75 @@ and leave CALLBACK untouched."
           "--metadataLimit"
           (number-to-string (max 1 teams4e-chat-metadata-limit)))))
 
+(defun teams4e--meeting-link-signature (chat)
+  "Return a stable event or join-link signature for meeting CHAT."
+  (if-let ((event-id
+            (or (teams4e--dig chat 'onlineMeetingInfo 'calendarEventId)
+                (teams4e--dig chat 'meetingContext
+                               'onlineMeetingInfo 'calendarEventId)
+                (teams4e--dig chat 'meetingContext 'event 'id))))
+      (concat "event:" event-id)
+    (when-let ((join-url
+                (or (teams4e--dig chat 'onlineMeetingInfo 'joinWebUrl)
+                    (teams4e--dig chat 'meetingContext
+                                   'onlineMeetingInfo 'joinWebUrl)
+                    (teams4e--dig chat 'meetingContext
+                                   'event 'onlineMeeting 'joinUrl))))
+      (concat "join:"
+              (string-remove-suffix
+               "/" (downcase (string-trim join-url)))))))
+
+(defun teams4e--reusable-meeting-context (old-chat new-chat)
+  "Return OLD-CHAT context when it is still valid for NEW-CHAT."
+  (let* ((context (teams4e--get old-chat 'meetingContext))
+         (fetched-at (teams4e--get context 'teams4eFetchedAt))
+         (old-link (teams4e--meeting-link-signature old-chat))
+         (new-link (teams4e--meeting-link-signature new-chat)))
+    (when (and (teams4e--get context 'event)
+               (numberp fetched-at)
+               (> teams4e-meeting-context-cache-seconds 0)
+               (<= (- (float-time) fetched-at)
+                   teams4e-meeting-context-cache-seconds)
+               old-link new-link (string-equal old-link new-link))
+      context)))
+
+(defun teams4e--reuse-chat-object (old-chat new-chat)
+  "Update canonical OLD-CHAT from NEW-CHAT and return the same object."
+  (let ((context (teams4e--reusable-meeting-context old-chat new-chat)))
+    (setcar old-chat (car new-chat))
+    (setcdr old-chat (cdr new-chat))
+    (when context
+      (setcdr old-chat (cons (cons 'meetingContext context) (cdr old-chat))))
+    (cons old-chat (and context t))))
+
 (defun teams4e--normalize-chats (payload)
   "Normalize chat PAYLOAD, update member hints, and return sorted chats."
-  (let ((chats (teams4e--payload-list payload)))
+  (let ((old-by-id (make-hash-table :test #'equal))
+        (reused-contexts 0)
+        (chats (teams4e--payload-list payload)))
+    (dolist (chat teams4e--chats)
+      (when-let ((id (teams4e--chat-id chat)))
+        (puthash id chat old-by-id)))
+    (setq chats
+          (mapcar
+           (lambda (chat)
+             (if-let ((old (gethash (teams4e--chat-id chat) old-by-id)))
+                 (pcase-let ((`(,canonical . ,context-reused)
+                              (teams4e--reuse-chat-object old chat)))
+                   (when context-reused (cl-incf reused-contexts))
+                   canonical)
+               chat))
+           chats))
     (dolist (chat chats)
       (when (teams4e--get chat 'membersLoaded)
         (let ((members (teams4e--get chat 'members)))
           (puthash (teams4e--chat-id chat)
                    (or members teams4e--no-members)
                    teams4e--member-cache))))
+    (when (> reused-contexts 0)
+      (teams4e--record-performance
+       "Meeting context reuse" 0.0 :transport "emacs"
+       :items reused-contexts))
     (sort chats #'teams4e--chat-updated-p)))
 
 (defun teams4e--load-chats (callback &optional error-callback args)
@@ -1802,7 +2037,9 @@ Return non-nil when a linked reader exists, even when it already matches."
 
 (defun teams4e--render-recent ()
   "Render cached chats in the current recent-chat buffer."
-  (let ((selected (teams4e--recent-selected-id))
+  (teams4e--cancel-recent-redraw)
+  (let ((started (float-time))
+        (selected (teams4e--recent-selected-id))
         (unread-count (seq-count #'teams4e--unread-p
                                  teams4e--chats)))
     (teams4e--configure-recent-format)
@@ -1817,7 +2054,33 @@ Return non-nil when a linked reader exists, even when it already matches."
                   (teams4e--inbox-source-suffix)))
     (tabulated-list-print t)
     (teams4e--recent-restore-selection selected)
-    (teams4e--follow-selected-chat)))
+    (teams4e--follow-selected-chat)
+    (teams4e--record-performance
+     "Inbox render" (* 1000.0 (- (float-time) started))
+     :transport "emacs" :items (length teams4e--chats))))
+
+(defun teams4e--cancel-recent-redraw ()
+  "Cancel the current buffer's pending coalesced inbox redraw."
+  (when (timerp teams4e--recent-redraw-timer)
+    (cancel-timer teams4e--recent-redraw-timer))
+  (setq teams4e--recent-redraw-timer nil))
+
+(defun teams4e--schedule-visible-recent-refresh ()
+  "Schedule one redraw for adjacent asynchronous metadata completions."
+  (when-let ((buffer (teams4e--recent-buffer)))
+    (with-current-buffer buffer
+      (when (and (derived-mode-p 'teams4e-recent-mode)
+                 (not (timerp teams4e--recent-redraw-timer)))
+        (setq teams4e--recent-redraw-timer
+              (run-with-timer
+               (max 0 teams4e-redraw-coalesce-delay) nil
+               (lambda (target)
+                 (when (buffer-live-p target)
+                   (with-current-buffer target
+                     (setq teams4e--recent-redraw-timer nil)
+                     (when (derived-mode-p 'teams4e-recent-mode)
+                       (teams4e--render-recent)))))
+               buffer))))))
 
 (defun teams4e--refresh-visible-recent ()
   "Refresh the recent-chat buffer after cached labels change."
@@ -1865,7 +2128,7 @@ Return non-nil when a linked reader exists, even when it already matches."
                      (puthash id (or members teams4e--no-members)
                               teams4e--member-cache))))))
            (dolist (id ids) (remhash id teams4e--member-inflight))
-           (teams4e--refresh-visible-recent))
+           (teams4e--schedule-visible-recent-refresh))
          (lambda (_status _detail)
            ;; Member labels are optional; topic/type fallbacks remain usable.
            (dolist (id ids) (remhash id teams4e--member-inflight))))))))
@@ -1936,7 +2199,7 @@ wins without affecting visible message or meeting ordering."
          chat
          `((eventError
             . "Calendar enrichment timed out; press g to retry")))))
-    (teams4e--refresh-visible-recent)))
+    (teams4e--schedule-visible-recent-refresh)))
 
 (defun teams4e--schedule-meeting-enrichment-timeouts (ids)
   "Schedule timeout recovery for meeting enrichment of IDS."
@@ -1996,7 +2259,7 @@ omitted by the chat-list response; explicit meeting views use this path."
                (remhash id teams4e--meeting-inflight)
                (teams4e--apply-meeting-context chat record)))
            (dolist (id ids) (remhash id teams4e--meeting-inflight))
-           (teams4e--refresh-visible-recent))
+           (teams4e--schedule-visible-recent-refresh))
          (lambda (status detail)
            ;; Calendar permission is optional; chat and member data stay useful,
            ;; but meeting views must explain why their calendar fields are empty.
@@ -2015,7 +2278,7 @@ omitted by the chat-list response; explicit meeting views use this path."
                          (teams4e--redacted-detail args (or detail "")))
                         500 nil nil t)))))))
            (teams4e--report-error args status detail)
-           (teams4e--refresh-visible-recent)))))))
+           (teams4e--schedule-visible-recent-refresh)))))))
 
 (defvar teams4e-recent-mode-map
   (let ((map (make-sparse-keymap)))
@@ -2064,6 +2327,7 @@ omitted by the chat-list response; explicit meeting views use this path."
         tabulated-list-sort-key nil
         bidi-paragraph-direction 'left-to-right)
   (add-hook 'kill-buffer-hook #'teams4e--cancel-buffer-process nil t)
+  (add-hook 'kill-buffer-hook #'teams4e--cancel-recent-redraw nil t)
   (add-hook 'post-command-hook #'teams4e--follow-selected-chat nil t)
   (tabulated-list-init-header))
 
@@ -2076,7 +2340,6 @@ omitted by the chat-list response; explicit meeting views use this path."
        (with-current-buffer buffer
          (setq teams4e--inbox-source-label
                (and cached-shown "cached, refreshing"))
-         (when cached-shown (teams4e--render-recent))
          (teams4e--cancel-process teams4e--process)
          (setq
           teams4e--process
@@ -2255,6 +2518,7 @@ This command deletes only the reader pane and buffer, never its Emacs frame."
 (defun teams4e-recent-refresh ()
   "Refresh the recent Teams chat inbox."
   (interactive)
+  (teams4e--discard-meeting-contexts)
   (teams4e-recent))
 
 (defun teams4e--find-chat (id)

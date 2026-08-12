@@ -21,6 +21,7 @@ BIN_DIR = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN_DIR))
 
 import teams4e_graph as backend  # noqa: E402
+import teams4e_mock as mock_backend  # noqa: E402
 from teams4e_cache import TeamsCache  # noqa: E402
 from teams4e_mock import MockTenant  # noqa: E402
 
@@ -60,6 +61,16 @@ class GraphBackendTests(unittest.TestCase):
 
   def setUp(self) -> None:
     backend.TOKEN_COMMAND_CACHE = None
+
+  def test_mock_delay_simulates_backend_latency_without_network(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      tenant = MockTenant(Path(directory) / "tenant.json")
+      with (
+          mock.patch.dict(os.environ, {"TEAMS4E_MOCK_DELAY_MS": "125"}),
+          mock.patch.object(mock_backend.time, "sleep") as sleep,
+      ):
+        tenant.execute(["status"])
+      sleep.assert_called_once_with(0.125)
 
   def test_legacy_executable_maps_former_environment_names(self) -> None:
     with tempfile.TemporaryDirectory() as directory:

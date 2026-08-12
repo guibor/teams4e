@@ -9,6 +9,7 @@ import mimetypes
 import os
 import shutil
 import tempfile
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,6 +26,17 @@ def mock_enabled() -> bool:
       "yes",
       "on",
   }
+
+
+def mock_delay() -> None:
+  """Apply the bounded artificial request delay configured for local tests."""
+  raw = os.environ.get("TEAMS4E_MOCK_DELAY_MS", "0")
+  try:
+    milliseconds = max(0.0, min(float(raw), 10_000.0))
+  except ValueError:
+    milliseconds = 0.0
+  if milliseconds:
+    time.sleep(milliseconds / 1000.0)
 
 
 def default_state_path() -> Path:
@@ -1156,6 +1168,7 @@ class MockTenant:
 
   def execute(self, args: list[str]) -> Any:
     """Execute ARGS using only local state."""
+    mock_delay()
     if args == ["status"]:
       return self.status()
     if args == ["login"]:

@@ -29,6 +29,12 @@ A chat is represented once in `teams4e--chats`. Optional participant and
 meeting enrichment is merged into that alist. Filters and bookmarks select the
 same objects; they do not maintain synchronized inbox copies.
 
+Fresh cache or Graph chat rows are merged into the existing chat cons cell by
+chat ID, preserving object identity for the singleton reader. A linked event
+attachment may cross that replacement only while its short in-memory lifetime
+has not expired and its event or join-link signature still matches. Explicit
+refresh drops the attachment. This is object reuse, not another calendar cache.
+
 ## Modules
 
 ### `teams4e.el`
@@ -64,6 +70,8 @@ Main entry points:
 - `teams4e-open-chat`: render a chat in the shared reader.
 - `teams4e-send` and `teams4e-reply`: create native compose buffers.
 - `teams4e--run-json`: issue one backend request and dispatch parsed JSON.
+- `teams4e-performance-report`: display content-free timings and item counts
+  retained in one bounded in-memory ring.
 - `teams4e--executable`: honor the configured backend and recover only from a
   removed versioned package path after a live package upgrade.
 - `teams4e--enrich-meetings`: attach linked event data to existing chat rows
@@ -116,6 +124,17 @@ label classifies the useful recovery: missing local credentials request login,
 Graph access failures identify calendar permission, missing event IDs say the
 chat has no linked event, and unknown failures point to `*M365 Errors*`. The
 diagnostic retains a bounded, redacted backend detail.
+
+`teams4e--run-json` times each backend operation under a fixed content-free
+label. Inbox rendering records a separate Emacs event. The bounded event ring
+contains only operation, transport, status, item count, duration, and local
+time; it never records argv values, IDs, URLs, people, titles, bodies, or
+tokens. `teams4e-performance-report` renders this ring without persisting it.
+
+Cache-first opening paints cached rows once before Graph starts. Member and
+calendar completion callbacks mutate their established caches/attachments and
+request a shared short timer; adjacent completions therefore produce one
+tabulated-list redraw. Direct user actions still redraw immediately.
 
 ### `teams4e-meetings.el`
 
@@ -175,6 +194,9 @@ watermarks, and full-text search.
 
 Implements the same command contract against a persistent fake tenant. Tests
 can exercise destructive and asynchronous workflows without Graph access.
+`TEAMS4E_MOCK_DELAY_MS`, exposed as `teams4e-mock-delay-ms`, adds a bounded
+delay to each non-cache request so cache-first and concurrency behavior can be
+tested locally under controlled latency.
 
 ## Meeting Metadata
 
@@ -190,6 +212,12 @@ retriable row is reconsidered only after the user explicitly refreshes again.
 The fallback prioritizes recent message-less meeting rows before
 message-bearing meeting history so its fixed bound remains useful for
 calendar-created future meetings.
+
+`teams4e--apply-meeting-context` stamps a private in-memory fetch time. During
+a subsequent chat-list normalization, a still-fresh context with matching
+event or join-link signature is carried onto the same reused chat cons cell.
+Expiry, changed linkage, or `teams4e-recent-refresh` removes it, after which the
+normal bounded enrichment path remains authoritative.
 
 The meeting-only fixed When, Conversation, Response, and Location columns,
 meeting predicates/sort, and reader banner all read this same attachment. The
