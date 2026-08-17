@@ -1798,7 +1798,7 @@
         (teams4e-bookmark-jump))
       (should-not teams4e--unread-filter-enabled)
       (should (equal "type:direct" teams4e--active-query))
-      (should (equal "Direct" teams4e--active-filter-name))))
+      (should (equal "Direct" teams4e--active-filter-name)))))
 
 (ert-deftest teams4e-headers-map-combines-mu4e-and-tui-actions ()
   (dolist (binding
