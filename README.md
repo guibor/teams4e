@@ -205,7 +205,7 @@ thread.
 | `f` or `F` | Forward the selected/latest message |
 | `o` / `O` | Open in browser / native Teams app |
 | `b` | Choose a bookmark; `b m` opens upcoming meetings |
-| `M-F` | Toggle unread-only filtering on the current view |
+| `U`, `b u`, or `M-F` | Toggle unread-only filtering on the current view |
 | `m` | Deferred-mark prefix |
 | `x` | Apply deferred marks |
 | `M` / `T` | Select one / all visible conversations |
@@ -235,7 +235,7 @@ with the same Emacs symbol name. Custom function bookmarks remain supported.
 | --- | --- | --- |
 | `b i` | Relevant inbox | Newest last message first |
 | `b a` | All chats, clearing unread-only and other overlays | Newest last message first |
-| `b u` | Unread only within the current view | Current view order |
+| `b u` | Toggle unread-only within the current view | Current view order |
 | `b m` | Upcoming/in-progress meetings | Earliest meeting start first |
 | `b M` | All meeting chats | Earliest known meeting start first |
 

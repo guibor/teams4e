@@ -736,7 +736,7 @@ the distinction between mu4e's `b' and `B' commands."
              (or (eq query 'unread)
                  (and (stringp query)
                       (string-equal (string-trim query) "unread"))))
-        (teams4e-filter-unread)
+        (teams4e-toggle-unread-filter)
       (teams4e--apply-inbox-query query name))))
 
 (defun teams4e-bookmark-edit ()
@@ -773,10 +773,24 @@ the distinction between mu4e's `b' and `B' commands."
            (or teams4e--active-filter-name
                (symbol-name teams4e--active-view))))
 
+(defun teams4e--plain-unread-query-p (query)
+  "Return non-nil when QUERY is the legacy standalone unread query."
+  (or (eq query 'unread)
+      (and (stringp query)
+           (string-equal (string-trim query) "unread"))))
+
 (defun teams4e-toggle-unread-filter ()
-  "Toggle an unread-only overlay without replacing the active inbox filter."
+  "Toggle unread-only filtering on top of the active inbox view.
+
+Also repairs sessions left in the old destructive unread-query state by
+clearing that legacy query with the overlay disabled."
   (interactive)
-  (teams4e--set-unread-filter (not teams4e--unread-filter-enabled))
+  (if (teams4e--plain-unread-query-p teams4e--active-query)
+      (progn
+        (setq teams4e--active-query nil
+              teams4e--active-filter-name nil)
+        (teams4e--set-unread-filter nil))
+    (teams4e--set-unread-filter (not teams4e--unread-filter-enabled)))
   (message "Teams unread-only filter %s for %s"
            (if teams4e--unread-filter-enabled "enabled" "disabled")
            (or teams4e--active-filter-name
@@ -3428,12 +3442,13 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
     (define-key map (kbd "u") #'teams4e-mark-unread-later)
     (define-key map (kbd "*") #'teams4e-mark-favorite-later)
     (define-key map (kbd "SPC") #'teams4e-unmark)
+    (define-key map (kbd "U") #'teams4e-unmark-all)
     map)
   "Prefix map for deferred mu4e-style Teams actions.")
 
 (defvar teams4e-chat-mark-map
   (let ((map (make-sparse-keymap)))
-    (dolist (key '("i" "r" "u" "*" "SPC"))
+    (dolist (key '("i" "r" "u" "*" "SPC" "U"))
       (define-key map (kbd key)
                   #'teams4e-chat-run-headers-command))
     map)
@@ -3444,7 +3459,9 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
             #'teams4e-mark-read-later)
 (define-key teams4e-mark-map (kbd "r")
             #'teams4e-mark-read-later)
-(dolist (key '("i" "r" "u" "*" "SPC"))
+(define-key teams4e-mark-map (kbd "U")
+            #'teams4e-unmark-all)
+(dolist (key '("i" "r" "u" "*" "SPC" "U"))
   (define-key teams4e-chat-mark-map (kbd key)
               #'teams4e-chat-run-headers-command))
 
@@ -3612,7 +3629,7 @@ shared by the terminal Teams client."
          ("?" . teams4e-mark-unread-later)
          ("u" . teams4e-unmark)
          ("x" . teams4e-execute-marks)
-         ("U" . teams4e-unmark-all)
+         ("U" . teams4e-toggle-unread-filter)
          ("z" . teams4e-undo-action)
          ("M-U" . teams4e-undo-action)
          ("/" . teams4e-search)

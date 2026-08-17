@@ -11,8 +11,10 @@
 - Preserved matching linked meeting context briefly across cache/live chat
   replacement, while explicit refresh, expiry, or changed event linkage still
   invalidates it.
-- Made `b u` enable the composable unread overlay without replacing the active
-  bookmark or query; `b a` remains the explicit reset.
+- Made `U`, `b u`, and `M-F` reversibly toggle the composable unread
+  overlay without replacing the active bookmark or query; `b a` remains the
+  explicit reset. Sessions left in the former standalone unread-query state can
+  exit it with the same toggle.
 - Batched missing/stale meeting chat metadata reads in groups of 20 and split
   meeting headers into fixed When, Conversation, Response, and Location
   columns with stable left-to-right table layout.

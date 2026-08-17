@@ -18,10 +18,12 @@
   (when (featurep 'evil)
     (evil-define-key* '(normal motion) teams4e-recent-mode-map
       (kbd "b") #'teams4e-bookmark-jump
-      (kbd "B") #'teams4e-bookmark-edit)
+      (kbd "B") #'teams4e-bookmark-edit
+      (kbd "U") #'teams4e-toggle-unread-filter)
     (evil-define-key* '(normal motion) teams4e-chat-mode-map
       (kbd "b") #'teams4e-chat-run-headers-command
-      (kbd "B") #'teams4e-chat-run-headers-command)
+      (kbd "B") #'teams4e-chat-run-headers-command
+      (kbd "U") #'teams4e-chat-run-headers-command)
     (when (derived-mode-p 'teams4e-recent-mode 'teams4e-chat-mode)
       (evil-normalize-keymaps))))
 
@@ -69,7 +71,7 @@
     (kbd "C--") #'teams4e-index-shrink
     (kbd "m") teams4e-mark-map
     (kbd "x") #'teams4e-execute-marks
-    (kbd "U") #'teams4e-unmark-all
+    (kbd "U") #'teams4e-toggle-unread-filter
     (kbd "z") #'teams4e-undo-action
     (kbd "M-U") #'teams4e-undo-action
     (kbd "a") teams4e-action-map

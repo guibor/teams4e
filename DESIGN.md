@@ -88,8 +88,9 @@ workflows, proposal primitives, and optional agent analysis.
 Main entry points:
 
 - `teams4e-bookmark-jump`: apply a configured view/query.
-- `teams4e-filter-unread`: enable the independent unread overlay used by `b u`
-  without replacing the active bookmark/query; All Chats clears it.
+- `teams4e-toggle-unread-filter`: reversibly toggle the independent unread
+  overlay used by `U`, `b u`, and `M-F` without replacing the active
+  bookmark/query; All Chats clears it.
 - `teams4e--query-chat-p`: resolve known built-in view symbols before callable
   predicates, then evaluate custom functions or textual query clauses.
 - `teams4e-execute-marks`: apply deferred row actions serially.
