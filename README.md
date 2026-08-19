@@ -236,8 +236,15 @@ with the same Emacs symbol name. Custom function bookmarks remain supported.
 | `b i` | Relevant inbox | Newest last message first |
 | `b a` | All chats, clearing unread-only and other overlays | Newest last message first |
 | `b u` | Toggle unread-only within the current view | Current view order |
+| `b t` | Activity on the current local calendar day | Newest last message first |
+| `b 2` | Activity in the rolling last 24 hours | Newest last message first |
+| `b w` | Activity in the rolling last 7 days | Newest last message first |
 | `b m` | Upcoming/in-progress meetings | Earliest meeting start first |
 | `b M` | All meeting chats | Earliest known meeting start first |
+
+Compose buffers send with `C-c C-c` and abort with `C-c C-k`. Sending keeps
+the conversation's read/unread state when the outgoing message becomes its
+newest message.
 
 Message-oriented views derive their date, unread state, and sort key from a
 complete `lastMessagePreview` containing both an id and timestamp. A calendar,

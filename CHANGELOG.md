@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added distinct activity bookmarks for the local calendar day (`b t`), the
+  rolling last 24 hours (`b 2`), and the rolling last 7 days (`b w`).
+- Preserved a conversation's read/unread state across sending, while retaining
+  `C-c C-c` as the native compose-buffer send binding.
 - Added a redacted in-memory `teams4e-performance-report` covering backend
   operations and Emacs inbox rendering, with configurable artificial mock
   latency for account-free responsiveness testing.

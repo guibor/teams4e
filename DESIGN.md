@@ -78,6 +78,8 @@ Main entry points:
   with one bounded backend request per explicit refresh.
 - `teams4e--unread-p`: compare the real last-message timestamp with Graph's
   read marker; chat metadata timestamps are deliberately excluded.
+- `teams4e--apply-pending-send-read-state`: transfer the pre-send read state to
+  the next outgoing last-message marker without creating persistent state.
 
 ### `teams4e-advanced.el`
 
@@ -111,6 +113,12 @@ small completion envelope: page count, message count, and oldest/newest
 timestamps. Emacs validates that envelope before writing the mode-0600 file or
 starting an agent. The Markdown header records that evidence; no second message
 cache or transcript representation is created.
+
+Activity bookmarks are textual projections over the canonical chat list.
+`today` compares the last message's local calendar-day key, while `after:1d` and
+`after:7d` remain rolling elapsed-time windows. Sending records one in-memory
+pre-send read state; normalization consumes it only when a new outgoing
+last-message marker appears.
 
 Transcript day grouping and display both derive from the local Emacs timezone;
 the previous raw-UTC day split could disagree with local message times around

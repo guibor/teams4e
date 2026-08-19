@@ -362,6 +362,10 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
                      (pcase wanted
                        ((or "direct" "oneonone") "oneOnOne")
                        (other other)))))
+           ((string-equal (downcase term) "today")
+            (when-let ((updated (teams4e--last-message-date-time chat)))
+              (equal (teams4e--local-day-key updated)
+                     (format-time-string "%Y-%m-%d"))))
            ((string-match "\\`after:\\([0-9]+\\)d\\'" term)
             (let ((updated (teams4e--last-message-date-time chat)))
               (and (stringp updated)

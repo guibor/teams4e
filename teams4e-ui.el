@@ -143,6 +143,8 @@
 (defconst teams4e--captured-chat-check-seconds 5.0
   "Minimum interval between capture-file metadata checks during redraws.")
 (defvar teams4e--read-overrides (make-hash-table :test #'equal))
+(defvar teams4e--pending-send-read-states (make-hash-table :test #'equal)
+  "Pre-send read states awaiting the outgoing chat-list marker.")
 (defvar teams4e--state-loaded nil)
 (defvar teams4e--window-configurations
   (make-hash-table :test #'eq :weakness 'key)
@@ -1678,6 +1680,25 @@ chronological input."
               (or (not (stringp read))
                   (string< read message-time)))))))
 
+(defun teams4e--capture-send-read-state (chat)
+  "Return CHAT's ID and current read state for one outgoing message."
+  (when-let ((chat-id (teams4e--chat-id chat)))
+    (cons chat-id
+          (list :marker (teams4e--last-message-marker chat)
+                :state (if (teams4e--unread-p chat) 'unread 'read)))))
+
+(defun teams4e--apply-pending-send-read-state (chat)
+  "Preserve CHAT's pre-send read state when its outgoing message appears."
+  (when-let* ((chat-id (teams4e--chat-id chat))
+              (pending (gethash chat-id teams4e--pending-send-read-states))
+              (new-marker (teams4e--last-message-marker chat)))
+    (unless (equal new-marker (plist-get pending :marker))
+      (remhash chat-id teams4e--pending-send-read-states)
+      (when (teams4e--message-own-p (teams4e--last-message chat))
+        (puthash chat-id
+                 (cons (plist-get pending :state) new-marker)
+                 teams4e--read-overrides)))))
+
 (defun teams4e--status-request (callback &optional error-callback)
   "Fetch shared OAuth status and invoke CALLBACK with it.
 
@@ -1847,6 +1868,7 @@ and leave CALLBACK untouched."
                chat))
            chats))
     (dolist (chat chats)
+      (teams4e--apply-pending-send-read-state chat)
       (when (teams4e--get chat 'membersLoaded)
         (let ((members (teams4e--get chat 'members)))
           (puthash (teams4e--chat-id chat)
@@ -4427,6 +4449,7 @@ REPLY-TO, when non-nil, is the source message for a native quoted reply."
          (mentions teams4e-compose--mentions)
          (content-type teams4e-compose--content-type)
          (origin teams4e-compose--origin)
+         (send-read-state (teams4e--capture-send-read-state target))
          (message-text (teams4e--utf8-safe-string
                         (string-trim (buffer-substring-no-properties
                                       (point-min) (point-max)))))
@@ -4443,6 +4466,9 @@ REPLY-TO, when non-nil, is the source message for a native quoted reply."
       (teams4e--run
        args
        (lambda (_output)
+         (when send-read-state
+           (puthash (car send-read-state) (cdr send-read-state)
+                    teams4e--pending-send-read-states))
          (when (and (buffer-live-p buffer)
                     (fboundp 'teams4e-compose--delete-draft))
            (with-current-buffer buffer

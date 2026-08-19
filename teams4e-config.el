@@ -488,17 +488,18 @@ when moving over a chat whose last-update marker has not changed."
     (:name "Group chats" :query "type:group" :key ?g)
     (:name "Upcoming meetings" :query upcoming :key ?m)
     (:name "All meeting chats" :query "type:meeting" :key ?M)
-    (:name "Updated today" :query "after:1d" :key ?t)
-    (:name "Updated this week" :query "after:7d" :key ?w))
+    (:name "Today" :query "today" :key ?t)
+    (:name "Last 24 hours" :query "after:1d" :key ?2)
+    (:name "Last 7 days" :query "after:7d" :key ?w))
   "Mu4e-style shortcut bookmarks for the Teams headers buffer.
 
 Each plist has `:name', `:query', and a character `:key'.  A query can be a
 function accepting one chat, a built-in view symbol, or a string.  Space-
 separated terms are ANDed; `|' separates simple OR clauses.  Terms include
 inbox, all, muted, unread, read, favorite, handled, snoozed, attention,
-mentioned, important, reply-to-me, attachment, type:TYPE, after:Nd, name:TEXT,
-message:TEXT, and ordinary name/preview text.  Prefix a term with - to negate
-it."
+mentioned, important, reply-to-me, attachment, type:TYPE, today, after:Nd,
+name:TEXT, message:TEXT, and ordinary name/preview text.  Prefix a term with -
+to negate it."
   :type '(repeat plist)
   :group 'teams4e)
 
@@ -507,13 +508,36 @@ it."
 (dolist (bookmark '((:name "Inbox" :query inbox :key ?i)
                     (:name "Needs attention" :query attention :key ?n)
                     (:name "Handled" :query handled :key ?h)
-                    (:name "Snoozed" :query snoozed :key ?s)))
+                    (:name "Snoozed" :query snoozed :key ?s)
+                    (:name "Last 24 hours" :query "after:1d" :key ?2)))
   (unless (seq-find
            (lambda (existing)
              (eq (plist-get existing :key) (plist-get bookmark :key)))
            teams4e-bookmarks)
     (setq teams4e-bookmarks
           (append teams4e-bookmarks (list bookmark)))))
+
+;; Update the former rolling "today" default without replacing a personal
+;; bookmark that uses the same key or a customized query.
+(when-let ((today-bookmark
+            (seq-find
+             (lambda (bookmark)
+               (and (eq (plist-get bookmark :key) ?t)
+                    (equal (plist-get bookmark :name) "Updated today")
+                    (equal (plist-get bookmark :query) "after:1d")))
+             teams4e-bookmarks)))
+  (setf (plist-get today-bookmark :name) "Today"
+        (plist-get today-bookmark :query) "today"))
+
+;; Rename the former weekly default without replacing a personal bookmark.
+(when-let ((week-bookmark
+            (seq-find
+             (lambda (bookmark)
+               (and (eq (plist-get bookmark :key) ?w)
+                    (equal (plist-get bookmark :name) "Updated this week")
+                    (equal (plist-get bookmark :query) "after:7d")))
+             teams4e-bookmarks)))
+  (setf (plist-get week-bookmark :name) "Last 7 days"))
 
 ;; Migrate the former built-in meeting bookmark in a live session without
 ;; replacing a personal bookmark that happens to use the same key.

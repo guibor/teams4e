@@ -4080,4 +4080,123 @@
           (should-not (file-exists-p path)))
       (delete-directory root t))))
 
+(ert-deftest teams4e-send-preserves-pre-send-read-state ()
+  (let ((teams4e--connected-user-id "self")
+        (teams4e--read-overrides (make-hash-table :test #'equal))
+        (teams4e--pending-send-read-states
+         (make-hash-table :test #'equal)))
+    (dolist (state '(read unread))
+      (let* ((chat-id (format "chat-%s" state))
+             (chat
+              `((id . ,chat-id)
+                (lastMessagePreview
+                 . ((id . "new-message")
+                    (createdDateTime . "2026-08-18T10:00:00Z")
+                    (from . ((user . ((id . "self"))))))))))
+        (puthash chat-id (list :marker "old-message" :state state)
+                 teams4e--pending-send-read-states)
+        (teams4e--apply-pending-send-read-state chat)
+        (should (equal (cons state "new-message")
+                       (gethash chat-id teams4e--read-overrides)))
+        (should-not
+         (gethash chat-id teams4e--pending-send-read-states))))))
+
+(ert-deftest teams4e-send-does-not-preserve-state-for-concurrent-incoming ()
+  (let* ((teams4e--connected-user-id "self")
+         (teams4e--read-overrides (make-hash-table :test #'equal))
+         (teams4e--pending-send-read-states
+          (make-hash-table :test #'equal))
+         (chat
+          (quote
+           ((id . "chat-incoming")
+            (lastMessagePreview
+             . ((id . "incoming-message")
+                (createdDateTime . "2026-08-18T10:00:00Z")
+                (from . ((user . ((id . "someone-else")))))))))))
+    (puthash "chat-incoming"
+             (list :marker "old-message" :state 'unread)
+             teams4e--pending-send-read-states)
+    (teams4e--apply-pending-send-read-state chat)
+    (should-not (gethash "chat-incoming" teams4e--read-overrides))
+    (should-not
+     (gethash "chat-incoming" teams4e--pending-send-read-states))))
+
+(ert-deftest teams4e-compose-c-c-c-c-sends ()
+  (should (eq (lookup-key teams4e-compose-mode-map (kbd "C-c C-c"))
+              #'teams4e-compose-send)))
+
+(ert-deftest teams4e-rolling-activity-bookmarks-have-distinct-windows ()
+  (should (equal "today"
+                 (plist-get
+                  (seq-find (lambda (bookmark)
+                              (eq (plist-get bookmark :key) ?t))
+                            teams4e-bookmarks)
+                  :query)))
+  (should (equal "after:1d"
+                 (plist-get
+                  (seq-find (lambda (bookmark)
+                              (eq (plist-get bookmark :key) ?2))
+                            teams4e-bookmarks)
+                  :query)))
+  (should (equal "after:7d"
+                 (plist-get
+                  (seq-find (lambda (bookmark)
+                              (eq (plist-get bookmark :key) ?w))
+                            teams4e-bookmarks)
+                  :query))))
+
+(ert-deftest teams4e-today-query-uses-local-calendar-day ()
+  (let* ((today-time (format-time-string "%Y-%m-%dT12:00:00%z"))
+         (old-time
+          (format-time-string
+           "%Y-%m-%dT12:00:00%z"
+           (time-subtract (current-time) (days-to-time 2))))
+         (today-chat
+          `((id . "today")
+            (lastMessagePreview
+             . ((id . "today-message")
+                (createdDateTime . ,today-time)))))
+         (old-chat
+          `((id . "old")
+            (lastMessagePreview
+             . ((id . "old-message")
+                (createdDateTime . ,old-time))))))
+    (should (teams4e--query-chat-p today-chat "today"))
+    (should-not (teams4e--query-chat-p old-chat "today"))))
+
+
+(ert-deftest teams4e-compose-success-queues-pre-send-read-state ()
+  (let* ((teams4e-confirm-send nil)
+         (teams4e-offline-mode nil)
+         (teams4e--connected-user-id "self")
+         (teams4e--read-overrides (make-hash-table :test #'equal))
+         (teams4e--pending-send-read-states
+          (make-hash-table :test #'equal))
+         (buffer (generate-new-buffer " *Teams successful send test*"))
+         (target
+          (quote
+           ((id . "chat-send")
+            (topic . "Send test")
+            (viewpoint
+             . ((lastMessageReadDateTime . "2026-08-18T09:00:00Z")))
+            (lastMessagePreview
+             . ((id . "old-message")
+                (createdDateTime . "2026-08-18T10:00:00Z")
+                (from . ((user . ((id . "someone-else")))))))))))
+    (with-current-buffer buffer
+      (teams4e-compose-mode)
+      (setq teams4e-compose--target target)
+      (insert "Hello")
+      (cl-letf (((symbol-function 'teams4e--run)
+                 (lambda (_args callback &optional _error-callback)
+                   (funcall callback "")
+                   'fake-process))
+                ((symbol-function 'teams4e-compose--delete-draft)
+                 #'ignore))
+        (teams4e-compose-send)))
+    (should-not (buffer-live-p buffer))
+    (should (equal (list :marker "old-message" :state 'unread)
+                   (gethash "chat-send"
+                            teams4e--pending-send-read-states)))))
+
 ;;; teams4e-tests.el ends here
