@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made chat replies use the same explicit `messageReference` attachment flow as
+  the TUI, with a bounded plain-text quote preview, avoiding malformed quote
+  payloads from the previous reply action.
 - Added distinct activity bookmarks for the local calendar day (`b t`), the
   rolling last 24 hours (`b 2`), and the rolling last 7 days (`b w`).
 - Preserved a conversation's read/unread state across sending, while retaining

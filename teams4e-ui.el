@@ -4400,6 +4400,17 @@ existing chat."
       (user-error "The selected chat has no loaded message to reply to"))
     (teams4e--open-compose chat message)))
 
+(defun teams4e--reply-preview (message)
+  "Return a compact safe preview of MESSAGE for a quoted reply attachment."
+  (let* ((body (or (teams4e--utf8-safe-string
+                    (teams4e--message-body message))
+                   ""))
+         (compact (string-trim
+                   (replace-regexp-in-string "[\n\r\t ]+" " " body))))
+    (if (> (length compact) 200)
+        (concat (substring compact 0 199) "…")
+      compact)))
+
 (defun teams4e--send-args
     (target message &optional reply-to attachments mentions content-type)
   "Build Graph-backend arguments to send MESSAGE to TARGET.
@@ -4427,7 +4438,15 @@ REPLY-TO, when non-nil, is the source message for a native quoted reply."
        (list "--teamId" team-id "--channelId" channel-id))
       (chat-id (list "--chatId" chat-id))
       (t (list "--userEmails" emails)))
-     (when reply-id (list "--replyToId" reply-id))
+     (when reply-id
+       (list "--replyToId" reply-id
+             "--replySenderId"
+             (or (teams4e--dig reply-to 'from 'user 'id) "")
+             "--replySenderName"
+             (or (teams4e--utf8-safe-string
+                  (teams4e--message-sender reply-to))
+                 "")
+             "--replyPreview" (teams4e--reply-preview reply-to)))
      (list "--message" message
            "--contentType" (or content-type "text"))
      (apply #'append

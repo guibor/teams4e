@@ -123,7 +123,7 @@ def _message(
 
 
 def _message_reference(source: dict[str, Any]) -> dict[str, Any]:
-  """Return the quoted-reference shape produced by Graph replyWithQuote."""
+  """Return the messageReference shape used by native Teams quoted replies."""
   sender = source.get("from", {}).get("user", {})
   body = source.get("body", {})
   content = {

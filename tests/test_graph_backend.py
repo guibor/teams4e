@@ -1080,20 +1080,35 @@ class GraphBackendTests(unittest.TestCase):
         request.call_args.kwargs["payload"],
     )
 
-  def test_reply_uses_documented_reply_with_quote_action(self) -> None:
+  def test_reply_uses_message_reference_attachment(self) -> None:
     with mock.patch.object(
         backend, "graph_json", return_value={"id": "message-2"}
     ) as request:
       backend.send_message(
-          "chat:id", "Reply <safely>\nSecond line", "token", "message-1"
+          "chat:id",
+          "Reply <safely>\nSecond line",
+          "token",
+          "message-1",
+          reply_sender_id="ada-id",
+          reply_sender_name="Ada",
+          reply_preview="Original   message\nwith context",
       )
-    self.assertIn("/chats/chat%3Aid/messages/replyWithQuote", request.call_args.args[0])
+    self.assertIn("/chats/chat%3Aid/messages", request.call_args.args[0])
+    self.assertNotIn("replyWithQuote", request.call_args.args[0])
     payload = request.call_args.kwargs["payload"]
-    self.assertEqual(["message-1"], payload["messageIds"])
+    self.assertEqual("html", payload["body"]["contentType"])
     self.assertEqual(
-        {"contentType": "text", "content": "Reply <safely>\nSecond line"},
-        payload["replyMessage"]["body"],
+        '<attachment id="message-1"></attachment>\n'
+        "Reply &lt;safely&gt;<br>Second line",
+        payload["body"]["content"],
     )
+    reference = payload["attachments"][0]
+    self.assertEqual("messageReference", reference["contentType"])
+    self.assertEqual("message-1", reference["id"])
+    content = json.loads(reference["content"])
+    self.assertEqual("Original message with context", content["messagePreview"])
+    self.assertEqual("ada-id", content["messageSender"]["user"]["id"])
+    self.assertEqual("Ada", content["messageSender"]["user"]["displayName"])
 
   def test_mark_read_and_unread_use_signed_in_identity(self) -> None:
     token = jwt({"oid": "user-id", "tid": "tenant-id"})

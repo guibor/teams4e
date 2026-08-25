@@ -393,9 +393,24 @@
    (equal
     '("teams" "chat" "message" "send"
       "--chatId" "chat-1" "--replyToId" "message-1"
+      "--replySenderId" "ada-id" "--replySenderName" "Ada"
+      "--replyPreview" "Original message"
       "--message" "Reply" "--contentType" "text" "--output" "none")
     (teams4e--send-args
-     '((id . "chat-1") (topic . "Ada")) "Reply" '((id . "message-1"))))))
+     '((id . "chat-1") (topic . "Ada")) "Reply"
+     '((id . "message-1")
+       (from . ((user . ((id . "ada-id") (displayName . "Ada")))))
+       (body . ((contentType . "text") (content . "Original message"))))))))
+
+(ert-deftest teams4e-reply-preview-removes-controls-and-bounds-context ()
+  (let* ((body (concat "First\n\tline " (make-string 220 ?x)))
+         (preview
+          (teams4e--reply-preview
+           `((body . ((contentType . "text") (content . ,body)))))))
+    (should (= 200 (length preview)))
+    (should (string-prefix-p "First line " preview))
+    (should (string-suffix-p "…" preview))
+    (should-not (string-match-p "[\n\t]" preview))))
 
 (ert-deftest teams4e-read-override-expires-when-new-message-arrives ()
   (let* ((chat (car (teams4e-test-read-json "chats.json")))

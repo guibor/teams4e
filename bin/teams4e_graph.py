@@ -2485,6 +2485,38 @@ def outgoing_body(
   return {"contentType": "html", "content": content}, payload_mentions
 
 
+def quoted_reply_attachment(
+    message_id: str,
+    sender_id: str,
+    sender_name: str,
+    preview: str,
+) -> tuple[dict[str, Any], str]:
+  """Build the messageReference attachment Teams uses for quoted replies."""
+  preview = " ".join(preview.split())
+  if len(preview) > 200:
+    preview = preview[:199] + "…"
+  content = {
+      "messageId": message_id,
+      "messagePreview": preview,
+      "messageSender": {
+          "application": None,
+          "device": None,
+          "user": {
+              "userIdentityType": "aadUser",
+              "id": sender_id,
+              "displayName": sender_name,
+          },
+      },
+  }
+  attachment = {
+      "id": message_id,
+      "contentType": "messageReference",
+      "content": json.dumps(content, ensure_ascii=False, separators=(",", ":")),
+  }
+  marker = f'<attachment id="{html.escape(message_id, quote=True)}"></attachment>'
+  return attachment, marker
+
+
 def send_message(
     chat_id: str,
     message: str,
@@ -2493,13 +2525,22 @@ def send_message(
     attachment_paths: list[str] | None = None,
     mention_specs: list[str] | None = None,
     content_type: str = "text",
+    reply_sender_id: str = "",
+    reply_sender_name: str = "",
+    reply_preview: str = "",
 ) -> dict[str, Any]:
-  """Send MESSAGE to CHAT_ID, optionally through Graph's quote action."""
+  """Send MESSAGE to CHAT_ID, optionally with a native quote attachment."""
   if not message.strip() and not attachment_paths:
     raise BackendError("Message and attachment list are empty")
   attachments, attachment_tags = uploaded_reference_attachments(
       attachment_paths or [], access_token
   )
+  if reply_to_id:
+    reference, marker = quoted_reply_attachment(
+        reply_to_id, reply_sender_id, reply_sender_name, reply_preview
+    )
+    attachments.insert(0, reference)
+    attachment_tags.insert(0, marker)
   body, mentions = outgoing_body(
       message,
       content_type=content_type,
@@ -2511,13 +2552,6 @@ def send_message(
     payload["attachments"] = attachments
   if mentions:
     payload["mentions"] = mentions
-  if reply_to_id:
-    return graph_json(
-        f"/chats/{quoted_id(chat_id)}/messages/replyWithQuote",
-        access_token,
-        method="POST",
-        payload={"messageIds": [reply_to_id], "replyMessage": payload},
-    )
   return graph_json(
       f"/chats/{quoted_id(chat_id)}/messages",
       access_token,
@@ -3214,6 +3248,9 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
         options(args, "--attachment"),
         options(args, "--mention"),
         option(args, "--contentType", required=False) or "text",
+        str(option(args, "--replySenderId", required=False) or ""),
+        str(option(args, "--replySenderName", required=False) or ""),
+        str(option(args, "--replyPreview", required=False) or ""),
     )
     with TeamsCache() as cache:
       cache.upsert_messages("chat", str(chat_id), [result])
