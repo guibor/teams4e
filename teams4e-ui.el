@@ -4439,14 +4439,16 @@ REPLY-TO, when non-nil, is the source message for a native quoted reply."
       (chat-id (list "--chatId" chat-id))
       (t (list "--userEmails" emails)))
      (when reply-id
-       (list "--replyToId" reply-id
-             "--replySenderId"
-             (or (teams4e--dig reply-to 'from 'user 'id) "")
-             "--replySenderName"
-             (or (teams4e--utf8-safe-string
-                  (teams4e--message-sender reply-to))
-                 "")
-             "--replyPreview" (teams4e--reply-preview reply-to)))
+       (append
+        (list "--replyToId" reply-id)
+        (unless (and team-id channel-id)
+          (list "--replySenderId"
+                (or (teams4e--dig reply-to 'from 'user 'id) "")
+                "--replySenderName"
+                (or (teams4e--utf8-safe-string
+                     (teams4e--message-sender reply-to))
+                    "")
+                "--replyPreview" (teams4e--reply-preview reply-to)))))
      (list "--message" message
            "--contentType" (or content-type "text"))
      (apply #'append
