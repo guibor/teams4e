@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reduced the initial focused-chat request to one 50-message Graph page, kept
+  deeper history behind `L` and `G`, and added transcript-render timing to the
+  redacted performance report.
 - Made chat replies use the same explicit `messageReference` attachment flow as
   the TUI, with a bounded plain-text quote preview, avoiding malformed quote
   payloads from the previous reply action.
@@ -10,8 +13,8 @@
 - Preserved a conversation's read/unread state across sending, while retaining
   `C-c C-c` as the native compose-buffer send binding.
 - Added a redacted in-memory `teams4e-performance-report` covering backend
-  operations and Emacs inbox rendering, with configurable artificial mock
-  latency for account-free responsiveness testing.
+  operations and Emacs inbox and transcript rendering, with configurable
+  artificial mock latency for account-free responsiveness testing.
 - Removed the duplicate cache-first inbox redraw, coalesced adjacent member and
   calendar completion redraws, and reused canonical chat objects across fresh
   list responses.

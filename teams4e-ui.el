@@ -3743,6 +3743,7 @@ When DATE-ONLY is non-nil, omit the time of day."
 (defun teams4e--render-chat ()
   "Render the current chat and its cached messages."
   (let ((inhibit-read-only t)
+        (started (float-time))
         (jump-to-bottom teams4e--jump-to-bottom-on-render)
         (message-id
          (unless teams4e--jump-to-bottom-on-render
@@ -3792,7 +3793,10 @@ When DATE-ONLY is non-nil, omit the time of day."
                   (teams4e--chat-label teams4e--chat)
                   (length teams4e--messages)
                   (teams4e--message-order-label)
-                  (if teams4e--loaded-all " - complete" "")))))
+                  (if teams4e--loaded-all " - complete" "")))
+    (teams4e--record-performance
+     "Transcript render" (* 1000.0 (- (float-time) started))
+     :transport "emacs" :items (length teams4e--messages))))
 
 (define-derived-mode teams4e-read-mode special-mode "Teams-Read"
   "Base mode for the singleton mu4e-style Teams message reader."

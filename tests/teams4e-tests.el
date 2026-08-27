@@ -4214,4 +4214,23 @@
                    (gethash "chat-send"
                             teams4e--pending-send-read-states)))))
 
+(ert-deftest teams4e-default-chat-load-uses-one-graph-page ()
+  (should (= 50 (default-value 'teams4e-message-limit)))
+  (should (= 50 (default-value 'teams4e-preview-message-limit)))
+  (should (= 100 (default-value 'teams4e-load-more-count))))
+
+(ert-deftest teams4e-transcript-render-records-performance ()
+  (let ((teams4e--performance-events nil)
+        (teams4e-performance-history-size 10))
+    (with-temp-buffer
+      (teams4e-chat-mode)
+      (setq teams4e--chat
+            '((id . "render-chat") (topic . "Render test"))
+            teams4e--messages nil)
+      (teams4e--render-chat))
+    (let ((event (car teams4e--performance-events)))
+      (should (equal "Transcript render" (plist-get event :operation)))
+      (should (equal "emacs" (plist-get event :transport)))
+      (should (= 0 (plist-get event :items))))))
+
 ;;; teams4e-tests.el ends here

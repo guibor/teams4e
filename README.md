@@ -364,8 +364,8 @@ indented body. Hovering the time retains the source timestamp.
 Common settings:
 
 ```elisp
-(setq teams4e-message-limit 500
-      teams4e-load-more-count 500
+(setq teams4e-message-limit 50
+      teams4e-load-more-count 100
       teams4e-message-days 60
       teams4e-mark-read-on-open nil
       teams4e-preview-on-move nil
@@ -425,7 +425,9 @@ credentials or a tenant.
 
 For a delayed interactive run, set `teams4e-mock-delay-ms`, enable/reset the
 mock, open `teams4e`, exercise `b m`, and run
-`M-x teams4e-performance-report`. The report is memory-only and excludes
+`M-x teams4e-performance-report`. The report separates Graph/cache requests
+from inbox and transcript rendering, so a slow request can be distinguished
+from expensive rich-message layout. It is memory-only and excludes
 message bodies, titles, participants, IDs, URLs, and tokens. Full instructions
 and Microsoft-supported external test options are in
 [LOCAL-TESTING.md](LOCAL-TESTING.md).

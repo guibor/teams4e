@@ -237,14 +237,14 @@ chat always requests complete history for that refresh."
   :type '(choice (const :tag "Complete history" nil) integer)
   :group 'teams4e)
 
-(defcustom teams4e-message-limit 300
+(defcustom teams4e-message-limit 50
   "Maximum number of returned messages rendered in a chat buffer.
 
 The newest messages are retained.  Nil renders every returned message."
   :type '(choice (const :tag "No display limit" nil) integer)
   :group 'teams4e)
 
-(defcustom teams4e-load-more-count 300
+(defcustom teams4e-load-more-count 100
   "Number of additional older chat messages requested by the `L' binding."
   :type 'integer
   :group 'teams4e)
@@ -258,7 +258,7 @@ chronological regardless of this setting."
                  (const :tag "Newest first" newest-first))
   :group 'teams4e)
 
-(defcustom teams4e-preview-message-limit 75
+(defcustom teams4e-preview-message-limit 50
   "Maximum recent messages fetched for an automatic inbox preview.
 
 Focusing a thread uses `teams4e-message-limit'.  Complete-history

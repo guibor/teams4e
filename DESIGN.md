@@ -135,7 +135,8 @@ chat has no linked event, and unknown failures point to `*M365 Errors*`. The
 diagnostic retains a bounded, redacted backend detail.
 
 `teams4e--run-json` times each backend operation under a fixed content-free
-label. Inbox rendering records a separate Emacs event. The bounded event ring
+label. Inbox and transcript rendering record separate Emacs events. The bounded
+event ring
 contains only operation, transport, status, item count, duration, and local
 time; it never records argv values, IDs, URLs, people, titles, bodies, or
 tokens. `teams4e-performance-report` renders this ring without persisting it.
