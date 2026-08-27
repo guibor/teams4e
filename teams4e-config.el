@@ -207,6 +207,24 @@ the downloaded format."
   :type 'boolean
   :group 'teams4e)
 
+(defcustom teams4e-message-renderer 'auto
+  "Renderer used for message bodies in Teams transcripts.
+
+`auto' uses Agent Shell's Markdown renderer when it is installed and falls
+back to plain text otherwise.  `agent-shell-markdown' has the same graceful
+fallback but documents an explicit preference.  `plain' never loads Agent
+Shell's renderer."
+  :type '(choice
+          (const :tag "Agent Shell Markdown when available" auto)
+          (const :tag "Prefer Agent Shell Markdown" agent-shell-markdown)
+          (const :tag "Plain text" plain))
+  :group 'teams4e)
+
+(defcustom teams4e-highlight-code-blocks t
+  "Whether the rich transcript renderer syntax-highlights fenced code."
+  :type 'boolean
+  :group 'teams4e)
+
 (defcustom teams4e-image-max-width 720
   "Maximum pixel width of an inline Teams image.
 

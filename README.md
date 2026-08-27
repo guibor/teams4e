@@ -357,7 +357,11 @@ agent is not started with a misleadingly partial file.
 
 Reader transcripts use the same local-time grouping as exports. A strong day
 rule separates dates; each message then has a compact sender/time header and an
-indented body. Hovering the time retains the source timestamp.
+indented body. Hovering the time retains the source timestamp. When Agent
+Shell's Markdown renderer is installed, Teams HTML is rendered in place with
+headings, emphasis, links, blockquotes, lists, syntax-highlighted code, and
+aligned GFM tables. Authenticated images continue through Teams4e's downloader,
+and the reader falls back to plain text when the optional renderer is absent.
 
 ## Configuration
 
@@ -371,13 +375,16 @@ Common settings:
       teams4e-preview-on-move nil
       teams4e-confirm-send nil
       teams4e-confirm-apply nil
-      teams4e-message-order 'oldest-first)
+      teams4e-message-order 'oldest-first
+      teams4e-message-renderer 'auto
+      teams4e-highlight-code-blocks t)
 ```
 
 Other useful options include:
 
 - `teams4e-bookmarks`
 - `teams4e-status-style`
+- `teams4e-message-renderer` and `teams4e-highlight-code-blocks`
 - `teams4e-browser-command` and `teams4e-app-command`
 - `teams4e-capture-file` and `teams4e-export-directory`
 - `teams4e-cache-first` and `teams4e-use-persistent-backend`

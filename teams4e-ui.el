@@ -41,6 +41,8 @@
 (declare-function teams4e-thread-previous "advanced")
 (declare-function teams4e-mark-read-later "advanced")
 (declare-function teams4e-message-forward "advanced")
+(declare-function agent-shell-markdown-replace-markup
+                  "agent-shell-markdown" (&rest arguments))
 
 (defvar org-capture-templates)
 
@@ -64,6 +66,8 @@
 (defvar teams4e-default-content-type)
 (defvar teams4e-default-view)
 (defvar teams4e-display-images)
+(defvar teams4e-message-renderer)
+(defvar teams4e-highlight-code-blocks)
 (defvar teams4e-draft-directory)
 (defvar teams4e-export-directory)
 (defvar teams4e-image-cache-directory)
@@ -2334,6 +2338,7 @@ omitted by the chat-list response; explicit meeting views use this path."
     (define-key map (kbd "Y") #'teams4e-copy-thread-markdown)
     (define-key map (kbd "J") #'teams4e-preview-scroll-down)
     (define-key map (kbd "K") #'teams4e-preview-scroll-up)
+    (define-key map (kbd "U") #'teams4e-toggle-unread-filter)
     (define-key map (kbd "C-+") #'teams4e-index-grow)
     (define-key map (kbd "C-=") #'teams4e-index-grow)
     (define-key map (kbd "C--") #'teams4e-index-shrink)
@@ -3278,15 +3283,25 @@ nonfatal unavailable label instead."
              (error nil)))))))
    (teams4e--get message 'attachments)))
 
-(defun teams4e--insert-message-reference (message)
-  "Insert MESSAGE's quoted-reply reference when present."
+(defun teams4e--insert-message-reference (message &optional rich)
+  "Insert MESSAGE's quoted-reply reference when present.
+
+When RICH is non-nil, render the quoted content as Markdown."
   (when-let* ((reference (teams4e--message-reference message))
               (preview (teams4e--get reference 'messagePreview)))
     (let ((sender (or (teams4e--dig reference 'messageSender 'user 'displayName)
                       "Quoted message")))
-      (insert (propertize (format "  > %s\n" sender) 'face 'shadow))
-      (dolist (line (string-lines (teams4e--html-to-text preview)))
-        (insert (propertize (format "  > %s\n" line) 'face 'shadow))))))
+      (if rich
+          (let ((teams4e--omit-markdown-images t))
+            (teams4e--insert-rendered-markdown
+             (concat (format "> **%s**\n" sender)
+                     (mapconcat (lambda (line) (concat "> " line))
+                                (string-lines
+                                 (teams4e--html-to-markdown preview))
+                                "\n"))))
+        (insert (propertize (format "  > %s\n" sender) 'face 'shadow))
+        (dolist (line (string-lines (teams4e--html-to-text preview)))
+          (insert (propertize (format "  > %s\n" line) 'face 'shadow)))))))
 
 (defun teams4e--insert-day-separator (created)
   "Insert a day separator for ISO timestamp CREATED."
@@ -3308,6 +3323,37 @@ nonfatal unavailable label instead."
     (unless (string-empty-p line) (insert "  "))
     (insert (if face (propertize line 'face face) line) "\n")))
 
+(defun teams4e--agent-shell-markdown-available-p ()
+  "Return non-nil when Agent Shell's in-place Markdown renderer is usable."
+  (and (memq teams4e-message-renderer '(auto agent-shell-markdown))
+       (or (featurep 'agent-shell-markdown)
+           (require 'agent-shell-markdown nil t))
+       (fboundp 'agent-shell-markdown-replace-markup)))
+
+(defun teams4e--insert-rendered-markdown (markdown)
+  "Insert MARKDOWN and render it in place with Agent Shell's renderer.
+
+Agent Shell does not fetch images here.  Teams4e keeps responsibility for
+authenticated Graph image downloads and inserts those separately."
+  (let ((start (point))
+        (source (string-trim-right (or markdown ""))))
+    (insert source "\n")
+    (let ((end (copy-marker (point) t)))
+      (condition-case nil
+          (atomic-change-group
+            (save-restriction
+              (narrow-to-region start end)
+              (goto-char (point-min))
+              (agent-shell-markdown-replace-markup
+               :force t
+               :render-images nil
+               :highlight-blocks teams4e-highlight-code-blocks)))
+        (error nil))
+      (add-text-properties start end
+                           '(line-prefix "  " wrap-prefix "  "))
+      (goto-char end)
+      (set-marker end nil))))
+
 (defun teams4e--insert-message (message)
   "Insert one Teams MESSAGE into the current transcript."
   (let ((start (point))
@@ -3316,7 +3362,10 @@ nonfatal unavailable label instead."
         (body (teams4e--message-body message))
         (images (teams4e--message-images message))
         (reactions (teams4e--reaction-summary message))
-        (own (teams4e--message-own-p message)))
+        (own (teams4e--message-own-p message))
+        (rich (and (not (teams4e--get message 'deletedDateTime))
+                   (not (teams4e--system-event-p message))
+                   (teams4e--agent-shell-markdown-available-p))))
     (insert (propertize (if own "You" sender)
                         'face (if own
                                   'teams4e-own-sender
@@ -3327,8 +3376,11 @@ nonfatal unavailable label instead."
     (when (teams4e--get message 'lastEditedDateTime)
       (insert (propertize "  edited" 'face 'shadow)))
     (insert "\n")
-    (teams4e--insert-message-reference message)
+    (teams4e--insert-message-reference message rich)
     (cond
+     ((and rich (not (string-empty-p body)))
+      (teams4e--insert-rendered-markdown
+       (teams4e--message-markdown-body message t)))
      ((not (string-empty-p body))
       (teams4e--insert-indented-message-body
        body (and (teams4e--system-event-p message) 'teams4e-event)))
@@ -4639,6 +4691,103 @@ When COMMAND is nil, delegate to `browse-url'."
   "Convert NODE's children to Markdown."
   (mapconcat #'teams4e--dom-to-markdown (dom-children node) ""))
 
+(defvar teams4e--omit-markdown-images nil
+  "When non-nil, omit HTML images from generated Markdown.")
+
+(defun teams4e--dom-plain-text (node)
+  "Return NODE's literal text, preserving explicit line breaks."
+  (cond
+   ((stringp node) (replace-regexp-in-string "\u00a0" " " node))
+   ((not (consp node)) "")
+   ((eq (dom-tag node) 'br) "\n")
+   (t (mapconcat #'teams4e--dom-plain-text (dom-children node) ""))))
+
+(defun teams4e--dom-pre-to-markdown (node)
+  "Convert preformatted DOM NODE to a fenced Markdown block."
+  (let* ((code-node (seq-find (lambda (child)
+                                (and (consp child) (eq (dom-tag child) 'code)))
+                              (dom-children node)))
+         (class (and code-node (dom-attr code-node 'class)))
+         (language (and (stringp class)
+                        (string-match "\\blanguage-\\([^ ]+\\)" class)
+                        (match-string 1 class)))
+         (text (string-trim-right
+                (teams4e--dom-plain-text (or code-node node)))))
+    (format "\n```%s\n%s\n```\n\n" (or language "") text)))
+
+(defun teams4e--dom-list-to-markdown (node ordered)
+  "Convert list DOM NODE to Markdown; ORDERED selects numeric markers."
+  (let ((items (seq-filter (lambda (child)
+                             (and (consp child) (eq (dom-tag child) 'li)))
+                           (dom-children node))))
+    (concat
+     "\n"
+     (mapconcat
+      (lambda (pair)
+        (let* ((index (car pair))
+               (item (cdr pair))
+               (parts (dom-children item))
+               (nested (seq-filter
+                        (lambda (child)
+                          (and (consp child)
+                               (memq (dom-tag child) '(ul ol))))
+                        parts))
+               (content
+                (string-trim
+                 (mapconcat
+                  #'teams4e--dom-to-markdown
+                  (seq-remove (lambda (child) (memq child nested)) parts)
+                  "")))
+               (marker (if ordered (format "%d. " index) "- ")))
+          (concat
+           marker content "\n"
+           (mapconcat
+            (lambda (child)
+              (mapconcat (lambda (line) (concat "  " line))
+                         (string-lines
+                          (string-trim (teams4e--dom-to-markdown child)))
+                         "\n"))
+            nested "\n"))))
+      (cl-loop for item in items
+               for index from 1
+               collect (cons index item))
+      "")
+     "\n")))
+
+(defun teams4e--dom-table-cell-markdown (cell)
+  "Return a compact GFM representation of table CELL."
+  (let ((text (string-trim (teams4e--dom-children-to-markdown cell))))
+    (setq text (replace-regexp-in-string "\n+" "<br>" text))
+    (replace-regexp-in-string "|" (concat "\\" "|") text nil t)))
+
+(defun teams4e--dom-table-to-markdown (node)
+  "Convert HTML table DOM NODE into a GitHub-flavored Markdown table."
+  (let* ((rows
+          (mapcar
+           (lambda (row)
+             (mapcar #'teams4e--dom-table-cell-markdown
+                     (seq-filter
+                      (lambda (child)
+                        (and (consp child) (memq (dom-tag child) '(th td))))
+                      (dom-children row))))
+           (dom-by-tag node 'tr)))
+         (rows (seq-remove #'null rows))
+         (width (if rows (apply #'max (mapcar #'length rows)) 0)))
+    (if (zerop width)
+        ""
+      (let ((normalized
+             (mapcar (lambda (row)
+                       (append row (make-list (- width (length row)) "")))
+                     rows)))
+        (concat
+         "\n"
+         (format "| %s |\n" (string-join (car normalized) " | "))
+         (format "| %s |\n" (string-join (make-list width "---") " | "))
+         (mapconcat (lambda (row)
+                      (format "| %s |" (string-join row " | ")))
+                    (cdr normalized) "\n")
+         "\n\n")))))
+
 (defun teams4e--dom-to-markdown (node)
   "Convert a libxml DOM NODE into conservative Markdown."
   (cond
@@ -4658,7 +4807,7 @@ When COMMAND is nil, delegate to `browse-url'."
          (if (string-match-p "`" children)
              (format "``%s``" children)
            (format "`%s`" children)))
-        ('pre (format "\n```\n%s\n```\n\n" (string-trim-right children)))
+        ('pre (teams4e--dom-pre-to-markdown node))
         ('a
          (let ((url (dom-attr node 'href)))
            (cond
@@ -4666,11 +4815,19 @@ When COMMAND is nil, delegate to `browse-url'."
             ((string-empty-p trimmed) (format "<%s>" url))
             (t (format "[%s](%s)" trimmed url)))))
         ('img
-         (let ((url (dom-attr node 'src))
-               (alt (or (dom-attr node 'alt) "image")))
-           (if (stringp url) (format "![%s](%s)" alt url) "")))
+         (if teams4e--omit-markdown-images
+             ""
+           (let ((url (dom-attr node 'src))
+                 (alt (or (dom-attr node 'alt) "image")))
+             (if (stringp url) (format "![%s](%s)" alt url) ""))))
+        ('input
+         (if (equal (downcase (or (dom-attr node 'type) "")) "checkbox")
+             (if (dom-attr node 'checked) "[x] " "[ ] ")
+           ""))
         ('li (format "- %s\n" trimmed))
-        ((or 'ul 'ol) (concat "\n" children "\n"))
+        ('ul (teams4e--dom-list-to-markdown node nil))
+        ('ol (teams4e--dom-list-to-markdown node t))
+        ('table (teams4e--dom-table-to-markdown node))
         ('blockquote
          (concat
           (mapconcat (lambda (line) (concat "> " line))
@@ -4695,16 +4852,28 @@ When COMMAND is nil, delegate to `browse-url'."
              (replace-regexp-in-string "\n\\{3,\\}" "\n\n" markdown))))
       (error (teams4e--html-to-text html)))))
 
+(defun teams4e--message-markdown-body (message &optional omit-images)
+  "Return MESSAGE's body as Markdown.
+
+When OMIT-IMAGES is non-nil, leave image rendering to Teams4e's authenticated
+image downloader."
+  (let ((teams4e--omit-markdown-images omit-images)
+        (content (teams4e--dig message 'body 'content)))
+    (cond
+     ((teams4e--get message 'deletedDateTime) "*[Deleted message]*")
+     ((teams4e--system-event-p message)
+      (format "*%s*" (teams4e--event-summary message)))
+     ((and (stringp content) (not (string-empty-p content)))
+      (teams4e--html-to-markdown content))
+     ((teams4e--get message 'subject))
+     ((teams4e--get message 'summary))
+     (t ""))))
+
 (defun teams4e--message-markdown (message)
   "Return one complete Teams MESSAGE as Markdown."
   (let* ((sender (teams4e--message-sender message))
          (created (teams4e--get message 'createdDateTime))
-         (content (teams4e--dig message 'body 'content))
-         (body (if (teams4e--get message 'deletedDateTime)
-                   "*[Deleted message]*"
-                 (if (teams4e--system-event-p message)
-                     (format "*%s*" (teams4e--event-summary message))
-                   (teams4e--html-to-markdown content))))
+         (body (teams4e--message-markdown-body message))
          (reference (teams4e--message-reference message))
          (reactions (teams4e--reaction-summary message))
          attachments)

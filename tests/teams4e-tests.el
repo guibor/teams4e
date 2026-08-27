@@ -4233,4 +4233,79 @@
       (should (equal "emacs" (plist-get event :transport)))
       (should (= 0 (plist-get event :items))))))
 
+(ert-deftest teams4e-html-to-markdown-preserves-rich-structure ()
+  (let ((markdown
+         (teams4e--html-to-markdown
+          (concat
+           "<table><tr><th>Name</th><th>State</th></tr>"
+           "<tr><td>Build</td><td>Ready | blocked</td></tr></table>"
+           "<ol><li>First</li><li>Second<ul><li>Nested</li></ul></li></ol>"
+           "<p><input type=\"checkbox\" checked=\"checked\">Done</p>"
+           "<pre><code class=\"language-elisp\">(message \"hi\")</code></pre>"))))
+    (should (string-match-p (regexp-quote "| Name | State |") markdown))
+    (should (string-match-p (regexp-quote "| --- | --- |") markdown))
+    (should (string-match-p (regexp-quote "Ready \\| blocked") markdown))
+    (should (string-match-p (regexp-quote "1. First") markdown))
+    (should (string-match-p (regexp-quote "2. Second") markdown))
+    (should (string-match-p (regexp-quote "  - Nested") markdown))
+    (should (string-match-p (regexp-quote "[x] Done") markdown))
+    (should (string-match-p
+             (regexp-quote "```elisp\n(message \"hi\")\n```")
+             markdown))))
+
+(ert-deftest teams4e-rich-message-renderer-renders-in-place ()
+  (let ((teams4e-message-renderer 'agent-shell-markdown)
+        (teams4e-highlight-code-blocks t)
+        rendered-source
+        rendered-arguments)
+    (cl-letf (((symbol-function 'teams4e--agent-shell-markdown-available-p)
+               (lambda () t))
+              ((symbol-function 'agent-shell-markdown-replace-markup)
+               (lambda (&rest arguments)
+                 (setq rendered-source (buffer-string)
+                       rendered-arguments arguments)
+                 (delete-region (point-min) (point-max))
+                 (insert "Rendered body\n"))))
+      (with-temp-buffer
+        (teams4e--insert-message
+         '((id . "rich-message")
+           (createdDateTime . "2026-08-27T10:00:00Z")
+           (from . ((user . ((displayName . "Ada")))))
+           (body . ((contentType . "html")
+                    (content . "<p>Hello <strong>world</strong></p>")))))
+        (should (string-match-p "Rendered body" (buffer-string)))
+        (should (equal "Hello **world**\n" rendered-source))
+        (should (memq :render-images rendered-arguments))
+        (should-not (plist-get rendered-arguments :render-images))
+        (should (plist-get rendered-arguments :highlight-blocks))
+        (goto-char (point-min))
+        (search-forward "Rendered body")
+        (should (equal "  " (get-text-property (1- (point)) 'line-prefix)))
+        (should (equal "rich-message"
+                       (teams4e--get
+                        (get-text-property (1- (point)) 'teams4e-message)
+                        'id)))))))
+
+(ert-deftest teams4e-rich-message-renderer-falls-back-cleanly ()
+  (let ((teams4e-message-renderer 'agent-shell-markdown))
+    (cl-letf (((symbol-function 'teams4e--agent-shell-markdown-available-p)
+               (lambda () nil))
+              ((symbol-function 'agent-shell-markdown-replace-markup)
+               (lambda (&rest _arguments)
+                 (ert-fail "Renderer should not be called"))))
+      (with-temp-buffer
+        (teams4e--insert-message
+         '((id . "plain-message")
+           (createdDateTime . "2026-08-27T10:00:00Z")
+           (from . ((user . ((displayName . "Ada")))))
+           (body . ((contentType . "html")
+                    (content . "<p>Hello <strong>world</strong></p>")))))
+        (should (string-match-p "  Hello world" (buffer-string)))
+        (should-not (string-match-p "\\*\\*world\\*\\*" (buffer-string)))))))
+
+(ert-deftest teams4e-fresh-headers-map-has-unread-toggle ()
+  (should (eq (lookup-key teams4e-recent-mode-map (kbd "U"))
+              #'teams4e-toggle-unread-filter)))
+
+
 ;;; teams4e-tests.el ends here
