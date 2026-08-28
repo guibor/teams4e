@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added optional Agent Shell Markdown rendering for rich message bodies, including
+  lists, checkboxes, syntax-highlighted code, and aligned GFM tables.
+- Reworked the public README around account-free evaluation, portable
+  configuration, authentication boundaries, daily workflows, and limitations.
+- Replaced the remaining personal test and demo identity with reserved synthetic
+  example data.
 - Reduced the initial focused-chat request to one 50-message Graph page, kept
   deeper history behind `L` and `G`, and added transcript-render timing to the
   redacted performance report.

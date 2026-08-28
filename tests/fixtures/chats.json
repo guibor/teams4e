@@ -12,7 +12,7 @@
       "from": {
         "user": {
           "id": "current-user-id",
-          "displayName": "Michael"
+          "displayName": "Example User"
         }
       },
       "body": {

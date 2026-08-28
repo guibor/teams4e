@@ -164,7 +164,7 @@
 (ert-deftest teams4e-html-message-rendering-removes-markup ()
   (let* ((messages (teams4e-test-read-json "messages-chat-1.json"))
          (body (teams4e--message-body (car messages))))
-    (should (string-match-p "Hello Michael" body))
+    (should (string-match-p "Hello Example User" body))
     (should (string-match-p "review is ready" body))
     (should-not (string-match-p "<strong>" body))))
 
@@ -685,7 +685,7 @@
                             markdown))
     (should (string-match-p "Range: 2026-08-02" markdown))
     (should (string-match-p "### [0-9][0-9]:[0-9][0-9] - " markdown))
-    (should (string-match-p (regexp-quote "Hello **Michael**") markdown))
+    (should (string-match-p (regexp-quote "Hello **Example User**") markdown))
     (should (string-match-p
              (regexp-quote "[review.pdf](https://example.com/review.pdf)")
              markdown))
@@ -983,7 +983,7 @@
           (should (marker-buffer marker))
           (with-temp-buffer
             (insert-file-contents file)
-            (should (search-forward "* Ada Lovelace: Hello Michael" nil t))
+            (should (search-forward "* Ada Lovelace: Hello Example User" nil t))
             (should (search-forward ":TEAMS_CHAT: chat-1" nil t))
             (should (search-forward ":TEAMS_MESSAGE: message-1" nil t))
             (should (search-forward "Open in Microsoft Teams" nil t))))
@@ -1003,7 +1003,7 @@
     (should (string-match-p ":TEAMS_MESSAGE: message-1" entry))
     (should (string-match-p "Open selected item in Microsoft Teams" entry))
     (should (string-match-p "Ada Lovelace" entry))
-    (should (string-match-p "Michael-David Fiszer" entry))
+    (should (string-match-p "Example User" entry))
     (should (string-match-p "review.pdf" entry))))
 
 (ert-deftest teams4e-summary-capture-is-compact-and-actionable ()
@@ -1017,9 +1017,9 @@
     (should (string-match-p "Open in Microsoft Teams" entry))
     (should (string-match-p "Last activity" entry))
     (should (string-match-p "\\*\\* Last message" entry))
-    (should (string-match-p "Hello Michael" entry))
+    (should (string-match-p "Hello Example User" entry))
     (should-not (string-match-p "Transcript" entry))
-    (should-not (string-match-p "Michael-David Fiszer" entry))))
+    (should-not (string-match-p "Example User" entry))))
 
 (ert-deftest teams4e-thread-capture-uses-editable-org-capture-target ()
   (require 'org-capture)
