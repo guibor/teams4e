@@ -33,7 +33,10 @@
 (declare-function teams4e-bulk-action "advanced")
 (declare-function teams4e-toggle-selection "advanced")
 (declare-function teams4e-toggle-visible-selections "advanced")
-(declare-function teams4e-toggle-unread-filter "advanced")
+;;;###autoload
+(autoload 'teams4e-toggle-unread-filter "teams4e-advanced"
+          "Toggle unread-only filtering on the active inbox view." t)
+(defalias 'teams-unread-filter #'teams4e-toggle-unread-filter)
 (declare-function teams4e--refresh-current-view "advanced")
 (declare-function teams4e--meeting-view-p "advanced")
 (declare-function teams4e--render-channel-thread "advanced")
@@ -2338,7 +2341,7 @@ omitted by the chat-list response; explicit meeting views use this path."
     (define-key map (kbd "Y") #'teams4e-copy-thread-markdown)
     (define-key map (kbd "J") #'teams4e-preview-scroll-down)
     (define-key map (kbd "K") #'teams4e-preview-scroll-up)
-    (define-key map (kbd "U") #'teams4e-toggle-unread-filter)
+    (define-key map (kbd "U") #'teams-unread-filter)
     (define-key map (kbd "C-+") #'teams4e-index-grow)
     (define-key map (kbd "C-=") #'teams4e-index-grow)
     (define-key map (kbd "C--") #'teams4e-index-shrink)
@@ -2439,6 +2442,7 @@ omitted by the chat-list response; explicit meeting views use this path."
 (defun teams4e-recent ()
   "Open a native recent-chat inbox backed by Microsoft Graph."
   (interactive)
+  (require 'teams4e-advanced)
   (teams4e--load-state)
   (let* ((existing (get-buffer teams4e--recent-buffer-name))
          (buffer (get-buffer-create teams4e--recent-buffer-name)))

@@ -1826,7 +1826,7 @@
              ("I" . teams4e-mark-read-later)
              ("?" . teams4e-mark-unread-later)
              ("u" . teams4e-unmark)
-             ("U" . teams4e-toggle-unread-filter)
+             ("U" . teams-unread-filter)
              ("M" . teams4e-toggle-selection)
              ("T" . teams4e-toggle-visible-selections)
              ("X" . teams4e-bulk-action)
@@ -4305,7 +4305,11 @@
 
 (ert-deftest teams4e-fresh-headers-map-has-unread-toggle ()
   (should (eq (lookup-key teams4e-recent-mode-map (kbd "U"))
-              #'teams4e-toggle-unread-filter)))
+              #'teams-unread-filter)))
+
+(ert-deftest teams4e-unread-filter-aliases-toggle ()
+  (should (eq (indirect-function 'teams-unread-filter)
+              (indirect-function 'teams4e-toggle-unread-filter))))
 
 
 ;;; teams4e-tests.el ends here

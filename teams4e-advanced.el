@@ -783,6 +783,7 @@ the distinction between mu4e's `b' and `B' commands."
       (and (stringp query)
            (string-equal (string-trim query) "unread"))))
 
+;;;###autoload
 (defun teams4e-toggle-unread-filter ()
   "Toggle unread-only filtering on top of the active inbox view.
 
@@ -3633,7 +3634,7 @@ shared by the terminal Teams client."
          ("?" . teams4e-mark-unread-later)
          ("u" . teams4e-unmark)
          ("x" . teams4e-execute-marks)
-         ("U" . teams4e-toggle-unread-filter)
+         ("U" . teams-unread-filter)
          ("z" . teams4e-undo-action)
          ("M-U" . teams4e-undo-action)
          ("/" . teams4e-search)
@@ -3925,6 +3926,7 @@ shared by the terminal Teams client."
 (defalias 'teams-jump-capture #'teams4e-jump-to-capture)
 (defalias 'teams-bookmark #'teams4e-bookmark-jump)
 (defalias 'teams-filter #'teams4e-filter)
+;;;###autoload
 (defalias 'teams-unread-filter #'teams4e-toggle-unread-filter)
 (defalias 'teams-bulk-action #'teams4e-bulk-action)
 (defalias 'teams-close-inactive #'teams4e-close-inactive-transcripts)
