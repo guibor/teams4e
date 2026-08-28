@@ -15,6 +15,21 @@ The Emacs process passes arguments as an argv list and parses one JSON document
 from stdout. Message content and tokens are never interpolated into a shell
 command.
 
+This boundary is the package's deployment strategy, not only an implementation
+detail. An existing approved MCP service, corporate broker, CLI, TUI, or
+DavMail-like bridge can remain the sole OAuth owner. It may expose a fresh
+delegated Graph token through an argv command, maintain a credential record
+that the bundled adapter reads without writing, or implement the backend
+contract itself so its token never leaves the service. An MCP connection alone
+does not imply token export, and none of these patterns bypass tenant consent.
+
+Custom adapters use process-per-command operation by default. Each invocation
+receives the normal backend argv and emits one JSON document. A full drop-in
+backend named `teams4e-graph` may implement the optional persistent transport:
+the frontend starts it with `serve`, sends JSON-lines objects containing integer
+`id` and string-array `args`, and expects correlated `result` or redacted
+`error` responses. See [AUTHENTICATION.md](AUTHENTICATION.md).
+
 ## Data Ownership
 
 Microsoft Graph is authoritative for chats, messages, server read state, and

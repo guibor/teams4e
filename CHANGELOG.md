@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented the primary deployment model: reuse an already approved Microsoft
+  365 OAuth owner through a token command, read-only credential record, or
+  custom MCP/broker backend adapter, without claiming to bypass tenant consent.
 - Added optional Agent Shell Markdown rendering for rich message bodies, including
   lists, checkboxes, syntax-highlighted code, and aligned GFM tables.
 - Reworked the public README around account-free evaluation, portable

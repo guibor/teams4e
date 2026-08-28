@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A mu4e-inspired Microsoft Teams client for Emacs.</strong><br>
-  Scan the inbox. Read one thread at a time. Act without leaving Emacs.
+  Reuse approved Microsoft 365 access. Read, triage, and write without leaving Emacs.
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 <p align="center">
   <a href="#try-it-without-a-teams-account">Try the mock</a> |
   <a href="#installation">Install</a> |
-  <a href="#authentication">Authenticate</a> |
+  <a href="#reuse-the-login-you-already-have">Connect</a> |
   <a href="#daily-workflow">Keys</a> |
   <a href="#meetings-without-living-in-the-calendar">Meetings</a> |
   <a href="#development">Develop</a>
@@ -37,10 +37,16 @@ screen sharing, and advanced calendar editing still open in Microsoft Teams or
 Outlook.
 
 > [!IMPORTANT]
-> `teams4e` does not ship an Entra app registration or own refresh tokens.
-> It consumes a short-lived Microsoft Graph token from a command or credential
-> broker that you configure. Tenant policy still decides which Graph operations
-> are permitted.
+> `teams4e` is deliberately not another OAuth application. If an MCP service,
+> corporate broker, CLI, TUI, or DavMail-like bridge already has approved
+> delegated Microsoft 365 access, it can continue to own login, consent, and
+> token refresh. `teams4e` consumes only a short-lived Graph token, or delegates
+> its backend operations to an adapter around that service.
+
+This separation matters in managed tenants where registering one more Entra
+application is difficult or prohibited. It does **not** bypass tenant policy or
+grant permissions: the existing integration must already be approved for the
+Graph operations you want to use.
 
 The package is not affiliated with or supported by Microsoft.
 
@@ -127,9 +133,42 @@ Then configure it normally:
 `M-x teams4e`, `M-x teams`, and `M-x teams4e-inbox` open the
 same inbox.
 
+## Reuse the Login You Already Have
+
+The normal live setup is a small bridge between `teams4e` and an existing
+Microsoft 365 integration:
+
+```text
+approved OAuth owner
+(MCP / broker / CLI / TUI / DavMail-like bridge)
+             |
+      fresh delegated Graph access
+             |
+ token command, credential file, or backend adapter
+             |
+         teams4e in Emacs
+```
+
+There are three supported patterns:
+
+1. **Token command, recommended.** Point `teams4e-token-command` at an existing
+   helper that prints a fresh, short-lived Microsoft Graph access token.
+2. **Broker-owned credential file.** Let the approved integration maintain a
+   JSON credential record; `teams4e` reads the Graph access token but never
+   writes the file or handles its refresh token.
+3. **Backend adapter.** If an MCP server exposes tools but intentionally does
+   not export tokens, wrap those tools behind the `teams4e` argv/JSON backend
+   contract. The token then never leaves the approved service.
+
+Having an MCP connection by itself is not enough: its host must expose a Graph
+token through one of the first two boundaries, or provide the operations needed
+by the third. See [AUTHENTICATION.md](AUTHENTICATION.md) for complete examples,
+the credential JSON shape, adapter protocol, verification steps, and security
+notes.
+
 ## Authentication
 
-### Bring your own token command
+### Use a token command
 
 This is the preferred boundary. Configure an argv list; no shell is involved:
 
@@ -160,7 +199,7 @@ program:
 ```
 
 Candidate entries use `server_name`, optional `server_url`,
-`graph_access_token`, and `graph_expires_at`. If another program can
+`graph_access_token`, and `graph_expires_at`. If the same OAuth owner can
 refresh that file, expose it as:
 
 ```elisp
@@ -175,6 +214,17 @@ HELPER --refresh-if-needed --credentials FILE
 
 `teams4e` never writes the credential file or stores a refresh token. Keep
 the file readable only by your user.
+
+After configuring either boundary, run:
+
+```text
+M-x teams4e-status
+M-x teams4e
+```
+
+Use `M-x teams4e-login` only when you configured
+`teams4e-bootstrap-program`; it asks that external owner to refresh or establish
+the shared credential. It does not implement a teams4e-specific login flow.
 
 ### Graph permissions
 
