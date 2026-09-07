@@ -3481,7 +3481,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
         (push spec result)
         (setq remaining
               (replace-regexp-in-string
-               (regexp-quote literal) "" remaining t t))))))
+               (regexp-quote literal) "" remaining t t)))))))
 
 (defun teams4e-compose-toggle-rich ()
   "Toggle compose between plain text and direct Teams HTML mode."
