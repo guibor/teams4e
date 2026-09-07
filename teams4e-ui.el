@@ -43,7 +43,6 @@
 (declare-function teams4e-thread-next "advanced")
 (declare-function teams4e-thread-previous "advanced")
 (declare-function teams4e-mark-read-later "advanced")
-(declare-function teams4e-message-forward "advanced")
 (declare-function agent-shell-markdown-replace-markup
                   "agent-shell-markdown" (&rest arguments))
 
@@ -2327,8 +2326,6 @@ omitted by the chat-list response; explicit meeting views use this path."
     (define-key map (kbd "C") #'teams4e-send)
     (define-key map (kbd "r") #'teams4e-mark-read-later)
     (define-key map (kbd "R") #'teams4e-reply)
-    (define-key map (kbd "f") #'teams4e-message-forward)
-    (define-key map (kbd "F") #'teams4e-message-forward)
     (define-key map (kbd "o") #'teams4e-open-in-browser)
     (define-key map (kbd "O") #'teams4e-open-in-app)
     (define-key map (kbd "*") #'teams4e-toggle-favorite)
@@ -2789,23 +2786,49 @@ document a chat mute mutation, so the private state only controls the Emacs
              (if enabled "Muted" "Unmuted")
              (teams4e--chat-label chat))))
 
+(defun teams4e--optimistic-read-state (chat state)
+  "Apply CHAT read STATE locally and return a rollback snapshot."
+  (let* ((chat-id (teams4e--chat-id chat))
+         (missing (make-symbol "missing"))
+         (previous (gethash chat-id teams4e--read-overrides missing))
+         (optimistic (cons state (teams4e--last-message-marker chat))))
+    (puthash chat-id optimistic teams4e--read-overrides)
+    (teams4e--refresh-visible-recent)
+    (list :chat-id chat-id
+          :had-previous (not (eq previous missing))
+          :previous (unless (eq previous missing) previous)
+          :optimistic optimistic)))
+
+(defun teams4e--rollback-read-state (snapshot)
+  "Restore the read override in SNAPSHOT when it is still current."
+  (let ((chat-id (plist-get snapshot :chat-id))
+        (optimistic (plist-get snapshot :optimistic)))
+    (when (equal optimistic (gethash chat-id teams4e--read-overrides))
+      (if (plist-get snapshot :had-previous)
+          (puthash chat-id (plist-get snapshot :previous)
+                   teams4e--read-overrides)
+        (remhash chat-id teams4e--read-overrides))
+      (teams4e--refresh-visible-recent))))
+
 (defun teams4e--set-read-state (state &optional quiet)
-  "Set the current chat read STATE through Graph.
+  "Set the current chat read STATE optimistically, then reconcile with Graph.
 
 STATE is the symbol `read' or `unread'.  QUIET suppresses success messages."
   (teams4e--require-online)
   (let* ((chat (or (teams4e--chat-at-point)
                    (user-error "No Teams chat here")))
          (chat-id (teams4e--chat-id chat))
-         (label (teams4e--chat-label chat)))
+         (label (teams4e--chat-label chat))
+         (args (list "teams" "chat" "mark" (symbol-name state)
+                     "--chatId" chat-id))
+         (snapshot (teams4e--optimistic-read-state chat state)))
     (teams4e--run-json
-     (list "teams" "chat" "mark" (symbol-name state) "--chatId" chat-id)
+     args
      (lambda (_payload)
-       (puthash chat-id
-                (cons state (teams4e--last-message-marker chat))
-                teams4e--read-overrides)
-       (teams4e--refresh-visible-recent)
-       (unless quiet (message "Marked %s %s" label state))))))
+       (unless quiet (message "Marked %s %s" label state)))
+     (lambda (status detail)
+       (teams4e--rollback-read-state snapshot)
+       (teams4e--report-error args status detail)))))
 
 (defun teams4e-mark-read ()
   "Explicitly mark the current chat read."
@@ -3880,7 +3903,6 @@ When DATE-ONLY is non-nil, omit the time of day."
     (define-key map (kbd "!") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "?") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "*") #'teams4e-chat-run-headers-command)
-    (define-key map (kbd "f") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "E") #'teams4e-export-thread)
     (define-key map (kbd "Y") #'teams4e-copy-thread-markdown)
     (define-key map (kbd "y") #'teams4e-chat-back-to-inbox)
@@ -3888,7 +3910,6 @@ When DATE-ONLY is non-nil, omit the time of day."
     (define-key map (kbd "M-w") #'teams4e-capture-message)
     (define-key map (kbd "o") #'teams4e-open-in-browser)
     (define-key map (kbd "O") #'teams4e-open-in-app)
-    (define-key map (kbd "F") #'teams4e-message-forward)
     (define-key map (kbd "M-F") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "n") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "p") #'teams4e-chat-run-headers-command)
@@ -4527,13 +4548,16 @@ REPLY-TO, when non-nil, is the source message for a native quoted reply."
          (target teams4e-compose--target)
          (reply-to teams4e-compose--reply-to)
          (attachments teams4e-compose--attachments)
-         (mentions teams4e-compose--mentions)
          (content-type teams4e-compose--content-type)
          (origin teams4e-compose--origin)
          (send-read-state (teams4e--capture-send-read-state target))
          (message-text (teams4e--utf8-safe-string
                         (string-trim (buffer-substring-no-properties
                                       (point-min) (point-max)))))
+         (mentions
+          (if (fboundp 'teams4e-compose--effective-mentions)
+              (teams4e-compose--effective-mentions message-text)
+            teams4e-compose--mentions))
          (label (teams4e--target-label target))
          args)
     (when (and (string-empty-p message-text) (null attachments))

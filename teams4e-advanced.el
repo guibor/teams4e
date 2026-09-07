@@ -1190,24 +1190,23 @@ normal reader without adding a second search cache."
            (remhash chat-id teams4e--marks)
            (teams4e--execute-mark-list rest (cons undo completed))))
         ((or 'read 'unread)
-         (let ((args
-                (list "teams" "chat" "mark" (symbol-name action)
-                      "--chatId" chat-id)))
+         (let* ((args
+                 (list "teams" "chat" "mark" (symbol-name action)
+                       "--chatId" chat-id))
+                (snapshot (teams4e--optimistic-read-state chat action)))
+           (remhash chat-id teams4e--marks)
            (teams4e--run-json
             args
             (lambda (_payload)
-              (puthash chat-id
-                       (cons action (teams4e--last-message-marker chat))
-                       teams4e--read-overrides)
-              (remhash chat-id teams4e--marks)
               (teams4e--execute-mark-list
                rest
                (cons (list :kind (if (eq action 'read) 'unread 'read)
                            :chat-id chat-id)
                      completed)))
             (lambda (status detail)
+              (puthash chat-id action teams4e--marks)
+              (teams4e--rollback-read-state snapshot)
               (teams4e--record-completed-actions completed)
-              (teams4e--refresh-visible-recent)
               (teams4e--report-error args status detail)))))
         (_
          (remhash chat-id teams4e--marks)
@@ -1634,8 +1633,6 @@ normal reader without adding a second search cache."
     (define-key map (kbd "-") #'teams4e-message-unreact)
     (define-key map (kbd "e") #'teams4e-message-edit)
     (define-key map (kbd "d") #'teams4e-message-delete)
-    (define-key map (kbd "f") #'teams4e-message-forward)
-    (define-key map (kbd "F") #'teams4e-message-forward)
     (define-key map (kbd "a") #'teams4e-attachment-download)
     (define-key map (kbd "A") #'teams4e-attachment-preview)
     (define-key map (kbd "E") #'teams4e-channel-export-thread)
@@ -2695,28 +2692,6 @@ resolve the linked event.  This is the primary mu4e-style `a a' action."
       (teams4e--run-message-action
        'delete message nil 'restore nil "Deleted Teams message"))))
 
-(defun teams4e-message-forward ()
-  "Forward the selected or latest readable message into another chat."
-  (interactive)
-  (let* ((chat (and (derived-mode-p 'teams4e-recent-mode)
-                    (teams4e--chat-at-point)))
-         (message (if chat
-                      (or (teams4e--get chat 'lastMessagePreview)
-                          (user-error
-                           "The selected chat has no loaded message to forward"))
-                    (teams4e-current-message)))
-         (sender (teams4e--message-sender message))
-         (created (teams4e--format-date
-                   (teams4e--get message 'createdDateTime) t))
-         (url (teams4e--get message 'webUrl))
-         (initial
-          (concat (format "Forwarded from %s (%s):\n\n%s"
-                          sender created
-                          (teams4e--message-body message))
-                  (if (stringp url) (format "\n\nSource: %s" url) ""))))
-    (teams4e--select-chat
-     (lambda (chat) (teams4e--open-compose chat nil initial)))))
-
 (defun teams4e--non-reference-attachments (message)
   "Return downloadable non-quote attachments from MESSAGE."
   (append
@@ -3337,24 +3312,176 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
            (metadata (cdr (assoc choice choices))))
       (teams4e--open-compose (car metadata) (cadr metadata)))))
 
-(defun teams4e-compose-mention (query)
-  "Search QUERY, insert a structured @mention, and retain its user ID."
-  (interactive (list (read-string "Mention Teams user: ")))
-  (unless (derived-mode-p 'teams4e-compose-mode)
-    (user-error "Open a Teams compose buffer first"))
-  (let ((buffer (current-buffer)))
+(defvar-local teams4e-compose--mention-members-loading nil
+  "Non-nil while the current compose buffer loads chat participants.")
+
+(defun teams4e-compose--mention-member-id (member)
+  "Return MEMBER's directory user ID."
+  (or (teams4e--get member 'userId)
+      (teams4e--get member 'id)
+      (teams4e--dig member 'user 'id)))
+
+(defun teams4e-compose--mention-member-name (member)
+  "Return MEMBER's visible mention name."
+  (or (teams4e--get member 'displayName)
+      (teams4e--get member 'email)
+      (teams4e--get member 'userPrincipalName)))
+
+(defun teams4e-compose--current-user-member-p (member)
+  "Return non-nil when MEMBER is the connected account."
+  (let ((user-id (teams4e-compose--mention-member-id member))
+        (email (or (teams4e--get member 'email)
+                   (teams4e--get member 'userPrincipalName))))
+    (or (and (stringp teams4e--connected-user-id)
+             (stringp user-id)
+             (string-equal teams4e--connected-user-id user-id))
+        (and (stringp teams4e--connected-as)
+             (stringp email)
+             (string-equal (downcase teams4e--connected-as)
+                           (downcase email))))))
+
+(defun teams4e-compose--mentionable-members (members)
+  "Return distinct mentionable MEMBERS other than the connected account."
+  (seq-uniq
+   (seq-filter
+    (lambda (member)
+      (let ((user-id (teams4e-compose--mention-member-id member))
+            (name (teams4e-compose--mention-member-name member)))
+        (and (stringp user-id) (not (string-empty-p user-id))
+             (stringp name) (not (string-empty-p name))
+             (not (teams4e-compose--current-user-member-p member)))))
+    members)
+   (lambda (left right)
+     (string-equal (teams4e-compose--mention-member-id left)
+                   (teams4e-compose--mention-member-id right)))))
+
+(defun teams4e-compose--member-choice (member)
+  "Return a distinct completion label for MEMBER."
+  (let ((name (teams4e-compose--mention-member-name member))
+        (email (or (teams4e--get member 'email)
+                   (teams4e--get member 'userPrincipalName))))
+    (if (and (stringp email)
+             (not (string-empty-p email))
+             (not (string-equal (downcase name) (downcase email))))
+        (format "%s <%s>" name email)
+      name)))
+
+(defun teams4e-compose--insert-mentioned-user (user)
+  "Insert USER as a structured Teams mention at point."
+  (let ((name (teams4e-compose--mention-member-name user))
+        (user-id (teams4e-compose--mention-member-id user)))
+    (unless (and (stringp name) (not (string-empty-p name))
+                 (stringp user-id) (not (string-empty-p user-id)))
+      (user-error "The selected Teams user cannot be mentioned"))
+    (insert (propertize (concat "@" name)
+                        'face 'font-lock-constant-face
+                        'teams4e-mention (format "%s|%s" user-id name)
+                        'rear-nonsticky t))
+    (when (or (eobp) (looking-at-p "[[:alnum:]_]"))
+      (insert " "))
+    (cl-pushnew (format "%s|%s" user-id name)
+                teams4e-compose--mentions :test #'equal)
+    (teams4e-compose--update-header)
+    (teams4e-compose--schedule-draft)))
+
+(defun teams4e-compose--choose-mention-member (members &optional initial)
+  "Choose one of chat MEMBERS and insert it, starting with INITIAL."
+  (let* ((mentionable (teams4e-compose--mentionable-members members))
+         (pairs (mapcar (lambda (member)
+                          (cons (teams4e-compose--member-choice member) member))
+                        mentionable)))
+    (unless pairs (user-error "This chat has no mentionable participants"))
+    (let* ((completion-ignore-case t)
+           (choice (completing-read "Mention participant: "
+                                    (mapcar #'car pairs) nil t initial)))
+      (teams4e-compose--insert-mentioned-user (cdr (assoc choice pairs))))))
+
+(defun teams4e-compose--directory-mention (&optional query)
+  "Search the Teams directory with QUERY and insert a selected mention."
+  (let ((query (or query (read-string "Mention Teams user search: ")))
+        (buffer (current-buffer)))
+    (when (string-empty-p (string-trim query))
+      (user-error "A Teams user search is required"))
     (teams4e--search-user
      query
      (lambda (user)
        (when (buffer-live-p buffer)
          (with-current-buffer buffer
-           (let ((name (teams4e--get user 'displayName))
-                 (user-id (teams4e--get user 'id)))
-             (insert "@" name)
-             (cl-pushnew (format "%s|%s" user-id name)
-                         teams4e-compose--mentions :test #'equal)
-             (teams4e-compose--update-header)
-             (teams4e-compose--schedule-draft))))))))
+           (teams4e-compose--insert-mentioned-user user)))))))
+
+(defun teams4e-compose-mention (&optional query)
+  "Insert a real Teams @mention, preferring participants in this chat.
+
+Optional QUERY is initial completion input.  Channel and new-chat targets fall
+back to tenant directory search because they do not have a chat member list."
+  (interactive)
+  (unless (derived-mode-p 'teams4e-compose-mode)
+    (user-error "Open a Teams compose buffer first"))
+  (let ((chat-id (teams4e--chat-id teams4e-compose--target)))
+    (if (not chat-id)
+        (teams4e-compose--directory-mention query)
+      (let* ((missing (make-symbol "missing"))
+             (cached (gethash chat-id teams4e--member-cache missing))
+             (buffer (current-buffer)))
+        (cond
+         ((not (eq cached missing))
+          (teams4e-compose--choose-mention-member
+           (unless (eq cached teams4e--no-members) cached) query))
+         (teams4e-offline-mode
+          (user-error "Chat participants are unavailable in offline mode"))
+         (teams4e-compose--mention-members-loading
+          (message "Teams participants are still loading"))
+         (t
+          (setq teams4e-compose--mention-members-loading t)
+          (teams4e--run-json
+           (list "teams" "chat" "member" "list" "--chatId" chat-id)
+           (lambda (payload)
+             (when (buffer-live-p buffer)
+               (with-current-buffer buffer
+                 (let ((members (teams4e--payload-list payload)))
+                   (setq teams4e-compose--mention-members-loading nil)
+                   (puthash chat-id (or members teams4e--no-members)
+                            teams4e--member-cache)
+                   (teams4e-compose--choose-mention-member members query)))))
+           (lambda (status detail)
+             (when (buffer-live-p buffer)
+               (with-current-buffer buffer
+                 (setq teams4e-compose--mention-members-loading nil)))
+             (teams4e--report-error
+              (list "teams" "chat" "member" "list" "--chatId" chat-id)
+              status detail)))))))))
+
+(defun teams4e-compose-at ()
+  "Choose and insert a participant mention when `@' is typed."
+  (interactive)
+  (teams4e-compose-mention))
+
+(defun teams4e-compose--mention-spec-name (spec)
+  "Return the display-name portion of mention SPEC."
+  (when (stringp spec)
+    (when-let ((separator (string-search "|" spec)))
+      (substring spec (1+ separator)))))
+
+(defun teams4e-compose--effective-mentions (message)
+  "Return picker-created mention specifications still present in MESSAGE.
+
+Longer names consume their placeholders first, preventing overlapping names
+from producing an invalid Graph payload after a mention is edited or deleted."
+  (let ((candidates
+         (sort (delete-dups (append teams4e-compose--mentions nil))
+               (lambda (left right)
+                 (> (length (or (teams4e-compose--mention-spec-name left) ""))
+                    (length (or (teams4e-compose--mention-spec-name right) "")))))
+        (remaining message)
+        result)
+    (dolist (spec candidates (nreverse result))
+      (when-let* ((name (teams4e-compose--mention-spec-name spec))
+                  (literal (concat "@" name))
+                  (match (string-search literal remaining)))
+        (push spec result)
+        (setq remaining
+              (replace-regexp-in-string
+               (regexp-quote literal) "" remaining t t))))))
 
 (defun teams4e-compose-toggle-rich ()
   "Toggle compose between plain text and direct Teams HTML mode."
@@ -3427,6 +3554,8 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
             (kbd "C-c C-p") #'teams4e-compose-paste-image)
 (define-key teams4e-compose-mode-map
             (kbd "C-c C-m") #'teams4e-compose-mention)
+(define-key teams4e-compose-mode-map
+            (kbd "@") #'teams4e-compose-at)
 (define-key teams4e-compose-mode-map
             (kbd "C-c C-h") #'teams4e-compose-toggle-rich)
 (define-key teams4e-compose-mode-map
@@ -3509,7 +3638,6 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
     (define-key map (kbd "p") #'teams4e-meeting-propose-new-time)
     (define-key map (kbd "c") #'teams4e-action-compose)
     (define-key map (kbd "R") #'teams4e-action-reply)
-    (define-key map (kbd "f") #'teams4e-message-forward)
     (define-key map (kbd "i") #'teams4e-mark-read)
     (define-key map (kbd "u") #'teams4e-mark-unread)
     (define-key map (kbd "*") #'teams4e-toggle-favorite)
@@ -3545,7 +3673,6 @@ shared by the terminal Teams client."
   (let* ((actions
           '(("Compose in conversation" . teams4e-action-compose)
             ("Reply to latest message" . teams4e-action-reply)
-            ("Forward latest message" . teams4e-message-forward)
             ("Mark read now" . teams4e-mark-read)
             ("Mark unread now" . teams4e-mark-unread)
             ("Toggle favorite" . teams4e-toggle-favorite)
@@ -3612,8 +3739,6 @@ shared by the terminal Teams client."
          ("C" . teams4e-send)
          ("r" . teams4e-mark-read-later)
          ("R" . teams4e-reply)
-         ("f" . teams4e-message-forward)
-         ("F" . teams4e-message-forward)
          ("o" . teams4e-open-in-browser)
          ("O" . teams4e-open-in-app)
          ("*" . teams4e-toggle-favorite)
@@ -3659,7 +3784,7 @@ shared by the terminal Teams client."
             (kbd "q") #'teams4e-quit)
 
 (defconst teams4e--chat-header-mirror-keys
-  '("g" "n" "p" "[" "]" "i" "I" "!" "?" "r" "M-u" "*" "f"
+  '("g" "n" "p" "[" "]" "i" "I" "!" "?" "r" "M-u" "*"
     "M" "T" "X" "u" "U" "x" "z" "M-U" "/" "s" "b" "B"
     "v" "V" "S" "H" "J" "K" "C-+" "C-=" "C--")
   "Headers keys delegated from the singleton Teams chat reader.")
@@ -3683,7 +3808,6 @@ shared by the terminal Teams client."
          ("M-k" . teams4e-chat-previous-message)
          ("q" . teams4e-chat-view-quit)
          ("R" . teams4e-reply)
-         ("F" . teams4e-message-forward)
          ("c" . teams4e-send)
          ("C" . teams4e-send)
          ("+" . teams4e-message-react)
@@ -3731,7 +3855,6 @@ shared by the terminal Teams client."
            ("M-k" . teams4e-chat-previous-message)
            ("q" . teams4e-channel-view-quit)
            ("R" . teams4e-channel-reply)
-           ("F" . teams4e-message-forward)
            ("M-a" . teams4e-attachment-download)
            ("c" . teams4e-channel-compose)
            ("C" . teams4e-channel-compose)
@@ -3887,7 +4010,6 @@ shared by the terminal Teams client."
     "A" "capture full thread"
     "c" "compose"
     "R" "reply"
-    "f" "forward"
     "i" "mark read now"
     "u" "mark unread now"
     "*" "favorite"

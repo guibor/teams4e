@@ -32,6 +32,8 @@
 
 (with-eval-after-load 'evil
   (evil-set-initial-state 'teams4e-compose-mode 'insert)
+  (evil-define-key* 'insert teams4e-compose-mode-map
+    (kbd "@") #'teams4e-compose-at)
   (evil-define-key* '(normal motion) teams4e-recent-mode-map
     (kbd "RET") #'teams4e-recent-open
     (kbd "l") #'teams4e-recent-open
@@ -48,8 +50,6 @@
     (kbd "C") #'teams4e-send
     (kbd "r") #'teams4e-mark-read-later
     (kbd "R") #'teams4e-reply
-    (kbd "f") #'teams4e-message-forward
-    (kbd "F") #'teams4e-message-forward
     (kbd "s") #'teams4e-filter
     (kbd "o") #'teams4e-open-in-browser
     (kbd "O") #'teams4e-open-in-app
@@ -101,7 +101,6 @@
     (kbd "?") #'teams4e-chat-run-headers-command
     (kbd "M-u") #'teams4e-chat-run-headers-command
     (kbd "*") #'teams4e-chat-run-headers-command
-    (kbd "f") #'teams4e-chat-run-headers-command
     (kbd "M") #'teams4e-chat-run-headers-command
     (kbd "T") #'teams4e-chat-run-headers-command
     (kbd "X") #'teams4e-chat-run-headers-command
@@ -142,7 +141,6 @@
     (kbd "-") #'teams4e-message-unreact
     (kbd "e") #'teams4e-message-edit
     (kbd "d") #'teams4e-message-delete
-    (kbd "F") #'teams4e-message-forward
     (kbd "A") #'teams4e-attachment-preview
     (kbd "M-a") #'teams4e-attachment-download
     (kbd "N") #'teams4e-thread-next
@@ -180,8 +178,6 @@
     (kbd "-") #'teams4e-message-unreact
     (kbd "e") #'teams4e-message-edit
     (kbd "d") #'teams4e-message-delete
-    (kbd "f") #'teams4e-message-forward
-    (kbd "F") #'teams4e-message-forward
     (kbd "a") teams4e-action-map
     (kbd "A") #'teams4e-attachment-preview
     (kbd "M-a") #'teams4e-attachment-download

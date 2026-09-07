@@ -1223,6 +1223,17 @@ class GraphBackendTests(unittest.TestCase):
           attachment_tags=[],
       )
 
+  def test_outgoing_body_tags_every_repeated_mention_once(self) -> None:
+    body, mentions = backend.outgoing_body(
+        "@Ada, please pair with @Ada",
+        content_type="text",
+        mention_specs=["ada-id|Ada", "ada-id|Ada"],
+        attachment_tags=[],
+    )
+    self.assertEqual(2, body["content"].count('<at id="0">Ada</at>'))
+    self.assertEqual(1, len(mentions))
+    self.assertEqual("ada-id", mentions[0]["mentioned"]["user"]["id"])
+
   def test_channel_message_send_and_reply_use_documented_paths(self) -> None:
     with mock.patch.object(
         backend, "graph_json", return_value={"id": "result"}

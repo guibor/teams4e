@@ -471,6 +471,9 @@
                   (lastUpdatedDateTime . "2026-08-02T07:30:00Z")))
           (setenv "TEAMS4E_TEST_LOG" log)
           (setq process (teams4e--set-read-state 'read t))
+          (should (eq 'read
+                      (car (gethash "chat-1"
+                                    teams4e--read-overrides))))
           (teams4e-test-await process)
           (let ((args (json-parse-string
                        (with-temp-buffer
@@ -483,6 +486,22 @@
                       (car (gethash "chat-1"
                                     teams4e--read-overrides)))))
       (delete-file log))))
+
+(ert-deftest teams4e-read-state-rolls-back-only-current-optimistic-value ()
+  (let* ((teams4e--read-overrides (make-hash-table :test #'equal))
+         (chat '((id . "chat-1")
+                 (lastMessagePreview . ((id . "message-1")))))
+         (snapshot nil))
+    (cl-letf (((symbol-function 'teams4e--refresh-visible-recent) #'ignore))
+      (setq snapshot (teams4e--optimistic-read-state chat 'read))
+      (should (eq 'read (car (gethash "chat-1" teams4e--read-overrides))))
+      (teams4e--rollback-read-state snapshot)
+      (should-not (gethash "chat-1" teams4e--read-overrides))
+      (setq snapshot (teams4e--optimistic-read-state chat 'read))
+      (puthash "chat-1" '(unread . "message-1") teams4e--read-overrides)
+      (teams4e--rollback-read-state snapshot)
+      (should (eq 'unread
+                  (car (gethash "chat-1" teams4e--read-overrides)))))))
 
 (ert-deftest teams4e-error-diagnostics-redact-message-body ()
   (should
@@ -1151,6 +1170,50 @@
                      teams-handle teams-snooze teams-clear-triage
                      teams-jump-capture))
     (should (commandp command))))
+
+(ert-deftest teams4e-compose-mention-members-filter-self-and-invalid ()
+  (let ((teams4e--connected-user-id "self-id")
+        (teams4e--connected-as "self@example.test"))
+    (should
+     (equal
+      '("ada-id")
+      (mapcar
+       #'teams4e-compose--mention-member-id
+       (teams4e-compose--mentionable-members
+        '(((id . "membership-self") (userId . "self-id")
+           (displayName . "Self") (email . "self@example.test"))
+          ((id . "membership-ada") (userId . "ada-id")
+           (displayName . "Ada Lovelace") (email . "ada@example.test"))
+          ((id . "membership-invalid") (displayName . "No ID")))))))))
+
+(ert-deftest teams4e-compose-insert-mention-retains-graph-identity ()
+  (with-temp-buffer
+    (teams4e-compose-mode)
+    (setq teams4e-compose--mentions nil)
+    (cl-letf (((symbol-function 'teams4e-compose--schedule-draft)
+               #'ignore))
+      (teams4e-compose--insert-mentioned-user
+       '((userId . "ada-id") (displayName . "Ada Lovelace"))))
+    (should (equal "@Ada Lovelace " (buffer-string)))
+    (should (equal '("ada-id|Ada Lovelace")
+                   teams4e-compose--mentions))
+    (should (eq (lookup-key teams4e-compose-mode-map (kbd "@"))
+                #'teams4e-compose-at))))
+
+(ert-deftest teams4e-compose-effective-mentions-prunes-edited-placeholders ()
+  (with-temp-buffer
+    (teams4e-compose-mode)
+    (setq teams4e-compose--mentions
+          '("ada-id|Ada" "lovelace-id|Ada Lovelace"
+            "stale-id|Deleted Name"))
+    (should
+     (equal '("lovelace-id|Ada Lovelace" "ada-id|Ada")
+            (teams4e-compose--effective-mentions
+             "@Ada Lovelace, please ask @Ada.")))
+    (should
+     (equal '("lovelace-id|Ada Lovelace")
+            (teams4e-compose--effective-mentions
+             "Please ask @Ada Lovelace.")))))
 
 (ert-deftest teams4e-channel-send-args-preserve-rich-metadata ()
   (should
@@ -1836,8 +1899,6 @@
              ("C" . teams4e-send)
              ("r" . teams4e-mark-read-later)
              ("R" . teams4e-reply)
-             ("f" . teams4e-message-forward)
-             ("F" . teams4e-message-forward)
              ("*" . teams4e-toggle-favorite)
              ("o" . teams4e-open-in-browser)
              ("O" . teams4e-open-in-app)
@@ -1928,39 +1989,6 @@
       (should (equal chat (car captured)))
       (should (equal (teams4e--get chat 'lastMessagePreview)
                      (cadr captured))))))
-
-(ert-deftest teams4e-headers-forward-uses-selected-latest-message ()
-  (let* ((chat (car (teams4e-test-read-json "chats.json")))
-         (teams4e--chats (list chat))
-         (teams4e--active-view 'all)
-         (teams4e--active-query nil)
-         (teams4e--active-filter-name nil)
-         (teams4e--marks (make-hash-table :test #'equal))
-         (teams4e--read-overrides (make-hash-table :test #'equal))
-         (teams4e--favorites (make-hash-table :test #'equal))
-         (teams4e--state-loaded t)
-         callback captured)
-    (with-temp-buffer
-      (teams4e-recent-mode)
-      (teams4e--render-recent)
-      (goto-char (point-min))
-      (cl-letf (((symbol-function 'teams4e--select-chat)
-                 (lambda (fn) (setq callback fn))))
-        (teams4e-message-forward))
-      (should (functionp callback))
-      (cl-letf (((symbol-function 'teams4e--open-compose)
-                 (lambda (target &optional reply-to initial)
-                   (setq captured (list target reply-to initial)))))
-        (funcall callback '((id . "destination"))))
-      (should (equal "destination"
-                     (teams4e--get (car captured) 'id)))
-      (should-not (cadr captured))
-      (should (string-match-p "Forwarded from" (caddr captured)))
-      (should (string-match-p
-               (regexp-quote
-                (teams4e--message-body
-                 (teams4e--get chat 'lastMessagePreview)))
-               (caddr captured))))))
 
 (ert-deftest teams4e-chat-selection-supports-one-row-and-visible-set ()
   (let* ((teams4e--chats (teams4e-test-read-json "chats.json"))
@@ -2082,7 +2110,6 @@
               ("M-j" . teams4e-chat-next-message)
               ("M-k" . teams4e-chat-previous-message)
               ("R" . teams4e-reply)
-              ("F" . teams4e-message-forward)
               ("c" . teams4e-send)
               ("C" . teams4e-send)
               ("i" . teams4e-chat-run-headers-command)
@@ -2121,7 +2148,6 @@
               ("M-j" . teams4e-chat-next-message)
               ("M-k" . teams4e-chat-previous-message)
               ("R" . teams4e-channel-reply)
-              ("F" . teams4e-message-forward)
               ("M-a" . teams4e-attachment-download)
               ("c" . teams4e-channel-compose)
               ("C" . teams4e-channel-compose)
@@ -3220,7 +3246,7 @@
             (setq teams4e-compose--attachments '("/tmp/report.pdf")
                   teams4e-compose--mentions '("ada-id|Ada")
                   teams4e-compose--content-type "html")
-            (teams4e--open-compose target nil "Forwarded replacement")
+            (teams4e--open-compose target nil "Replacement text")
             (should (eq buffer (get-buffer name)))
             (should (equal "Existing live draft" (buffer-string)))
             (should (equal '("/tmp/report.pdf")
@@ -3252,7 +3278,7 @@
                        (lambda (target-buffer &rest _args)
                          (setq buffer target-buffer)
                          (set-buffer target-buffer))))
-              (teams4e--open-compose target nil "Forwarded replacement")
+              (teams4e--open-compose target nil "Replacement text")
               (should (eq buffer (get-buffer name)))
               (should (equal "Recovered disk draft" (buffer-string)))
               (teams4e-compose--delete-draft))))

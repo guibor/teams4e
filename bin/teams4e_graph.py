@@ -2435,11 +2435,15 @@ def uploaded_reference_attachments(
 def parse_mention_specs(values: list[str]) -> list[tuple[str, str]]:
   """Parse repeated USER-ID|DISPLAY-NAME mention specifications."""
   mentions: list[tuple[str, str]] = []
+  seen: set[tuple[str, str]] = set()
   for value in values:
     user_id, separator, display_name = value.partition("|")
     if not separator or not user_id.strip() or not display_name.strip():
       raise BackendError("Mention values must use USER-ID|DISPLAY-NAME")
-    mentions.append((user_id.strip(), display_name.strip()))
+    mention = (user_id.strip(), display_name.strip())
+    if mention not in seen:
+      mentions.append(mention)
+      seen.add(mention)
   return mentions
 
 
@@ -2467,7 +2471,7 @@ def outgoing_body(
       raise BackendError(
           f"Mention placeholder {literal!r} is missing from the message body"
       )
-    content = content.replace(escaped_literal, tag, 1)
+    content = content.replace(escaped_literal, tag)
     payload_mentions.append(
         {
             "id": index,

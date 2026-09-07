@@ -61,7 +61,7 @@ The package is not affiliated with or supported by Microsoft.
 | Meetings | Upcoming meetings, intervals, location, response state, participants, conflicts, RSVP, join, and propose-new-time |
 | Capture | Compact or full Org capture, complete Markdown export, clipboard copy, and optional Agent Shell analysis |
 | Scale | Bounded Graph reads, asynchronous enrichment, one persistent backend, SQLite search cache, and cache-first opening |
-| Editing | Native Emacs compose buffers for new messages, replies, forwards, mentions, attachments, and Markdown-like rich text |
+| Editing | Native compose buffers with chat-aware `@` mentions, replies, attachments, and Markdown-like rich text |
 
 Chats, group chats, one-to-one conversations, meeting chats, teams, channels,
 channel posts, and replies all use the same Emacs workflow.
@@ -253,7 +253,6 @@ turn the reader into a separate mini-application.
 | `r` or `i` | Queue mark-read |
 | `R` | Reply |
 | `c` or `C` | Compose a new message |
-| `f` or `F` | Forward the selected or latest message |
 | `o` / `O` | Open in browser / native Teams app |
 | `b` | Choose a bookmark |
 | `U`, `b u`, or `M-F` | Toggle unread-only on top of the current view |
@@ -271,6 +270,10 @@ turn the reader into a separate mini-application.
 | `G` / `L` | Load complete history / load more |
 | `M-j` / `M-k` | Next/previous message in the transcript |
 | `q` | Close the reader or restore the previous layout |
+
+In a chat compose buffer, type `@` to choose one of the conversation's
+participants and insert a real Teams mention. `C-c C-m` invokes the same
+command. Use `C-q @` when you need a literal at-sign instead.
 
 Compose buffers use `C-c C-c` to send and `C-c C-k` to abort.
 Sending preserves the conversation's prior read/unread state.

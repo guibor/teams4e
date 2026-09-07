@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Made read/unread actions optimistic: the inbox updates immediately while
+  Graph reconciles in the background, with race-safe rollback on failure.
+- Removed the unused message-forwarding command and its keybindings.
+- Added chat-aware mention completion: typing `@` in compose lazily loads and
+  chooses a current participant, while repeated occurrences use one valid
+  Graph mention payload.
 - Documented the primary deployment model: reuse an already approved Microsoft
   365 OAuth owner through a token command, read-only credential record, or
   custom MCP/broker backend adapter, without claiming to bypass tenant consent.
