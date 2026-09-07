@@ -3318,19 +3318,23 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
 (defun teams4e-compose--mention-member-id (member)
   "Return MEMBER's directory user ID."
   (or (teams4e--get member 'userId)
-      (teams4e--get member 'id)
-      (teams4e--dig member 'user 'id)))
+      (teams4e--dig member 'user 'id)
+      (and (or (teams4e--get member 'mail)
+               (teams4e--get member 'userPrincipalName))
+           (teams4e--get member 'id))))
 
 (defun teams4e-compose--mention-member-name (member)
   "Return MEMBER's visible mention name."
   (or (teams4e--get member 'displayName)
       (teams4e--get member 'email)
+      (teams4e--get member 'mail)
       (teams4e--get member 'userPrincipalName)))
 
 (defun teams4e-compose--current-user-member-p (member)
   "Return non-nil when MEMBER is the connected account."
   (let ((user-id (teams4e-compose--mention-member-id member))
         (email (or (teams4e--get member 'email)
+                   (teams4e--get member 'mail)
                    (teams4e--get member 'userPrincipalName))))
     (or (and (stringp teams4e--connected-user-id)
              (stringp user-id)
@@ -3359,6 +3363,7 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
   "Return a distinct completion label for MEMBER."
   (let ((name (teams4e-compose--mention-member-name member))
         (email (or (teams4e--get member 'email)
+                   (teams4e--get member 'mail)
                    (teams4e--get member 'userPrincipalName))))
     (if (and (stringp email)
              (not (string-empty-p email))
@@ -3471,7 +3476,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
          (sort (delete-dups (append teams4e-compose--mentions nil))
                (lambda (left right)
                  (> (length (or (teams4e-compose--mention-spec-name left) ""))
-                    (length (or (teams4e-compose--mention-spec-name right) "")))))
+                    (length (or (teams4e-compose--mention-spec-name right) ""))))))
         (remaining message)
         result)
     (dolist (spec candidates (nreverse result))
@@ -3481,7 +3486,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
         (push spec result)
         (setq remaining
               (replace-regexp-in-string
-               (regexp-quote literal) "" remaining t t)))))))
+               (regexp-quote literal) "" remaining t t))))))
 
 (defun teams4e-compose-toggle-rich ()
   "Toggle compose between plain text and direct Teams HTML mode."

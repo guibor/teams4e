@@ -2121,7 +2121,6 @@
               ("!" . teams4e-chat-run-headers-command)
               ("?" . teams4e-chat-run-headers-command)
               ("r" . teams4e-chat-run-headers-command)
-              ("f" . teams4e-chat-run-headers-command)
               ("M" . teams4e-chat-run-headers-command)
               ("T" . teams4e-chat-run-headers-command)
               ("X" . teams4e-chat-run-headers-command)
