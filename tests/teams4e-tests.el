@@ -1890,6 +1890,10 @@
              ("?" . teams4e-mark-unread-later)
              ("u" . teams4e-unmark)
              ("U" . teams-unread-filter)
+             ("F" . teams-unread-filter)
+             ("z" . teams4e-snooze-quick)
+             ("Z" . teams4e-snooze)
+             ("M-U" . teams4e-undo-action)
              ("M" . teams4e-toggle-selection)
              ("T" . teams4e-toggle-visible-selections)
              ("X" . teams4e-bulk-action)
@@ -2126,7 +2130,11 @@
               ("X" . teams4e-chat-run-headers-command)
               ("u" . teams4e-chat-run-headers-command)
               ("U" . teams4e-chat-run-headers-command)
+              ("F" . teams4e-chat-run-headers-command)
               ("x" . teams4e-chat-run-headers-command)
+              ("z" . teams4e-chat-run-headers-command)
+              ("Z" . teams4e-chat-run-headers-command)
+              ("M-U" . teams4e-chat-run-headers-command)
               ("q" . teams4e-chat-view-quit)
               ("o" . teams4e-open-in-browser)
               ("O" . teams4e-open-in-app)
@@ -3667,6 +3675,74 @@
           (should-not (teams4e--snoozed-p new)))
       (delete-directory directory t))))
 
+(ert-deftest teams4e-snooze-choices-match-the-tui-workday ()
+  (let* ((teams4e-workday-start "07:30")
+         (teams4e-workday-end "18:15")
+         (before-end (encode-time 0 0 16 4 9 2026))
+         (after-end (encode-time 0 0 20 4 9 2026)))
+    (should (= 600
+               (round (float-time
+                       (time-subtract
+                        (teams4e--snooze-choice-time ?m before-end)
+                        before-end)))))
+    (should (equal "2026-09-04 18:15"
+                   (format-time-string
+                    "%Y-%m-%d %H:%M"
+                    (teams4e--snooze-choice-time ?e before-end))))
+    (should (equal "2026-09-05 07:30"
+                   (format-time-string
+                    "%Y-%m-%d %H:%M"
+                    (teams4e--snooze-choice-time ?e after-end))))
+    (should (equal "2026-09-05 07:30"
+                   (format-time-string
+                    "%Y-%m-%d %H:%M"
+                    (teams4e--snooze-choice-time ?t before-end))))
+    (should (equal "2026-09-11 07:30"
+                   (format-time-string
+                    "%Y-%m-%d %H:%M"
+                    (teams4e--snooze-choice-time ?w before-end))))
+    (should-not (teams4e--snooze-choice-time ?u before-end))))
+
+(ert-deftest teams4e-quick-snooze-uses-configured-duration ()
+  (let ((teams4e-default-snooze-minutes 45)
+        (now (encode-time 0 0 10 4 9 2026))
+        captured)
+    (cl-letf (((symbol-function 'current-time) (lambda () now))
+              ((symbol-function 'teams4e--apply-snooze-time)
+               (lambda (time) (setq captured time))))
+      (teams4e-snooze-quick))
+    (should (= (* 45 60)
+               (round (float-time (time-subtract captured now)))))))
+
+(ert-deftest teams4e-snoozed-chats-are-exclusive-to-snoozed-views ()
+  (let* ((chat '((id . "sleeping")
+                 (chatType . "group")
+                 (lastMessagePreview
+                  . ((id . "message-1")
+                     (createdDateTime . "2099-09-04T10:00:00Z")))))
+         (until "2099-09-04T18:15:00+0000")
+         (teams4e--snoozed (make-hash-table :test #'equal))
+         (teams4e--handled (make-hash-table :test #'equal))
+         (teams4e--muted (make-hash-table :test #'equal))
+         (teams4e--favorites (make-hash-table :test #'equal))
+         (teams4e--read-overrides (make-hash-table :test #'equal))
+         (teams4e--state-loaded t)
+         (teams4e--active-view 'all)
+         (teams4e--active-query 'snoozed)
+         (teams4e--active-filter-name "Snoozed"))
+    (puthash "sleeping" until teams4e--snoozed)
+    (should-not (teams4e--built-in-view-chat-p chat 'all))
+    (should-not (teams4e--built-in-view-chat-p chat 'unread))
+    (should (teams4e--built-in-view-chat-p chat 'snoozed))
+    (should-not (teams4e--query-chat-p chat "unread"))
+    (should (teams4e--query-chat-p chat "snoozed unread"))
+    (should (eq teams4e--snoozed-recent-format
+                (teams4e--current-recent-format)))
+    (should (equal
+             (teams4e--format-date until t)
+             (substring-no-properties
+              (aref (teams4e--recent-columns chat "") 1))))))
+
 (ert-deftest teams4e-attention-query-supports-simple-or-clauses ()
   (let* ((direct '((id . "direct") (chatType . "oneOnOne")))
          (important '((id . "important")
@@ -4328,9 +4404,10 @@
         (should (string-match-p "  Hello world" (buffer-string)))
         (should-not (string-match-p "\\*\\*world\\*\\*" (buffer-string)))))))
 
-(ert-deftest teams4e-fresh-headers-map-has-unread-toggle ()
-  (should (eq (lookup-key teams4e-recent-mode-map (kbd "U"))
-              #'teams-unread-filter)))
+(ert-deftest teams4e-fresh-headers-map-has-direct-unread-toggle ()
+  (dolist (key '("F" "U"))
+    (should (eq (lookup-key teams4e-recent-mode-map (kbd key))
+                #'teams-unread-filter))))
 
 (ert-deftest teams4e-unread-filter-aliases-toggle ()
   (should (eq (indirect-function 'teams-unread-filter)

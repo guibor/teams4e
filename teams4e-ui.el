@@ -36,9 +36,14 @@
 ;;;###autoload
 (autoload 'teams4e-toggle-unread-filter "teams4e-advanced"
           "Toggle unread-only filtering on the active inbox view." t)
+(autoload 'teams4e-snooze-quick "teams4e-advanced"
+          "Snooze the current Teams conversation for the default duration." t)
+(autoload 'teams4e-snooze "teams4e-advanced"
+          "Choose a Teams conversation snooze wake time." t)
 (defalias 'teams-unread-filter #'teams4e-toggle-unread-filter)
 (declare-function teams4e--refresh-current-view "advanced")
 (declare-function teams4e--meeting-view-p "advanced")
+(declare-function teams4e--snoozed-view-p "advanced")
 (declare-function teams4e--render-channel-thread "advanced")
 (declare-function teams4e-thread-next "advanced")
 (declare-function teams4e-thread-previous "advanced")
@@ -182,6 +187,15 @@
    ("Star" 4 nil)
    ("Last message" 0 nil)]
   "Calendar-first aligned columns used by meeting-only Teams views.")
+
+(defconst teams4e--snoozed-recent-format
+  [("Status" 6 nil)
+   ("Wake time" 16 t)
+   ("Type" 8 t)
+   ("Conversation" 28 t)
+   ("Star" 4 nil)
+   ("Last message" 0 nil)]
+  "Wake-time columns used by the dedicated Snoozed view.")
 
 (defvar-local teams4e--process nil)
 (defvar-local teams4e--chat nil)
@@ -2017,11 +2031,17 @@ Return non-nil when a linked reader exists, even when it already matches."
   (and (fboundp 'teams4e--meeting-view-p)
        (teams4e--meeting-view-p)))
 
+(defun teams4e--snoozed-column-visible-p ()
+  "Return non-nil when the active headers view is snoozed-only."
+  (and (fboundp 'teams4e--snoozed-view-p)
+       (teams4e--snoozed-view-p)))
+
 (defun teams4e--current-recent-format ()
   "Return the headers format appropriate for the active Teams view."
-  (if (teams4e--meeting-column-visible-p)
-      teams4e--meeting-recent-format
-    teams4e--recent-format))
+  (cond
+   ((teams4e--meeting-column-visible-p) teams4e--meeting-recent-format)
+   ((teams4e--snoozed-column-visible-p) teams4e--snoozed-recent-format)
+   (t teams4e--recent-format)))
 
 (defun teams4e--recent-columns (chat status)
   "Build the view-sensitive headers columns for CHAT with STATUS."
@@ -2033,7 +2053,10 @@ Return non-nil when a linked reader exists, even when it already matches."
          (date
           (propertize
            (teams4e--format-date
-            (teams4e--last-message-date-time chat) t)
+            (if (teams4e--snoozed-column-visible-p)
+                (teams4e--snoozed-until chat)
+              (teams4e--last-message-date-time chat))
+            t)
            'face face))
          (type (propertize (teams4e--chat-type-label chat) 'face type-face))
          (label (propertize (teams4e--chat-label chat) 'face face))
@@ -2339,6 +2362,9 @@ omitted by the chat-list response; explicit meeting views use this path."
     (define-key map (kbd "J") #'teams4e-preview-scroll-down)
     (define-key map (kbd "K") #'teams4e-preview-scroll-up)
     (define-key map (kbd "U") #'teams-unread-filter)
+    (define-key map (kbd "F") #'teams-unread-filter)
+    (define-key map (kbd "z") #'teams4e-snooze-quick)
+    (define-key map (kbd "Z") #'teams4e-snooze)
     (define-key map (kbd "C-+") #'teams4e-index-grow)
     (define-key map (kbd "C-=") #'teams4e-index-grow)
     (define-key map (kbd "C--") #'teams4e-index-shrink)
@@ -3900,6 +3926,7 @@ When DATE-ONLY is non-nil, omit the time of day."
     (define-key map (kbd "i") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "I") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "U") #'teams4e-chat-run-headers-command)
+    (define-key map (kbd "F") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "!") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "?") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "*") #'teams4e-chat-run-headers-command)
@@ -3928,6 +3955,7 @@ When DATE-ONLY is non-nil, omit the time of day."
     (define-key map (kbd "u") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "x") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "z") #'teams4e-chat-run-headers-command)
+    (define-key map (kbd "Z") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "M-U") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "a") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "/") #'teams4e-chat-run-headers-command)

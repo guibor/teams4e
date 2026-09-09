@@ -280,24 +280,31 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
     (teams4e--set-mode-line "idle")))
 
 (defun teams4e--built-in-view-chat-p (chat view)
-  "Return whether CHAT belongs to built-in inbox VIEW."
-  (pcase view
-    ('inbox (and (not (teams4e--muted-p chat))
-                 (not (teams4e--triaged-p chat))))
-    ('all t)
-    ('attention (and (not (teams4e--muted-p chat))
-                     (not (teams4e--triaged-p chat))
-                     (teams4e--attention-p chat)))
-    ('muted (teams4e--muted-p chat))
-    ('unread (teams4e--unread-p chat))
-    ('favorites (teams4e--favorite-p chat))
-    ('handled (teams4e--handled-p chat))
-    ('snoozed (teams4e--snoozed-p chat))
-    ('direct (equal (teams4e--get chat 'chatType) "oneOnOne"))
-    ('group (equal (teams4e--get chat 'chatType) "group"))
-    ('meeting (equal (teams4e--get chat 'chatType) "meeting"))
-    ('upcoming (teams4e--meeting-upcoming-p chat))
-    (_ t)))
+  "Return whether CHAT belongs to built-in inbox VIEW.
+
+Active snoozes are absent from every ordinary view and appear only in the
+`snoozed' view, matching the terminal client."
+  (let ((snoozed (teams4e--snoozed-p chat)))
+    (if (eq view 'snoozed)
+        snoozed
+      (and
+       (not snoozed)
+       (pcase view
+         ('inbox (and (not (teams4e--muted-p chat))
+                      (not (teams4e--handled-p chat))))
+         ('all t)
+         ('attention (and (not (teams4e--muted-p chat))
+                          (not (teams4e--handled-p chat))
+                          (teams4e--attention-p chat)))
+         ('muted (teams4e--muted-p chat))
+         ('unread (teams4e--unread-p chat))
+         ('favorites (teams4e--favorite-p chat))
+         ('handled (teams4e--handled-p chat))
+         ('direct (equal (teams4e--get chat 'chatType) "oneOnOne"))
+         ('group (equal (teams4e--get chat 'chatType) "group"))
+         ('meeting (equal (teams4e--get chat 'chatType) "meeting"))
+         ('upcoming (teams4e--meeting-upcoming-p chat))
+         (_ t))))))
 
 (defconst teams4e--built-in-view-symbols
   '(inbox all attention muted unread favorites handled snoozed
@@ -388,8 +395,18 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
                 (teams4e--query-text-match-p term preview))))))
     (if negated (not matched) matched)))
 
+(defun teams4e--positive-snoozed-term-p (term)
+  "Return non-nil when TERM explicitly requests snoozed conversations."
+  (and (stringp term)
+       (not (string-prefix-p "-" term))
+       (string-equal (downcase term) "snoozed")))
+
 (defun teams4e--query-chat-p (chat query)
-  "Return whether CHAT matches bookmark/filter QUERY."
+  "Return whether CHAT matches bookmark/filter QUERY.
+
+Each textual clause excludes active snoozes unless it explicitly contains the
+`snoozed' term.  Thus `snoozed unread' works while ordinary custom views keep
+sleeping conversations out of the way."
   (cond
    ((and (symbolp query)
          (memq query teams4e--built-in-view-symbols))
@@ -399,9 +416,13 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
    ((stringp query)
     (seq-some
      (lambda (clause)
-       (seq-every-p
-        (lambda (term) (teams4e--query-term-chat-p chat term))
-        (split-string-and-unquote (string-trim clause))))
+       (let ((terms (split-string-and-unquote (string-trim clause))))
+         (and
+          (or (seq-some #'teams4e--positive-snoozed-term-p terms)
+              (not (teams4e--snoozed-p chat)))
+          (seq-every-p
+           (lambda (term) (teams4e--query-term-chat-p chat term))
+           terms))))
      (split-string query "|" t)))
    (t t)))
 
@@ -411,6 +432,8 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
   (and
    (or (teams4e--meeting-view-p)
        (not (teams4e--message-less-meeting-p chat)))
+   (or (teams4e--snoozed-view-p)
+       (not (teams4e--snoozed-p chat)))
    (if teams4e--active-query
        (teams4e--query-chat-p chat teams4e--active-query)
      (teams4e--built-in-view-chat-p
@@ -441,6 +464,27 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
   (if teams4e--active-query
       (teams4e--meeting-only-query-p teams4e--active-query)
     (memq teams4e--active-view '(meeting upcoming))))
+
+(defun teams4e--snoozed-only-query-p (query)
+  "Return non-nil when every QUERY clause explicitly requests snoozed chats."
+  (cond
+   ((eq query 'snoozed) t)
+   ((stringp query)
+    (let ((clauses (split-string query "|" t)))
+      (and clauses
+           (seq-every-p
+            (lambda (clause)
+              (seq-some #'teams4e--positive-snoozed-term-p
+                        (split-string-and-unquote (string-trim clause))))
+            clauses))))
+   (t nil)))
+
+(defun teams4e--snoozed-view-p ()
+  "Return non-nil when the active headers view contains only snoozed chats."
+  (teams4e--ensure-active-view)
+  (if teams4e--active-query
+      (teams4e--snoozed-only-query-p teams4e--active-query)
+    (eq teams4e--active-view 'snoozed)))
 
 (defun teams4e--meeting-view-header-summary (visible)
   "Return compact next-meeting, conflict, and response context for VISIBLE."
@@ -481,12 +525,22 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
                   (format " - %d calendar unavailable" calendar-errors)
                 "")))))
 
+(defun teams4e--snoozed-wakes-before-p (left right)
+  "Return non-nil when LEFT wakes before RIGHT."
+  (let ((left-time (date-to-time (teams4e--snoozed-until left)))
+        (right-time (date-to-time (teams4e--snoozed-until right))))
+    (or (time-less-p left-time right-time)
+        (and (time-equal-p left-time right-time)
+             (string< (teams4e--chat-id left)
+                      (teams4e--chat-id right))))))
+
 (defun teams4e--order-visible-chats (chats)
   "Return a newly sorted copy of visible CHATS for the active view."
   (sort (copy-sequence chats)
-        (if (teams4e--meeting-view-p)
-            #'teams4e--meeting-starts-before-p
-          #'teams4e--chat-updated-p)))
+        (cond
+         ((teams4e--snoozed-view-p) #'teams4e--snoozed-wakes-before-p)
+         ((teams4e--meeting-view-p) #'teams4e--meeting-starts-before-p)
+         (t #'teams4e--chat-updated-p))))
 
 (defun teams4e--active-filter-label ()
   "Return the display label for the active inbox filter."
@@ -589,51 +643,103 @@ summary.  ERROR-CALLBACK follows `teams4e--run-json'."
              (if enabled "Handled until a new message:" "Returned to inbox:")
              (teams4e--chat-label chat))))
 
-(defun teams4e--time-at-local-hour (base hour)
-  "Return BASE's local calendar date at HOUR:00."
-  (pcase-let ((`(,_second ,_minute ,_hour ,day ,month ,year . ,_)
-               (decode-time base)))
-    (encode-time 0 0 hour day month year)))
+(defun teams4e--parse-local-clock (value fallback-hour)
+  "Parse local HH:MM VALUE, falling back to FALLBACK-HOUR:00."
+  (if (and (stringp value)
+           (string-match
+            "\\`\\([01]?[0-9]\\|2[0-3]\\):\\([0-5][0-9]\\)\\'"
+            (string-trim value)))
+      (cons (string-to-number (match-string 1 (string-trim value)))
+            (string-to-number (match-string 2 (string-trim value))))
+    (cons fallback-hour 0)))
+
+(defun teams4e--time-at-local-clock (base clock fallback-hour)
+  "Return BASE's local date at CLOCK, using FALLBACK-HOUR when invalid."
+  (pcase-let* ((`(,_second ,_minute ,_hour ,day ,month ,year . ,_)
+                (decode-time base))
+               (`(,hour . ,minute)
+                (teams4e--parse-local-clock clock fallback-hour)))
+    (encode-time 0 minute hour day month year)))
+
+(defun teams4e--snooze-choice-time (key &optional now)
+  "Return the wake time selected by KEY at NOW, or nil for unsnooze."
+  (setq now (or now (current-time)))
+  (pcase key
+    (?m (time-add now (seconds-to-time (* 10 60))))
+    (?1 (time-add now (seconds-to-time (* 60 60))))
+    (?3 (time-add now (seconds-to-time (* 3 60 60))))
+    (?e (let ((end (teams4e--time-at-local-clock
+                    now teams4e-workday-end 18)))
+          (if (time-less-p now end)
+              end
+            (teams4e--time-at-local-clock
+             (time-add now (days-to-time 1))
+             teams4e-workday-start 7))))
+    (?t (teams4e--time-at-local-clock
+         (time-add now (days-to-time 1)) teams4e-workday-start 7))
+    (?w (teams4e--time-at-local-clock
+         (time-add now (days-to-time 7)) teams4e-workday-start 7))
+    (?d (require 'org)
+        (org-read-date nil t nil "Snooze Teams chat until: "))
+    (?u nil)
+    (_ (user-error "Unknown Teams snooze choice"))))
 
 (defun teams4e--read-snooze-time ()
-  "Prompt for a snooze expiry and return a time value or nil to clear it."
-  (let* ((choice
-          (completing-read
-           "Snooze Teams chat until: "
-           '("1 hour" "Tomorrow 09:00" "Next week 09:00"
-             "Choose date/time..." "Clear snooze")
-           nil t))
-         (now (current-time)))
-    (pcase choice
-      ("1 hour" (time-add now (seconds-to-time 3600)))
-      ("Tomorrow 09:00"
-       (teams4e--time-at-local-hour
-        (time-add now (days-to-time 1)) 9))
-      ("Next week 09:00"
-       (teams4e--time-at-local-hour
-        (time-add now (days-to-time 7)) 9))
-      ("Choose date/time..."
-       (require 'org)
-       (org-read-date nil t nil "Snooze Teams chat until: "))
-      (_ nil))))
+  "Prompt for a TUI-style snooze expiry, returning nil to unsnooze."
+  (teams4e--snooze-choice-time
+   (read-char-choice
+    (concat "Snooze: [m] 10m  [1] 1h  [3] 3h  [e] workday  "
+            "[t] tomorrow  [w] week  [d] date  [u] unsnooze: ")
+    '(?m ?1 ?3 ?e ?t ?w ?d ?u))))
 
-(defun teams4e-snooze ()
-  "Snooze the current Teams conversation using one local expiry timestamp."
-  (interactive)
+(defun teams4e--neighbor-visible-chat-id (chat-id)
+  "Return the next stable visible chat ID adjacent to CHAT-ID."
+  (let* ((ids (mapcar #'teams4e--chat-id
+                      (teams4e--order-visible-chats
+                       (seq-filter #'teams4e--view-chat-p teams4e--chats))))
+         (index (seq-position ids chat-id #'equal)))
+    (when index
+      (or (nth (1+ index) ids)
+          (and (> index 0) (nth (1- index) ids))))))
+
+(defun teams4e--apply-snooze-time (time)
+  "Apply snooze wake TIME to the current chat and keep selection useful."
   (teams4e--load-state)
   (let* ((chat (or (teams4e--chat-at-point)
                    (user-error "No Teams chat here")))
-         (time (teams4e--read-snooze-time))
+         (chat-id (teams4e--chat-id chat))
+         (next-id (teams4e--neighbor-visible-chat-id chat-id))
          (until (and time (format-time-string "%Y-%m-%dT%H:%M:%S%z" time))))
     (teams4e--set-snoozed-local chat until)
     (teams4e--save-state)
-    (teams4e--refresh-visible-recent)
+    (let ((teams4e--inhibit-reader-follow t))
+      (teams4e--refresh-visible-recent)
+      (when-let ((buffer (teams4e--recent-buffer)))
+        (with-current-buffer buffer
+          (unless (teams4e--view-chat-p chat)
+            (teams4e--recent-restore-selection next-id)))))
+    (when-let ((buffer (teams4e--recent-buffer)))
+      (with-current-buffer buffer
+        (teams4e--follow-selected-chat)))
     (if until
         (message "Snoozed %s until %s"
                  (teams4e--chat-label chat)
                  (format-time-string "%a %H:%M" time))
-      (message "Cleared snooze for %s"
-               (teams4e--chat-label chat)))))
+      (message "Unsnoozed %s" (teams4e--chat-label chat)))))
+
+(defun teams4e-snooze-quick ()
+  "Snooze the current conversation for `teams4e-default-snooze-minutes'."
+  (interactive)
+  (teams4e--apply-snooze-time
+   (time-add
+    (current-time)
+    (seconds-to-time
+     (* 60 (max 1 teams4e-default-snooze-minutes))))))
+
+(defun teams4e-snooze ()
+  "Choose a wake time and snooze or unsnooze the current conversation."
+  (interactive)
+  (teams4e--apply-snooze-time (teams4e--read-snooze-time)))
 
 (defun teams4e-clear-triage ()
   "Clear handled and snoozed state for the current Teams conversation."
@@ -3765,7 +3871,9 @@ shared by the terminal Teams client."
          ("u" . teams4e-unmark)
          ("x" . teams4e-execute-marks)
          ("U" . teams-unread-filter)
-         ("z" . teams4e-undo-action)
+         ("F" . teams-unread-filter)
+         ("z" . teams4e-snooze-quick)
+         ("Z" . teams4e-snooze)
          ("M-U" . teams4e-undo-action)
          ("/" . teams4e-search)
          ("s" . teams4e-filter)
@@ -3790,7 +3898,7 @@ shared by the terminal Teams client."
 
 (defconst teams4e--chat-header-mirror-keys
   '("g" "n" "p" "[" "]" "i" "I" "!" "?" "r" "M-u" "*"
-    "M" "T" "X" "u" "U" "x" "z" "M-U" "/" "s" "b" "B"
+    "M" "T" "X" "u" "U" "F" "x" "z" "Z" "M-U" "/" "s" "b" "B"
     "v" "V" "S" "H" "J" "K" "C-+" "C-=" "C--")
   "Headers keys delegated from the singleton Teams chat reader.")
 
@@ -3974,7 +4082,9 @@ shared by the terminal Teams client."
           ("g" "sync" teams4e-sync)
           ("G" "sync all" teams4e-sync-all)
           ("o" "offline" teams4e-toggle-offline)
-          ("S" "status" teams4e-status)]
+          ("S" "status" teams4e-status)
+          ("z" "snooze default" teams4e-snooze-quick)
+          ("Z" "choose snooze" teams4e-snooze)]
          ["Bulk"
           ("t" "toggle chat" teams4e-toggle-selection)
           ("T" "toggle visible" teams4e-toggle-visible-selections)
@@ -4006,8 +4116,10 @@ shared by the terminal Teams client."
     "O" "Teams app"
     "/" "cache/server search"
     "x" "execute marks"
-    "U" "unmark all"
-    "z" "undo"
+    "U" "unread only"
+    "z" "snooze default"
+    "Z" "choose snooze"
+    "M-U" "undo"
     "H" "help")
   (which-key-add-keymap-based-replacements
     teams4e-action-map

@@ -255,7 +255,10 @@ turn the reader into a separate mini-application.
 | `c` or `C` | Compose a new message |
 | `o` / `O` | Open in browser / native Teams app |
 | `b` | Choose a bookmark |
-| `U`, `b u`, or `M-F` | Toggle unread-only on top of the current view |
+| `F` | Toggle unread-only on top of the current view |
+| `U`, `b u`, or `M-F` | Compatibility aliases for unread-only |
+| `z` / `Z` | Snooze for the default duration / choose a wake time |
+| `M-U` | Undo the last completed action |
 | `m` | Deferred-mark prefix |
 | `x` | Apply deferred marks |
 | `M` / `T` | Select one / all visible conversations |
@@ -289,16 +292,26 @@ that need synchronization.
 | Bookmark | View | Order |
 | --- | --- | --- |
 | `b i` | Relevant inbox | Newest message first |
-| `b a` | All chats; clear overlays | Newest message first |
+| `b a` | All active chats; clear overlays | Newest message first |
 | `b u` | Toggle unread-only in the current view | Preserve current order |
+| `b s` | Snoozed chats, with wake times | Earliest wake first |
 | `b t` | Activity today in local time | Newest message first |
 | `b 2` | Activity in the last 24 hours | Newest message first |
 | `b w` | Activity in the last 7 days | Newest message first |
 | `b m` | Upcoming and active meetings | Earliest start first |
 | `b M` | All meeting chats | Earliest known start first |
 
-A normal inbox excludes muted, handled-current, and actively snoozed
-conversations. `b a` is the explicit unfiltered view.
+Active snoozes are hidden from every ordinary view, including All and any
+unread-only overlay. `b s` is the explicit Snoozed view; it replaces the
+message-time column with each conversation's wake time.
+
+`z` applies `teams4e-default-snooze-minutes` immediately (three hours by
+default). `Z` offers 10 minutes, one hour, three hours, end of workday,
+tomorrow morning, next week, a custom date/time, and unsnooze. Tomorrow and
+next week use `teams4e-workday-start` (07:00 by default); end of workday uses
+`teams4e-workday-end` (18:00 by default) and wakes the next morning when the
+workday has already ended. Snoozing is local, persistent, and does not change
+Teams read state.
 
 Queries support terms such as `unread`, `favorite`,
 `mentioned`, `attachment`, `type:meeting`,

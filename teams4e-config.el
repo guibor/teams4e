@@ -475,11 +475,30 @@ when moving over a chat whose last-update marker has not changed."
   :type 'file
   :group 'teams4e)
 
+(defcustom teams4e-default-snooze-minutes 180
+  "Minutes used by the quick `teams4e-snooze-quick' command."
+  :type 'natnum
+  :group 'teams4e)
+
+(defcustom teams4e-workday-start "07:00"
+  "Local wake time used by tomorrow and next-week snooze choices."
+  :type 'string
+  :group 'teams4e)
+
+(defcustom teams4e-workday-end "18:00"
+  "Local wake time used by the end-of-workday snooze choice.
+
+After this time, end-of-workday snooze wakes at `teams4e-workday-start' on
+the following day."
+  :type 'string
+  :group 'teams4e)
+
 (defcustom teams4e-default-view 'inbox
   "Built-in view selected when a new Teams inbox buffer is created.
 
-  The `inbox' view excludes muted, handled-current, and actively snoozed chats.
-  The `all' view bypasses that local triage suppression."
+  Active snoozes appear only in the dedicated `snoozed' view.  The `inbox'
+  view also excludes muted and handled-current chats; `all' includes those
+  other locally suppressed chats but continues to omit active snoozes."
   :type '(choice (const :tag "Relevant inbox" inbox)
                  (const :tag "All chats" all)
                  (const :tag "Needs attention" attention)

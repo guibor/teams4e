@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Matched the terminal client's snooze workflow: `z` uses a configurable
+  default duration, `Z` offers short/workday/custom choices, and `b s` shows
+  wake-sorted snoozed chats that stay out of every ordinary and unread view.
+- Added `F` as the direct unread-only toggle while retaining `U`, `b u`, and
+  `M-F` as compatibility aliases.
 - Made read/unread actions optimistic: the inbox updates immediately while
   Graph reconciles in the background, with race-safe rollback on failure.
 - Removed the unused message-forwarding command and its keybindings.

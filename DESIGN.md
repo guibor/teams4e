@@ -106,10 +106,13 @@ Main entry points:
 
 - `teams4e-bookmark-jump`: apply a configured view/query.
 - `teams4e-toggle-unread-filter`: reversibly toggle the independent unread
-  overlay used by `U`, `b u`, and `M-F` without replacing the active
-  bookmark/query; All Chats clears it.
+  overlay used directly by `F` (with `U`, `b u`, and `M-F` retained as aliases)
+  without replacing the active bookmark/query; All Chats clears it.
+- `teams4e-snooze-quick` / `teams4e-snooze`: apply the terminal-compatible
+  default or key-selected wake time using the existing persisted timestamp.
 - `teams4e--query-chat-p`: resolve known built-in view symbols before callable
-  predicates, then evaluate custom functions or textual query clauses.
+  predicates, then evaluate custom functions or textual query clauses. Active
+  snoozes are excluded unless a clause explicitly requests `snoozed`.
 - `teams4e-execute-marks`: apply deferred row actions serially.
 - `teams4e-bulk-action`: apply one operation to selected conversations.
 - `teams4e-sync`: refresh the local SQLite cache.

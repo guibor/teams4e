@@ -19,11 +19,17 @@
     (evil-define-key* '(normal motion) teams4e-recent-mode-map
       (kbd "b") #'teams4e-bookmark-jump
       (kbd "B") #'teams4e-bookmark-edit
-      (kbd "U") #'teams-unread-filter)
+      (kbd "U") #'teams-unread-filter
+      (kbd "F") #'teams-unread-filter
+      (kbd "z") #'teams4e-snooze-quick
+      (kbd "Z") #'teams4e-snooze)
     (evil-define-key* '(normal motion) teams4e-chat-mode-map
       (kbd "b") #'teams4e-chat-run-headers-command
       (kbd "B") #'teams4e-chat-run-headers-command
-      (kbd "U") #'teams4e-chat-run-headers-command)
+      (kbd "U") #'teams4e-chat-run-headers-command
+      (kbd "F") #'teams4e-chat-run-headers-command
+      (kbd "z") #'teams4e-chat-run-headers-command
+      (kbd "Z") #'teams4e-chat-run-headers-command)
     (when (derived-mode-p 'teams4e-recent-mode 'teams4e-chat-mode)
       (evil-normalize-keymaps))))
 
@@ -72,7 +78,9 @@
     (kbd "m") teams4e-mark-map
     (kbd "x") #'teams4e-execute-marks
     (kbd "U") #'teams-unread-filter
-    (kbd "z") #'teams4e-undo-action
+    (kbd "F") #'teams-unread-filter
+    (kbd "z") #'teams4e-snooze-quick
+    (kbd "Z") #'teams4e-snooze
     (kbd "M-U") #'teams4e-undo-action
     (kbd "a") teams4e-action-map
     (kbd "/") #'teams4e-search
@@ -106,8 +114,10 @@
     (kbd "X") #'teams4e-chat-run-headers-command
     (kbd "u") #'teams4e-chat-run-headers-command
     (kbd "U") #'teams4e-chat-run-headers-command
+    (kbd "F") #'teams4e-chat-run-headers-command
     (kbd "x") #'teams4e-chat-run-headers-command
     (kbd "z") #'teams4e-chat-run-headers-command
+    (kbd "Z") #'teams4e-chat-run-headers-command
     (kbd "M-U") #'teams4e-chat-run-headers-command
     (kbd "a") teams4e-action-map
     (kbd "/") #'teams4e-chat-run-headers-command
