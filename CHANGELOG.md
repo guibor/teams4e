@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Made the agent-analysis prompt configurable, with a general default that
+  requires no separately installed skill. Existing skill prompts remain usable
+  through `teams4e-thread-analysis-prompt`.
+- Expanded public installation/update instructions, snooze examples, account-free
+  walkthroughs, contribution guidance, and an r/emacs announcement draft.
+
 - Matched the terminal client's snooze workflow: `z` uses a configurable
   default duration, `Z` offers short/workday/custom choices, and `b s` shows
   wake-sorted snoozed chats that stay out of every ordinary and unread view.

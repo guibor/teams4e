@@ -3,7 +3,7 @@
 ;;; Commentary:
 
 ;; Launch with:
-;;   Emacs -Q --load tools/teams4e-demo.el
+;;   emacs -Q --load tools/teams4e-demo.el
 ;;
 ;; The demo uses only the bundled mock tenant.  It never reads credentials or
 ;; contacts Microsoft Graph.
@@ -59,7 +59,7 @@
   (menu-bar-mode -1)
   (tool-bar-mode -1)
   (scroll-bar-mode -1)
-  (set-face-attribute 'default nil :family "SF Mono" :height 130)
+  (set-face-attribute 'default nil :height 130)
   (set-frame-position nil 36 36)
   (set-frame-size nil 146 43)
   (set-frame-parameter nil 'title "teams4e - mock tenant"))

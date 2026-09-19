@@ -27,6 +27,9 @@
 
 ![teams4e mock tenant demo](assets/demo.gif)
 
+*Illustrative Moe Dark animation with synthetic conversations. To try the real
+UI, use the account-free mock below.*
+
 `teams4e` gives Microsoft Teams the interaction model that makes `mu4e`
 effective: a compact headers buffer, one reusable reader, native compose
 buffers, bookmarks, deferred marks, bulk actions, and keyboard commands that
@@ -57,7 +60,7 @@ The package is not affiliated with or supported by Microsoft.
 | Inbox | Aligned date, type, conversation, state, and preview columns; unread is bold, not noisy |
 | Reader | One singleton thread buffer, local-time day separators, inline images, attachments, reactions, and rich Markdown-style formatting |
 | Navigation | `j`/`k` stay on the conversation list even from the reader; `M-j`/`M-k` move between messages |
-| Triage | Read/unread, favorites, bookmarks, composable filters, deferred marks, bulk actions, and undo |
+| Triage | Read/unread, favorites, snooze with wake times, bookmarks, composable unread filtering, deferred marks, bulk actions, and undo |
 | Meetings | Upcoming meetings, intervals, location, response state, participants, conflicts, RSVP, join, and propose-new-time |
 | Capture | Compact or full Org capture, complete Markdown export, clipboard copy, and optional Agent Shell analysis |
 | Scale | Bounded Graph reads, asynchronous enrichment, one persistent backend, SQLite search cache, and cache-first opening |
@@ -104,7 +107,8 @@ Add controlled latency with `teams4e-mock-delay-ms`, then inspect
 ```
 
 The repository includes its Python backend, so the package needs the `bin`
-directory as well as the Emacs Lisp files.
+directory as well as the Emacs Lisp files. Ensure `python3` is visible to the
+Emacs process, including when Emacs is launched from a desktop icon.
 
 ### Spacemacs or Quelpa
 
@@ -123,12 +127,47 @@ Then configure it normally:
   :commands (teams4e teams4e-inbox teams4e-meetings teams4e-status))
 ```
 
+### Manual checkout
+
+Clone the complete repository into a directory of your choice:
+
+```sh
+git clone https://github.com/guibor/teams4e.git ~/src/teams4e
+```
+
+Then add it to your Emacs configuration:
+
+```elisp
+(add-to-list 'load-path (expand-file-name "~/src/teams4e"))
+(require 'teams4e)
+```
+
+### Updating
+
+Update the installation that Emacs actually loads:
+
+- **package-vc:** run `M-x package-vc-upgrade RET teams4e RET`.
+- **Spacemacs/Quelpa:** update `teams4e` through the package manager that
+  installed it, retaining the recipe's `bin` files.
+- **Manual checkout:** run `git -C ~/src/teams4e pull --ff-only`, substituting
+  your checkout path.
+
+Restart Emacs after updating so Lisp and the persistent Python backend use the
+same version. Then run `M-x teams4e-status` and `M-x teams4e`.
+`M-x find-library RET teams4e RET` shows which installation is loaded.
+An unrelated clone does not update a package-manager installation.
+
 ### Requirements
 
 - Emacs 29.1 or newer.
 - Python 3.10 or newer.
 - No third-party Python packages.
-- For live use, an external source of delegated Microsoft Graph access tokens.
+- For live use, a Microsoft 365 work/school account and an external source of
+  delegated Microsoft Graph access tokens (or a configured backend adapter).
+
+Spacemacs, Evil, a specific theme, and Agent Shell are optional. Core chat
+workflows run in ordinary Emacs. The bundled backend targets Microsoft's
+commercial Graph endpoint; sovereign-cloud endpoints are not configurable.
 
 `M-x teams4e`, `M-x teams`, and `M-x teams4e-inbox` open the
 same inbox.
@@ -177,7 +216,9 @@ This is the preferred boundary. Configure an argv list; no shell is involved:
       '("my-token-helper" "token" "--resource" "graph"))
 ```
 
-The command may print a raw token or one JSON object:
+`my-token-helper` is a placeholder for your own integration, not a bundled
+command. An existing MCP or DavMail login does not automatically provide a
+compatible Graph token. The command may print a raw token or one JSON object:
 
 ```json
 {"access_token":"REDACTED","expires_at":1786123456}
@@ -301,9 +342,14 @@ that need synchronization.
 | `b m` | Upcoming and active meetings | Earliest start first |
 | `b M` | All meeting chats | Earliest known start first |
 
-Active snoozes are hidden from every ordinary view, including All and any
-unread-only overlay. `b s` is the explicit Snoozed view; it replaces the
-message-time column with each conversation's wake time.
+Active snoozes are hidden from ordinary views, including All and its unread-only
+overlay. `b s` is the explicit Snoozed view; it replaces the message-time column
+with each conversation's wake time. You can apply `F` there too to see only
+unread snoozed chats. In any view, a second `F` removes the unread overlay.
+
+For example, `b t`, then `F`, shows today's unread conversations; another `F`
+returns to all of today's conversations. `b a` clears the view and unread
+filters, but keeps active snoozes hidden.
 
 `z` applies `teams4e-default-snooze-minutes` immediately (three hours by
 default). `Z` offers 10 minutes, one hour, three hours, end of workday,
@@ -311,7 +357,19 @@ tomorrow morning, next week, a custom date/time, and unsnooze. Tomorrow and
 next week use `teams4e-workday-start` (07:00 by default); end of workday uses
 `teams4e-workday-end` (18:00 by default) and wakes the next morning when the
 workday has already ended. Snoozing is local, persistent, and does not change
-Teams read state.
+Teams read state. Expired snoozes return on the next view redraw or refresh;
+there is no separate alarm notification or cross-device snooze synchronization.
+
+| After `Z` | Wake time |
+| --- | --- |
+| `m` / `1` / `3` | In 10 minutes / 1 hour / 3 hours |
+| `e` | End of workday, or next morning if it has ended |
+| `t` / `w` | Tomorrow / seven calendar days from now, at workday start |
+| `d` | Choose a date and time |
+| `u` | Unsnooze |
+
+Times use Emacs's local timezone. Workday settings are user preferences; the
+snooze menu does not consult calendar working hours or skip weekends.
 
 Queries support terms such as `unread`, `favorite`,
 `mentioned`, `attachment`, `type:meeting`,
@@ -363,6 +421,25 @@ presented as a complete transcript.
 ```
 
 Set the agent identifier to any configuration registered with Agent Shell.
+Agent analysis is an explicit `a g` action; ordinary reading does not start an
+agent. The configured agent can read the exported conversation, so use a
+provider appropriate for that content.
+
+The default prompt asks for decisions, questions, and action items without
+requiring a custom skill. Customize `teams4e-thread-analysis-prompt` to supply
+your own instructions; `%s` expands to the absolute Markdown path:
+
+```elisp
+(setq teams4e-thread-analysis-prompt
+      "Read %s and extract decisions and next actions with owners.")
+```
+
+For an agent with a separately installed `thread-analysis` skill, the previous
+prompt is still available as configuration:
+
+```elisp
+(setq teams4e-thread-analysis-prompt "$thread-analysis of this thread: %s")
+```
 
 ## Configuration Belongs to You
 
@@ -376,7 +453,7 @@ customization options, including:
 - Bookmarks, default view, message order, unread behavior, and preview behavior.
 - Chat, message, member, image, and meeting load/concurrency limits.
 - Meeting search horizon, confidence, work-hour policy, and proposal text.
-- Markdown renderer and Agent Shell configuration.
+- Snooze duration, local workday start/end, Markdown renderer, and agent/prompt.
 
 A complete, portable starting point might look like:
 
@@ -386,6 +463,9 @@ A complete, portable starting point might look like:
   :custom
   (teams4e-token-command '("my-token-helper" "graph-token"))
   (teams4e-default-view 'inbox)
+  (teams4e-default-snooze-minutes 180)
+  (teams4e-workday-start "07:00")
+  (teams4e-workday-end "18:00")
   (teams4e-mark-read-on-open nil)
   (teams4e-preview-on-move nil)
   (teams4e-message-order 'oldest-first)
@@ -440,7 +520,7 @@ credentials or tenant.
 Launch the reproducible graphical demo with:
 
 ```sh
-Emacs -Q --load tools/teams4e-demo.el
+emacs -Q --load tools/teams4e-demo.el
 ```
 
 The demo prefers Moe Dark when installed and falls back to Emacs's built-in
@@ -457,7 +537,10 @@ Proxy, and live developer-tenant validation.
 - This is a young package. The mock and automated suite are comprehensive, but
   live tenants still differ in policy and payload details.
 
-Issues and focused pull requests are welcome.
+Issues and focused pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for mock reproductions and what to include
+in a public report. A ready-to-adapt [r/emacs announcement](ANNOUNCEMENT.md)
+describes the workflow and authentication setup.
 
 ## Compatibility
 

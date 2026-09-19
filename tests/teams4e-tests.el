@@ -947,7 +947,7 @@
           (should (eq 'agent-buffer (plist-get insert-args :shell-buffer)))
           (should (eq t (plist-get insert-args :submit)))
           (should
-           (equal (format "$thread-analysis of this thread: %s" path)
+           (equal (format teams4e-thread-analysis-prompt path)
                   (plist-get insert-args :text))))
       (delete-directory directory t))))
 
@@ -971,6 +971,20 @@
         (should (string-match-p "Ada  [0-9][0-9]:[0-9][0-9]" rendered))
         (should (string-match-p "  Late update" rendered))
         (should-not (string-match-p "Ada  2026-" rendered))))))
+
+(ert-deftest teams4e-thread-analysis-honors-custom-prompt ()
+  (let ((teams4e-thread-analysis-prompt
+         "$thread-analysis of this thread: %s")
+        submitted)
+    (cl-letf (((symbol-function 'agent-shell-start)
+               (lambda (&rest _args) 'agent-buffer))
+              ((symbol-function 'agent-shell-insert)
+               (lambda (&rest args) (setq submitted args))))
+      (teams4e--start-thread-analysis
+       "/tmp/thread with spaces.md" '((:identifier . cursor))))
+    (should (equal "$thread-analysis of this thread: /tmp/thread with spaces.md"
+                   (plist-get submitted :text)))
+    (should (plist-get submitted :submit))))
 
 (ert-deftest teams4e-thread-analysis-resolves-the-customized-agent-symbol ()
   (let ((teams4e-thread-analysis-agent 'cursor)

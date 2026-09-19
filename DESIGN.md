@@ -130,7 +130,9 @@ until no `@odata.nextLink` remains and returns the same message objects with a
 small completion envelope: page count, message count, and oldest/newest
 timestamps. Emacs validates that envelope before writing the mode-0600 file or
 starting an agent. The Markdown header records that evidence; no second message
-cache or transcript representation is created.
+cache or transcript representation is created. The initial agent prompt comes
+from `teams4e-thread-analysis-prompt`, with the export path substituted for `%s`.
+Its default is ordinary analysis instructions, with no personal skill dependency.
 
 Activity bookmarks are textual projections over the canonical chat list.
 `today` compares the last message's local calendar-day key, while `after:1d` and

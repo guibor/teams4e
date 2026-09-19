@@ -38,6 +38,11 @@ than a shell command:
       '("m365-token" "print" "--resource" "graph"))
 ```
 
+`m365-token` is an example executable name, not a tool distributed with this
+package. The same applies to the helper and adapter paths below: provide the
+bridge for your existing integration. MCP or DavMail access alone is not a
+ready-made teams4e login.
+
 `teams4e` runs the command directly. Its stdout must contain only a raw access
 token or one JSON object:
 
@@ -120,6 +125,10 @@ provide an executable adapter:
       teams4e-use-persistent-backend nil)
 ```
 
+No universal MCP adapter is bundled: tool names and result schemas vary by
+service. This pattern requires implementing and mapping the operations you
+intend to use. Token-command integration is usually less work when supported.
+
 For an initial adapter, support one-shot operation:
 
 - receive the same command and options as command-line arguments;
@@ -166,6 +175,9 @@ For UI evaluation without any identity provider, use:
 (teams4e)
 ```
 
+After testing the mock, run `M-x teams4e-mock-disable` before connecting to your
+real account.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -176,6 +188,15 @@ For UI evaluation without any identity provider, use:
 | Credential file is ignored | Check the file path and `server_name`; add the exact `server_url` selector only when needed |
 | MCP connection works elsewhere but teams4e cannot connect | The MCP host must export a Graph token or be wrapped by a backend adapter |
 | Mutating actions fail while reads work | The approved token may lack write scopes or tenant policy may block that operation |
+
+## Local Data
+
+Credential storage and application data are separate. The reading cache, drafts,
+images, downloaded attachments, Markdown exports, and Org captures can contain
+workplace content even though they are not token stores. Keep these outside
+source repositories and choose paths and backups appropriate for your data.
+Do not attach them wholesale to public issues. Agent analysis explicitly gives
+your selected agent access to an exported thread; it is optional.
 
 ## Security Boundary
 

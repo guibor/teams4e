@@ -48,6 +48,24 @@ counts, and durations. It excludes content, people, IDs, URLs, and tokens.
 Useful stress values are 100-300 ms for ordinary latency and 1000-2000 ms for
 visible races. Set `teams4e-mock-delay-ms` back to zero after testing.
 
+### Try the public workflow
+
+In the mock inbox, open a conversation with `RET`, return to the headers, and:
+
+1. Press `b t`, then `F` twice. The unread filter should toggle while the
+   Today bookmark remains selected.
+2. Press `z` on a conversation. It should disappear from the ordinary view.
+3. Press `b s`. Find the conversation and its wake time, then press `Z u`
+   to unsnooze it.
+4. Press `b a` to return to All active chats. Open a thread and compose a
+   reply with `R`; insert a participant mention with `C-c C-m`.
+5. Exercise `a e` to export Markdown, and `b m` to inspect mock meetings.
+
+These operations stay in the mock. Agent analysis (`a g`) is a separate,
+optional integration and can start a real configured agent even in mock mode.
+When finished, `M-x teams4e-mock-disable` returns to the live backend; it
+does not configure authentication.
+
 ## 3. Microsoft-Supported External Tests
 
 [Microsoft Dev Proxy][dev-proxy] can intercept Graph URLs and return documented

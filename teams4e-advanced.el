@@ -47,6 +47,7 @@
 (defvar teams4e-sync-scope)
 (defvar teams4e-status-style)
 (defvar teams4e-thread-analysis-agent)
+(defvar teams4e-thread-analysis-prompt)
 (defvar agent-shell-agent-configs)
 
 (defvar teams4e--active-query nil)
@@ -2124,9 +2125,9 @@ AFTER-EXPORT with its saved path when that callback is non-nil."
   (let* ((absolute-path (expand-file-name path))
          (default-directory
           (file-name-as-directory (file-name-directory absolute-path)))
-         (shell-buffer (agent-shell-start :config config))
          (prompt
-          (format "$thread-analysis of this thread: %s" absolute-path)))
+          (format teams4e-thread-analysis-prompt absolute-path))
+         (shell-buffer (agent-shell-start :config config)))
     ;; agent-shell queues this submission until its first ACP prompt is ready.
     (agent-shell-insert :text prompt :submit t :shell-buffer shell-buffer)
     (message "Started Teams thread analysis with %s"
