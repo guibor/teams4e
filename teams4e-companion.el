@@ -9,6 +9,8 @@
 (require 'teams4e-advanced)
 
 (declare-function shell-maker-busy "shell-maker" ())
+(declare-function agent-shell-start "agent-shell" (&rest arguments))
+(declare-function agent-shell-insert "agent-shell" (&rest arguments))
 
 (defcustom teams4e-companion-interval 600
   "Seconds between companion checks while monitoring is enabled."
@@ -275,7 +277,8 @@ Disabling this mode cancels queued updates as well as periodic checks."
 (defun teams4e-companion--finish (generation chats signatures extra chunks force)
   "Queue collected CHATS evidence if GENERATION remains valid.
 SIGNATURES only acknowledge successful reads.  EXTRA is shared reference text,
-CHUNKS contains changed transcript excerpts, and FORCE requests a fresh briefing."
+CHUNKS contains changed transcript excerpts.
+FORCE requests a fresh briefing."
   (when (teams4e-companion--valid-p generation)
     (setq teams4e-companion--collecting nil
           teams4e-companion--request nil
