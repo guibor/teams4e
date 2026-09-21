@@ -17,4 +17,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes emacs-nox
       - name: Run tests
-        run: make test
+        run: |
+          make test
+          make compile

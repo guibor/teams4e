@@ -1,0 +1,253 @@
+;;; teams4e-companion-tests.el --- Companion regression tests -*- lexical-binding: t; -*-
+(require 'ert)
+(require 'teams4e-companion)
+
+(defmacro teams4e-companion-test-session (&rest body)
+  "Run BODY with private files and an isolated companion session."
+  (declare (indent 0) (debug t))
+  `(let* ((directory (make-temp-file "teams4e-companion-test-" t))
+          (shell (generate-new-buffer " *companion-test*"))
+          (teams4e-companion-directory directory)
+          (teams4e-companion--directory directory)
+          (teams4e-companion--buffer shell)
+          (teams4e-companion--timer nil)
+          (teams4e-companion--request nil)
+          (teams4e-companion--generation 0)
+          (teams4e-companion--collecting nil)
+          (teams4e-companion--pending nil)
+          (teams4e-companion--delivered (make-hash-table :test #'equal))
+          (teams4e-companion--extra-digest nil)
+          (teams4e-companion--identity nil)
+          (teams4e-companion--next-check 0)
+          (teams4e-companion--last-check nil)
+          (teams4e-companion--status "")
+          (teams4e-companion-watch-mode nil)
+          (teams4e-companion-include-calendar nil)
+          (teams4e-companion-context-files nil)
+          (teams4e-companion-query 'all)
+          (teams4e-companion-chat-limit 2)
+          (teams4e-companion-message-limit 3)
+          (teams4e--state-loaded t)
+          (teams4e--chats nil)
+          (teams4e--connected-as "user@example.test")
+          (teams4e--connected-user-id "self")
+          (teams4e--favorites (make-hash-table :test #'equal))
+          (teams4e--muted (make-hash-table :test #'equal))
+          (teams4e--handled (make-hash-table :test #'equal))
+          (teams4e--snoozed (make-hash-table :test #'equal))
+          (teams4e--read-overrides (make-hash-table :test #'equal))
+          (teams4e--member-cache (make-hash-table :test #'equal))
+          (teams4e--pending-send-read-states (make-hash-table :test #'equal))
+          (teams4e-offline-mode nil)
+          (teams4e-mock-mode t)
+          submitted)
+     (unwind-protect
+         (cl-letf (((symbol-function 'teams4e-companion--ensure-timer) #'ignore)
+                   ((symbol-function 'agent-shell-insert)
+                    (lambda (&rest args)
+                      (push args submitted)
+                      t)))
+           ,@body)
+       (teams4e-companion--cancel)
+       (when (buffer-live-p shell) (kill-buffer shell))
+       (delete-directory directory t))))
+
+(defun teams4e-companion-test-chat ()
+  "A conversation whose latest activity is a real message."
+  '((id . "chat-one") (topic . "Release discussion") (chatType . "group")
+    (webUrl . "https://teams.microsoft.com/mock/chat-one")
+    (lastMessagePreview
+     . ((id . "latest") (createdDateTime . "2026-09-21T10:00:00Z")
+        (body . ((content . "Can you review?") (contentType . "text")))))))
+
+(ert-deftest teams4e-companion-keeps-drafts-and-busy-agents-untouched ()
+  (teams4e-companion-test-session
+    (with-current-buffer shell
+      (comint-mode)
+      (setq-local major-mode 'agent-shell-mode)
+      (let ((process (make-pipe-process :name "companion-ready-test"
+                                        :buffer shell :noquery t))
+            busy)
+        (unwind-protect
+            (cl-letf (((symbol-function 'shell-maker-busy) (lambda () busy)))
+              (should-not (teams4e-companion--ready-p))
+              (insert "Agent> ")
+              (setq-local comint-last-prompt (cons (copy-marker 1)
+                                                  (copy-marker (point))))
+              (set-marker (process-mark process) (point))
+              (should (teams4e-companion--ready-p))
+              (insert "My unfinished thought")
+              (should-not (teams4e-companion--ready-p))
+              (delete-region (process-mark process) (point-max))
+              (setq busy t)
+              (should-not (teams4e-companion--ready-p)))
+          (delete-process process))))))
+
+(ert-deftest teams4e-companion-acknowledges-evidence-only-on-delivery ()
+  (teams4e-companion-test-session
+    (let* ((chat (teams4e-companion-test-chat))
+           (signatures (make-hash-table :test #'equal)))
+      (puthash "chat-one" "new-marker" signatures)
+      (cl-letf (((symbol-function 'teams4e-companion--ready-p) (lambda () nil)))
+        (teams4e-companion--finish 0 (list chat) signatures "" '("Evidence") nil))
+      (should teams4e-companion--pending)
+      (should-not submitted)
+      (should-not (gethash "chat-one" teams4e-companion--delivered))
+      (cl-letf (((symbol-function 'teams4e-companion--ready-p) (lambda () t)))
+        (teams4e-companion--flush))
+      (should (= 1 (length submitted)))
+      (should-not teams4e-companion--pending)
+      (should (equal "new-marker" (gethash "chat-one" teams4e-companion--delivered)))
+      (let ((file (expand-file-name "context.md" directory)))
+        (should (= #o600 (file-modes file)))
+        (should (string-match-p "NOT complete history"
+                                (with-temp-buffer
+                                  (insert-file-contents file)
+                                  (buffer-string))))))))
+
+(ert-deftest teams4e-companion-suppresses-unchanged-transcript-requests ()
+  (teams4e-companion-test-session
+    (let* ((chat (teams4e-companion-test-chat))
+           (signatures (make-hash-table :test #'equal)))
+      (puthash "chat-one" (teams4e-companion--signature chat)
+               teams4e-companion--delivered)
+      (setq teams4e-companion--extra-digest (secure-hash 'sha256 ""))
+      (cl-letf (((symbol-function 'teams4e--run-json)
+                 (lambda (&rest _) (ert-fail "Unchanged chat fetched again"))))
+        (teams4e-companion--messages 0 (list chat) (list chat) signatures "" nil nil))
+      (should-not teams4e-companion--pending)
+      (should-not submitted)
+      (should (equal "no changes" teams4e-companion--status)))))
+
+(ert-deftest teams4e-companion-read-state-is-evidence-not-a-resolution ()
+  (teams4e-companion-test-session
+    (let* ((chat (teams4e-companion-test-chat))
+           (before (teams4e-companion--signature chat)))
+      (puthash "chat-one" (cons 'read (teams4e--last-message-marker chat))
+               teams4e--read-overrides)
+      (should-not (equal before (teams4e-companion--signature chat)))
+      (should (string-match-p "NOT evidence" teams4e-companion-instructions)))))
+
+(ert-deftest teams4e-companion-failed-message-read-is-not-acknowledged ()
+  (teams4e-companion-test-session
+    (let ((chat (teams4e-companion-test-chat)))
+      (cl-letf (((symbol-function 'teams4e--run-json)
+                 (lambda (_args _callback error-callback)
+                   (funcall error-callback "403" "private error")))
+                ((symbol-function 'teams4e-companion--ready-p) (lambda () nil)))
+        (teams4e-companion--messages
+         0 (list chat) (list chat) (make-hash-table :test #'equal) "" nil nil))
+      (should-not (gethash "chat-one"
+                           (plist-get teams4e-companion--pending :signatures)))
+      (should (string-match-p "UNKNOWN" (plist-get teams4e-companion--pending :text)))
+      (should-not (string-match-p "private error"
+                                  (plist-get teams4e-companion--pending :text))))))
+
+(ert-deftest teams4e-companion-pause-invalidates-callbacks-and-pending-delivery ()
+  (teams4e-companion-test-session
+    (let (callback)
+      (cl-letf (((symbol-function 'teams4e--status-request)
+                 (lambda (success &optional _error) (setq callback success) nil)))
+        (teams4e-companion-refresh)
+        (should teams4e-companion--collecting)
+        (setq teams4e-companion--pending '(:text "old"))
+        (teams4e-companion-watch-mode -1)
+        (cl-letf (((symbol-function 'teams4e-companion--collect)
+                   (lambda (&rest _) (ert-fail "Paused collector resumed"))))
+          (funcall callback nil)))
+      (should-not teams4e-companion--pending)
+      (should-not teams4e-companion--collecting)
+      (should-not submitted))))
+
+(ert-deftest teams4e-companion-account-change-requires-a-new-conversation ()
+  (teams4e-companion-test-session
+    (setq teams4e-companion--identity '(nil "old@example.test" "old")
+          teams4e-companion-watch-mode t)
+    (cl-letf (((symbol-function 'teams4e--status-request)
+               (lambda (callback &optional _error) (funcall callback nil)))
+              ((symbol-function 'teams4e-companion--collect)
+               (lambda (&rest _) (ert-fail "Mixed account context"))))
+      (teams4e-companion-refresh))
+    (should-not teams4e-companion-watch-mode)
+    (should-not teams4e-companion--collecting)))
+
+(ert-deftest teams4e-companion-only-reads-explicit-bounded-context ()
+  (teams4e-companion-test-session
+    (let* ((included (expand-file-name "tasks.org" directory))
+           (excluded (expand-file-name "unshared.org" directory))
+           (teams4e-companion-context-files (list included))
+           (teams4e-companion-context-limit 10))
+      (with-temp-file included (insert "* TODO Review the design"))
+      (with-temp-file excluded (insert "DO NOT INCLUDE ME"))
+      (let ((context (teams4e-companion--shared-context)))
+        (should (string-match-p "TODO" context))
+        (should (string-match-p "Truncated" context))
+        (should-not (string-match-p "DO NOT INCLUDE ME" context)))
+      (should (equal "* TODO Review the design"
+                     (with-temp-buffer (insert-file-contents included)
+                                       (buffer-string)))))
+    (should (string-match-p "TRUNCATED"
+                            (teams4e-companion--bounded-text "abcdef" 3)))))
+
+(ert-deftest teams4e-companion-calendar-failure-keeps-chat-evidence ()
+  (teams4e-companion-test-session
+    (let ((teams4e-companion-include-calendar t)
+          (meeting '((id . "meeting") (chatType . "meeting")))
+          observed)
+      (cl-letf (((symbol-function 'teams4e--run-json)
+                 (lambda (args callback error-callback)
+                   (if (equal (seq-take args 3) '("teams" "chat" "list"))
+                       (funcall callback (list (teams4e-companion-test-chat) meeting))
+                     (funcall error-callback "403" "private error"))))
+                ((symbol-function 'teams4e-companion--messages)
+                 (lambda (_generation _remaining chats _signatures extra &rest _)
+                   (setq observed (list chats extra)))))
+        (teams4e-companion--collect 0 nil))
+      (should (= 1 (length (car observed))))
+      (should (string-match-p "Calendar unavailable" (cadr observed))))))
+
+(ert-deftest teams4e-companion-mock-roundtrip-detects-an-outgoing-reply ()
+  (teams4e-companion-test-session
+    (let* ((teams4e-use-persistent-backend nil)
+           (teams4e-backend-program
+            (expand-file-name "bin/teams4e-graph" teams4e--package-directory))
+           (teams4e-mock-state-file (expand-file-name "mock.json" directory))
+           (teams4e-cache-file (expand-file-name "cache.sqlite3" directory)))
+      (cl-labels
+          ((await-check ()
+             (let ((deadline (+ (float-time) 10)))
+               (while (and teams4e-companion--collecting
+                           (< (float-time) deadline))
+                 (accept-process-output nil 0.02))
+               (should-not teams4e-companion--collecting))))
+        (cl-letf (((symbol-function 'teams4e-companion--ready-p) (lambda () t)))
+          (teams4e-companion-refresh t)
+          (await-check)
+          (should (= 1 (length submitted)))
+          (teams4e-companion-refresh)
+          (await-check)
+          (should (= 1 (length submitted)))
+          (let* ((id (car (hash-table-keys teams4e-companion--delivered)))
+                 (done nil))
+            (teams4e--run-json
+             (list "teams" "chat" "message" "send" "--chatId" id
+                   "--message" "I have replied; review is still pending."
+                   "--contentType" "text")
+             (lambda (_payload) (setq done t))
+             (lambda (&rest _) (ert-fail "Mock send failed")))
+            (let ((deadline (+ (float-time) 10)))
+              (while (and (not done) (< (float-time) deadline))
+                (accept-process-output nil 0.02))
+              (should done)))
+          (teams4e-companion-refresh)
+          (await-check)
+          (should (= 2 (length submitted)))
+          (should
+           (string-match-p
+            "I have replied; review is still pending"
+            (with-temp-buffer
+              (insert-file-contents (expand-file-name "context.md" directory))
+              (buffer-string)))))))))
+
+(provide 'teams4e-companion-tests)
+;;; teams4e-companion-tests.el ends here

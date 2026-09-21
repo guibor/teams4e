@@ -190,6 +190,26 @@ does not depend on Evil or Spacemacs. `teams4e-evil-refresh-bookmark-bindings`
 reasserts the `b`/`B` prefix when a headers or reader mode starts and when the
 inbox opens, repairing maps changed by a later Evil Collection reload.
 
+### `teams4e-companion.el`
+
+Optional ongoing Agent Shell briefing. The module is loaded only on invocation.
+It reads the canonical chat list, fetches bounded recent messages only for
+changed conversations, and keeps delivery fingerprints rather than inferred
+obligation state. One timer drives polling and idle-safe delivery. Generation
+checks discard callbacks after cancellation; account/provider changes pause
+the session. Failed message reads are not acknowledged as successful evidence.
+
+One pending snapshot waits for an idle shell with an empty comint prompt. Each
+session owns a private latest-context file, so starting a new conversation does
+not overwrite evidence still accessible to the previous agent. User-selected
+reference files and optional linked meeting events contribute to the same
+snapshot. There is no task ledger or second inbox model.
+
+Integration uses `agent-shell-start`, `agent-shell-insert`, Shell Maker's busy
+check, and the comint process mark. The upstream implementations are documented
+in [Agent Shell](https://github.com/xenodium/agent-shell/blob/main/agent-shell.el)
+and [Shell Maker](https://github.com/xenodium/shell-maker/blob/main/shell-maker.el).
+
 ### `bin/teams4e_graph.py`
 
 Implements the command dispatcher, credential-provider boundary, Graph

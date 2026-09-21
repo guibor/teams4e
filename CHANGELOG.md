@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added an optional ongoing Agent Shell companion with bounded change detection,
+  draft/busy protection, pause/resume, source-linked conversation evidence,
+  opt-in linked meeting context, and explicitly selected reference files.
+- Added account-free companion regression tests and byte compilation to CI.
+
 - Made the agent-analysis prompt configurable, with a general default that
   requires no separately installed skill. Existing skill prompts remain usable
   through `teams4e-thread-analysis-prompt`.

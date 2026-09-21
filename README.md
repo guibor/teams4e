@@ -441,6 +441,19 @@ prompt is still available as configuration:
 (setq teams4e-thread-analysis-prompt "$thread-analysis of this thread: %s")
 ```
 
+## Ongoing Interaction Companion
+
+`M-x teams4e-companion` opens a reusable Agent Shell conversation about what
+needs your response, what you are waiting on, and sensible next actions. It
+checks Teams every ten minutes by default, sends changed context when the agent
+is idle, and lets you correct its understanding in conversation.
+
+There is no generated task ledger. Calendar context and selected Org/Markdown
+files are opt-in. Monitoring is bounded, visible, and pausable; read state is
+never treated as proof that an obligation is complete.
+
+See [COMPANION.md](COMPANION.md) for setup, keys, scope, and the mock walkthrough.
+
 ## Configuration Belongs to You
 
 No organization-specific tenant domain, client ID, employee identity, file path,

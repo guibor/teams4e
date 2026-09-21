@@ -23,6 +23,10 @@
 (require 'teams4e-evil)
 
 ;;;###autoload
+
+(autoload 'teams4e-companion "teams4e-companion"
+  "Open an ongoing Teams interaction companion in Agent Shell." t)
+
 (defalias 'teams4e #'teams4e-inbox)
 
 (provide 'teams4e)
