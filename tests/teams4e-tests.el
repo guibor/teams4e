@@ -2187,7 +2187,8 @@
               ("S" . teams4e-chat-run-headers-command)
               ("M-S" . teams4e-toggle-message-order)
               ("Y" . teams4e-copy-current-thread-markdown)
-              ("M-w" . teams4e-capture-message))
+              ("M-w" . kill-ring-save)
+              ("M-h" . teams4e-mark-message))
              (,teams4e-channel-index-mode-map
               ("q" . teams4e-quit)
               ("o" . teams4e-open-current-in-browser)
