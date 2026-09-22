@@ -306,6 +306,7 @@ turn the reader into a separate mini-application.
 | `X` | Run a bulk action |
 | `a` | Current-conversation action prefix |
 | `a a` / `a A` | Capture a summary / complete thread to Org |
+| `a f` | Forward the message at point to another chat for review |
 | `a e` / `a y` | Export / copy complete Markdown |
 | `a g` | Export and analyze with Agent Shell |
 | `a p` | Open participant availability |
@@ -313,11 +314,26 @@ turn the reader into a separate mini-application.
 | `a C` | Open the linked Outlook event |
 | `G` / `L` | Load complete history / load more |
 | `M-j` / `M-k` | Next/previous message in the transcript |
+| `M-h` | Select the complete message at point |
+| `M-w` | Copy the selected region (ordinary Emacs behavior) |
 | `q` | Close the reader or restore the previous layout |
 
 In a chat compose buffer, type `@` to choose one of the conversation's
 participants and insert a real Teams mention. `C-c C-m` invokes the same
 command. Use `C-q @` when you need a literal at-sign instead.
+
+Forward from a chat or channel reader with `a f` (or
+`M-x teams4e-forward-message`). Choose a destination chat, review the editable
+text, then send. This is a readable text forward like the TUI workflow, not a
+native Teams forwarding badge: it includes sender, date, available source URL,
+forwarded/quoted content, and attachment links. It does not reupload files or
+grant access to protected links. An existing destination draft is preserved
+and the forward is appended.
+
+With expand-region installed, your existing `er/expand-region` binding includes
+a complete message as an expansion step in chat and channel readers. `M-h`
+selects that message directly; `M-w` copies the selection, including in Evil.
+Date separators and neighboring messages are excluded.
 
 Compose buffers use `C-c C-c` to send and `C-c C-k` to abort.
 Sending preserves the conversation's prior read/unread state.

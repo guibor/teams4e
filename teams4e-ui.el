@@ -52,6 +52,10 @@
                   "agent-shell-markdown" (&rest arguments))
 
 (defvar org-capture-templates)
+(defvar er/try-expand-list)
+(defvar teams4e--omit-markdown-images nil
+  "When non-nil, omit HTML images from generated Markdown.")
+(declare-function er/enable-mode-expansions "expand-region-core" (mode add-fn))
 
 ;; Defined as user options in config.el; declarations keep standalone byte
 ;; compilation useful without duplicating defaults.
@@ -3197,8 +3201,8 @@ nonfatal unavailable label instead."
 
 (defun teams4e--reference-attachment-p (attachment)
   "Return non-nil when ATTACHMENT is a quoted or forwarded message reference."
-  (member (teams4e--get attachment 'contentType)
-          '("messageReference" "forwardedMessageReference")))
+  (member (downcase (or (teams4e--get attachment 'contentType) ""))
+          '("messagereference" "forwardedmessagereference")))
 
 (defun teams4e--attachment-content-object (attachment)
   "Parse ATTACHMENT's structured content, returning nil for invalid content."
@@ -3338,25 +3342,62 @@ nonfatal unavailable label instead."
              (error nil)))))))
    (teams4e--get message 'attachments)))
 
-(defun teams4e--insert-message-reference (message &optional rich)
-  "Insert MESSAGE's quoted-reply reference when present.
+(defun teams4e--message-reference-text (message &optional plain)
+  "Return all quoted or forwarded content in MESSAGE, without truncation.
 
-When RICH is non-nil, render the quoted content as Markdown."
-  (when-let* ((reference (teams4e--message-reference message))
-              (preview (teams4e--get reference 'messagePreview)))
-    (let ((sender (or (teams4e--dig reference 'messageSender 'user 'displayName)
-                      "Quoted message")))
+Return Markdown unless PLAIN is non-nil.  Both the reader and export use
+this projection of the original attachment data."
+  (unless (teams4e--get message 'deletedDateTime)
+    (mapconcat
+     (lambda (attachment)
+       (let* ((reference (teams4e--attachment-content-object attachment))
+              (forwarded (equal (downcase
+                                 (teams4e--get attachment 'contentType))
+                                "forwardedmessagereference"))
+              (sender (teams4e--get reference
+                                   (if forwarded 'originalMessageSender
+                                     'messageSender)))
+              (name (or (teams4e--dig sender 'user 'displayName)
+                        (teams4e--dig sender 'application 'displayName)
+                        "Unknown sender"))
+              (date (and forwarded
+                         (teams4e--export-time-label
+                          (teams4e--get reference 'originalSentDateTime))))
+              (source-id (teams4e--get reference 'originalConversationId))
+              (source (and source-id
+                           (seq-find
+                            (lambda (chat)
+                              (equal source-id (teams4e--chat-id chat)))
+                            teams4e--chats)))
+              (label (concat (if forwarded "Forwarded from " "") name
+                             (when date (concat " | " date))
+                             (when source
+                               (concat " | " (teams4e--chat-label source)))))
+              (preview (teams4e--get reference
+                                    (if forwarded 'originalMessageContent
+                                      'messagePreview)))
+              (text (if (and (stringp preview)
+                             (not (string-empty-p preview)))
+                        (if plain
+                            (teams4e--html-to-text preview)
+                          (let ((teams4e--omit-markdown-images t))
+                            (teams4e--html-to-markdown preview)))
+                      "[Referenced content unavailable]")))
+         (concat (format (if plain "> %s\n" "> **%s**\n") label)
+                 (mapconcat (lambda (line) (concat "> " line))
+                            (split-string text "\n") "\n"))))
+     (seq-filter #'teams4e--reference-attachment-p
+                 (teams4e--get message 'attachments))
+     "\n\n")))
+
+(defun teams4e--insert-message-reference (message &optional rich)
+  "Insert MESSAGE's quoted and forwarded attachments.
+When RICH is non-nil, use the Markdown renderer."
+  (let ((text (teams4e--message-reference-text message (not rich))))
+    (when (and text (not (string-empty-p text)))
       (if rich
-          (let ((teams4e--omit-markdown-images t))
-            (teams4e--insert-rendered-markdown
-             (concat (format "> **%s**\n" sender)
-                     (mapconcat (lambda (line) (concat "> " line))
-                                (string-lines
-                                 (teams4e--html-to-markdown preview))
-                                "\n"))))
-        (insert (propertize (format "  > %s\n" sender) 'face 'shadow))
-        (dolist (line (string-lines (teams4e--html-to-text preview)))
-          (insert (propertize (format "  > %s\n" line) 'face 'shadow)))))))
+          (teams4e--insert-rendered-markdown text)
+        (teams4e--insert-indented-message-body text 'shadow)))))
 
 (defun teams4e--insert-day-separator (created)
   "Insert a day separator for ISO timestamp CREATED."
@@ -3458,6 +3499,8 @@ authenticated Graph image downloads and inserts those separately."
       (teams4e--insert-indented-message-body
        body (and (teams4e--system-event-p message) 'teams4e-event)))
      ((and (null images)
+           (not (seq-some #'teams4e--reference-attachment-p
+                          (teams4e--get message 'attachments)))
            (null (seq-remove
                   #'teams4e--reference-attachment-p
                   (teams4e--get message 'attachments))))
@@ -3956,7 +3999,8 @@ When DATE-ONLY is non-nil, omit the time of day."
     (define-key map (kbd "Y") #'teams4e-copy-thread-markdown)
     (define-key map (kbd "y") #'teams4e-chat-back-to-inbox)
     (define-key map (kbd "M-y") #'teams4e-copy-message)
-    (define-key map (kbd "M-w") #'teams4e-capture-message)
+    (define-key map (kbd "M-w") #'kill-ring-save)
+    (define-key map (kbd "M-h") #'teams4e-mark-message)
     (define-key map (kbd "o") #'teams4e-open-in-browser)
     (define-key map (kbd "O") #'teams4e-open-in-app)
     (define-key map (kbd "M-F") #'teams4e-chat-run-headers-command)
@@ -4306,6 +4350,40 @@ the newest-message bound without applying the normal date window."
   (or (get-text-property (point) 'teams4e-message)
       (and (> (point) (point-min))
            (get-text-property (1- (point)) 'teams4e-message))))
+
+(defun teams4e-message-bounds (&optional position)
+  "Return the rendered message bounds at POSITION, or nil.
+Separators are not messages.  At end of buffer, use the last message."
+  (let ((pos (or position (point))))
+    (when (and (= pos (point-max)) (> pos (point-min)))
+      (setq pos (1- pos)))
+    (when (get-text-property pos 'teams4e-message)
+      (cons (or (previous-single-property-change
+                 (1+ pos) 'teams4e-message nil (point-min))
+                (point-min))
+            (next-single-property-change
+             pos 'teams4e-message nil (point-max))))))
+
+(defun teams4e-mark-message ()
+  "Select the complete rendered message at point."
+  (interactive)
+  (when-let ((bounds (teams4e-message-bounds
+                     (if (use-region-p) (region-beginning) (point)))))
+    (goto-char (car bounds))
+    (push-mark (cdr bounds) t t)))
+
+(defun teams4e--setup-message-expansion ()
+  "Add a message-sized selection to this reader's expand-region candidates."
+  (setq-local er/try-expand-list
+              (cons #'teams4e-mark-message
+                    (remq #'teams4e-mark-message er/try-expand-list))))
+
+(with-eval-after-load 'expand-region
+  (er/enable-mode-expansions 'teams4e-read-mode
+                             #'teams4e--setup-message-expansion))
+
+(define-key teams4e-read-mode-map (kbd "M-h") #'teams4e-mark-message)
+(define-key teams4e-read-mode-map (kbd "M-w") #'kill-ring-save)
 
 (defun teams4e--message-positions ()
   "Return starts of every rendered message region in the current buffer."
@@ -4762,15 +4840,14 @@ When COMMAND is nil, delegate to `browse-url'."
   (interactive)
   (let ((message (teams4e-message-at-point)))
     (unless message (user-error "Move point onto a Teams message first"))
-    (kill-new (teams4e--message-body message))
+    (kill-new (string-trim
+               (concat (teams4e--message-reference-text message t) "\n"
+                       (teams4e--message-body message))))
     (message "Copied Teams message")))
 
 (defun teams4e--dom-children-to-markdown (node)
   "Convert NODE's children to Markdown."
   (mapconcat #'teams4e--dom-to-markdown (dom-children node) ""))
-
-(defvar teams4e--omit-markdown-images nil
-  "When non-nil, omit HTML images from generated Markdown.")
 
 (defun teams4e--dom-plain-text (node)
   "Return NODE's literal text, preserving explicit line breaks."
@@ -4952,7 +5029,7 @@ image downloader."
   (let* ((sender (teams4e--message-sender message))
          (created (teams4e--get message 'createdDateTime))
          (body (teams4e--message-markdown-body message))
-         (reference (teams4e--message-reference message))
+         (reference (teams4e--message-reference-text message))
          (reactions (teams4e--reaction-summary message))
          attachments)
     (dolist (attachment (teams4e--get message 'attachments))
@@ -4965,16 +5042,12 @@ image downloader."
     (concat
      (format "### %s - %s\n\n"
              (teams4e--message-time-label created) sender)
-     (when reference
-       (let ((quoted-sender
-              (or (teams4e--dig reference 'messageSender 'user 'displayName)
-                  "Quoted message"))
-             (preview (or (teams4e--get reference 'messagePreview) "")))
-         (concat (format "> **%s**\n" quoted-sender)
-                 (mapconcat (lambda (line) (concat "> " line))
-                            (string-lines (teams4e--html-to-text preview)) "\n")
-                 "\n\n")))
-     (if (string-empty-p body) "*[Empty message]*" body)
+     (when (and reference (not (string-empty-p reference)))
+       (concat reference "\n\n"))
+     (if (and (string-empty-p body)
+              (or (null reference) (string-empty-p reference)))
+         "*[Empty message]*"
+       body)
      "\n\n"
      (when attachments
        (format "**Attachments:** %s\n\n"

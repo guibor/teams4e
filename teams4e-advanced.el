@@ -14,6 +14,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'tabulated-list)
+(require 'xml)
 
 (declare-function teams4e-transient "advanced")
 (declare-function teams4e-meeting-availability "teams4e-meetings")
@@ -2855,6 +2856,66 @@ With prefix PREVIEW, visit the downloaded file, including images, in Emacs."
              (message "Downloaded Teams attachment to %s"
                       (abbreviate-file-name path)))))))))
 
+(defun teams4e--text-with-link-targets (text)
+  "Return TEXT with SHR link destinations made explicit for copying."
+  (let ((pos 0) parts)
+    (while (< pos (length text))
+      (let* ((next (next-single-property-change pos 'shr-url text (length text)))
+             (label (substring-no-properties text pos next))
+             (url (get-text-property pos 'shr-url text)))
+        (push label parts)
+        (when (and (stringp url) (not (equal label url)))
+          (push (format " <%s>" url) parts))
+        (setq pos next)))
+    (apply #'concat (nreverse parts))))
+
+(defun teams4e--forward-text (message source-url)
+  "Return an editable text forward of MESSAGE with SOURCE-URL.
+Attachment links are included; this does not copy protected attachment bytes."
+  (concat
+   "Forwarded message\n"
+   "From: " (teams4e--message-sender message) "\n"
+   "Date: " (or (teams4e--export-time-label
+                 (teams4e--get message 'createdDateTime)) "Unknown") "\n"
+   (when (stringp source-url) (concat "Source: " source-url "\n"))
+   "\n"
+   (teams4e--text-with-link-targets
+    (concat (teams4e--message-reference-text message t) "\n"
+            (teams4e--message-body message)))
+   (mapconcat
+    (lambda (attachment)
+      (let ((url (or (teams4e--get attachment 'contentUrl)
+                     (teams4e--get attachment 'webUrl)))
+            (name (or (teams4e--get attachment 'name) "Attachment")))
+        (format "\nAttachment: %s%s" name
+                (if (stringp url) (concat " <" url ">")
+                  " [open the source message]"))))
+    (seq-remove #'teams4e--reference-attachment-p
+                (teams4e--get message 'attachments))
+    "")
+   "\n"))
+
+;;;###autoload
+(defun teams4e-forward-message ()
+  "Choose a chat and compose an editable forward of the message at point.
+Sending remains explicit with C-c C-c.  Any existing draft for the
+destination is preserved, with the forward appended."
+  (interactive)
+  (let* ((source (teams4e-current-message))
+         (text (teams4e--forward-text source (teams4e--current-web-url))))
+    (when (teams4e--get source 'deletedDateTime)
+      (user-error "Cannot forward a deleted message"))
+    (teams4e--select-chat
+     (lambda (target)
+       (teams4e--open-compose target)
+       (goto-char (point-max))
+       (unless (bobp) (insert "\n\n"))
+       (if (equal teams4e-compose--content-type "html")
+           (insert "<pre>" (xml-escape-string text) "</pre>")
+         (insert text))
+       (teams4e-compose--save-draft)
+       (message "Forward added to draft; review and send with C-c C-c")))))
+
 (defun teams4e-attachment-preview ()
   "Download and visit an attachment, displaying images in `image-mode'."
   (interactive)
@@ -3750,6 +3811,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
     (define-key map (kbd "p") #'teams4e-meeting-propose-new-time)
     (define-key map (kbd "c") #'teams4e-action-compose)
     (define-key map (kbd "R") #'teams4e-action-reply)
+    (define-key map (kbd "f") #'teams4e-forward-message)
     (define-key map (kbd "i") #'teams4e-mark-read)
     (define-key map (kbd "u") #'teams4e-mark-unread)
     (define-key map (kbd "*") #'teams4e-toggle-favorite)
@@ -3767,6 +3829,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
   "Mu4e-style prefix map for actions on the current Teams conversation.")
 
 ;; Keep source reloads useful when this prefix map already exists.
+(define-key teams4e-action-map (kbd "f") #'teams4e-forward-message)
 (define-key teams4e-action-map (kbd "g")
             #'teams4e-analyze-current-thread)
 (define-key teams4e-action-map (kbd "r") nil)
@@ -3938,7 +4001,8 @@ shared by the terminal Teams client."
          ("Y" . teams4e-copy-current-thread-markdown)
          ("y" . teams4e-chat-back-to-inbox)
          ("M-y" . teams4e-copy-message)
-         ("M-w" . teams4e-capture-message)
+         ("M-w" . kill-ring-save)
+         ("M-h" . teams4e-mark-message)
          ("o" . teams4e-open-in-browser)
          ("O" . teams4e-open-in-app)
          ("M-F" . teams4e-chat-toggle-unread-filter)
@@ -3981,6 +4045,8 @@ shared by the terminal Teams client."
 (define-key teams4e-channel-thread-mode-map
             (kbd "a") teams4e-action-map)
 (define-key teams4e-channel-thread-mode-map (kbd "w") nil)
+(define-key teams4e-channel-thread-mode-map (kbd "M-w") #'kill-ring-save)
+(define-key teams4e-channel-thread-mode-map (kbd "M-h") #'teams4e-mark-message)
 (define-key teams4e-channel-thread-mode-map (kbd "W") nil)
 (define-key teams4e-channel-thread-mode-map (kbd "r") nil)
 
@@ -3997,6 +4063,7 @@ shared by the terminal Teams client."
             ("Synchronize chats and channels" .
              teams4e-sync-all)
             ("Compose message" . teams4e-send)
+            ("Forward message at point" . teams4e-forward-message)
             ("Reopen compose draft" . teams4e-compose-drafts)
             ("Create chat" . teams4e-create-chat)
             ("Find person" . teams4e-user)
@@ -4069,6 +4136,7 @@ shared by the terminal Teams client."
           ("v" "view" teams4e-select-view)]
          ["Write"
           ("s" "send" teams4e-send)
+          ("w" "forward message" teams4e-forward-message)
           ("d" "drafts" teams4e-compose-drafts)
           ("n" "new chat" teams4e-create-chat)
           ("p" "person" teams4e-user)
@@ -4128,6 +4196,7 @@ shared by the terminal Teams client."
     "A" "capture full thread"
     "c" "compose"
     "R" "reply"
+    "f" "forward message"
     "i" "mark read now"
     "u" "mark unread now"
     "*" "favorite"

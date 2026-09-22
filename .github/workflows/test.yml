@@ -32,6 +32,22 @@ jobs:
         run: |
           emacs -Q --batch -L . -L .tmp/link-hint -L .tmp/avy \
             -l tests/teams4e-link-hint-tests.el -f ert-run-tests-batch-and-exit
+      - name: Check out expand-region test dependency
+        uses: actions/checkout@v4
+        with:
+          repository: magnars/expand-region.el
+          ref: 351279272330cae6cecea941b0033a8dd8bcc4e8
+          path: .tmp/expand-region
+      - name: Check out Evil test dependency
+        uses: actions/checkout@v4
+        with:
+          repository: emacs-evil/evil
+          ref: 6a3e1ddd04ac504a016590940d0af2a3361b9efd
+          path: .tmp/evil
+      - name: Test message selection integration
+        run: |
+          emacs -Q --batch -L . -L .tmp/expand-region -L .tmp/evil \
+            -l tests/teams4e-selection-tests.el -f ert-run-tests-batch-and-exit
       - name: Run tests
         run: |
           make test

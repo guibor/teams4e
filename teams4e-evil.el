@@ -37,6 +37,10 @@
 (add-hook 'teams4e-chat-mode-hook #'teams4e-evil-refresh-bookmark-bindings)
 
 (with-eval-after-load 'evil
+  (dolist (map (list teams4e-chat-mode-map teams4e-channel-thread-mode-map))
+    (evil-define-key* '(normal motion visual) map
+      (kbd "M-w") #'kill-ring-save
+      (kbd "M-h") #'teams4e-mark-message))
   (evil-set-initial-state 'teams4e-compose-mode 'insert)
   (evil-define-key* 'insert teams4e-compose-mode-map
     (kbd "@") #'teams4e-compose-at)
@@ -136,7 +140,8 @@
     (kbd "Y") #'teams4e-copy-current-thread-markdown
     (kbd "y") #'teams4e-chat-back-to-inbox
     (kbd "M-y") #'teams4e-copy-message
-    (kbd "M-w") #'teams4e-capture-message
+    (kbd "M-w") #'kill-ring-save
+    (kbd "M-h") #'teams4e-mark-message
     (kbd "o") #'teams4e-open-in-browser
     (kbd "O") #'teams4e-open-in-app
     (kbd "j") #'teams4e-thread-next

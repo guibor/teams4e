@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Render native forwarded-message attachments using their original content,
+  sender, and date; include every reference in reader, copy, and Markdown export.
+- Restore editable message forwarding with `a f`, preserving destination drafts,
+  source links, and attachment links; sending remains explicit.
+- Add complete-message expand-region selection and `M-h` in both readers.
+  Restore `M-w` to normal region copying instead of Org capture, including Evil.
+- Add account-free forwarding, expand-region, and Evil copy regression tests.
+
 - Made rendered message links discoverable by link-hint, including older
   Agent Shell renderers, and exposed attachment/card URLs for link copying.
 - Fixed complete thread export and agent analysis rejecting duplicate message
