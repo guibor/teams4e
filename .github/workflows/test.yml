@@ -16,6 +16,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes emacs-nox
+      - name: Check out link-hint test dependency
+        uses: actions/checkout@v4
+        with:
+          repository: noctuid/link-hint.el
+          ref: 8fda5dcb9caff5a3c49d22b82e570ac9e29af7dd
+          path: .tmp/link-hint
+      - name: Check out Avy test dependency
+        uses: actions/checkout@v4
+        with:
+          repository: abo-abo/avy
+          ref: 933d1f36cca0f71e4acb5fac707e9ae26c536264
+          path: .tmp/avy
+      - name: Test link-hint integration
+        run: |
+          emacs -Q --batch -L . -L .tmp/link-hint -L .tmp/avy \
+            -l tests/teams4e-link-hint-tests.el -f ert-run-tests-batch-and-exit
       - name: Run tests
         run: |
           make test

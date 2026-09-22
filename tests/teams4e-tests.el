@@ -861,6 +861,35 @@
             (should (search-forward "review.pdf" nil t))))
       (delete-directory directory t))))
 
+(ert-deftest teams4e-full-history-validates-count-before-deduplication ()
+  (let* ((messages (cl-loop for index from 1 to 357
+                            collect `((id . ,(format "message-%d" index)))))
+         (history '((complete . t) (pageCount . 8) (messageCount . 358)))
+         (result
+          (teams4e--full-history-result
+           `((value . ,(vconcat messages (list (car messages))))
+             (history . ,history)))))
+    (should (= 357 (length (plist-get result :messages))))
+    (should (equal history (plist-get result :history)))))
+
+(ert-deftest teams4e-full-history-rejects-missing-rows ()
+  (should-error
+   (teams4e--full-history-result
+    '((value . (((id . "one")) ((id . "two"))))
+      (history . ((complete . t) (messageCount . 3)))))))
+
+(ert-deftest teams4e-full-history-rejects-unique-count-for-raw-duplicates ()
+  (should-error
+   (teams4e--full-history-result
+    '((value . (((id . "one")) ((id . "two")) ((id . "one"))))
+      (history . ((complete . t) (messageCount . 2)))))))
+
+(ert-deftest teams4e-full-history-rejects-unfinished-pagination ()
+  (should-error
+   (teams4e--full-history-result
+    '((value . (((id . "one"))))
+      (history . ((complete . :json-false) (messageCount . 1)))))))
+
 (ert-deftest teams4e-copy-thread-fetches-complete-chronological-markdown ()
   (let* ((chat '((id . "chat-copy") (topic . "Copy test")))
          (newer '((id . "newer")
@@ -875,13 +904,13 @@
          captured-markdown
          (history '((complete . t)
                     (pageCount . 2)
-                    (messageCount . 2)
+                    (messageCount . 3)
                     (oldestDateTime . "2026-08-01T10:00:00Z")
                     (newestDateTime . "2026-08-01T11:00:00Z"))))
     (cl-letf (((symbol-function 'teams4e--run-json)
                (lambda (args callback &optional _error-callback)
                  (setq captured-args args)
-                 (funcall callback `((value . (,newer ,older))
+                 (funcall callback `((value . (,newer ,older ,newer))
                                      (history . ,history)))
                  'fake-process))
               ((symbol-function 'kill-new)
@@ -895,7 +924,9 @@
     (should (string-match-p "Complete Microsoft Graph pagination"
                             captured-markdown))
     (should (< (string-match "First" captured-markdown)
-               (string-match "Second" captured-markdown)))))
+               (string-match "Second" captured-markdown)))
+    (should-not (string-match "Second" captured-markdown
+                              (1+ (string-match "Second" captured-markdown))))))
 
 (ert-deftest teams4e-thread-analysis-exports-full-chat-before-first-prompt ()
   (let* ((directory (make-temp-file "teams4e-agent-thread-" t))
@@ -907,8 +938,8 @@
                       (body . ((contentType . "text")
                                (content . "Analyze this"))))))
          (history '((complete . t)
-                    (pageCount . 1)
-                    (messageCount . 1)
+                    (pageCount . 2)
+                    (messageCount . 2)
                     (oldestDateTime . "2026-08-06T10:00:00Z")
                     (newestDateTime . "2026-08-06T10:00:00Z")))
          (config '((:identifier . cursor)))
@@ -924,7 +955,7 @@
                   ((symbol-function 'teams4e--run-json)
                    (lambda (args callback &optional _error-callback)
                      (setq request-args args)
-                     (funcall callback `((value . ,messages)
+                     (funcall callback `((value . ,(append messages messages))
                                          (history . ,history)))
                      'fake-process))
                   ((symbol-function 'agent-shell-start)
@@ -4427,5 +4458,39 @@
   (should (eq (indirect-function 'teams-unread-filter)
               (indirect-function 'teams4e-toggle-unread-filter))))
 
+(ert-deftest teams4e-rich-links-expose-modern-and-legacy-renderers ()
+  (dolist (target-property '(agent-shell-markdown-url help-echo))
+    (let ((url "https://example.invalid/design")
+          (map (make-sparse-keymap)))
+      (with-temp-buffer
+        (insert "Before ")
+        (let ((start (point)))
+          (cl-letf (((symbol-function 'agent-shell-markdown-replace-markup)
+                     (lambda (&rest _args)
+                       (delete-region (point-min) (point-max))
+                       (insert (propertize "Design" target-property url
+                                           'keymap map 'face 'link)))))
+            (teams4e--insert-rendered-markdown "[Design](ignored)"))
+          (should (equal url (get-text-property start 'shr-url)))
+          (should (eq map (get-text-property start 'keymap)))
+          (should (eq 'link (get-text-property start 'face)))
+          (should-not (get-text-property (point-min) 'shr-url)))))))
+
+(ert-deftest teams4e-rich-links-do-not-linkify-unrelated-help ()
+  (with-temp-buffer
+    (insert (propertize "Timestamp" 'help-echo "2026-09-22T14:00:00Z"))
+    (insert (propertize " Hint" 'keymap (make-sparse-keymap)
+                        'help-echo (lambda (&rest _) "Open in browser")))
+    (insert (propertize " Tooltip" 'help-echo "https://example.invalid"))
+    (teams4e--expose-rendered-links (point-min) (point-max))
+    (should-not (text-property-not-all (point-min) (point-max) 'shr-url nil))))
+
+(ert-deftest teams4e-rich-links-preserve-existing-shr-targets ()
+  (with-temp-buffer
+    (insert (propertize "Docs" 'shr-url "https://example.invalid/original"
+                        'agent-shell-markdown-url "https://example.invalid/other"))
+    (teams4e--expose-rendered-links (point-min) (point-max))
+    (should (equal "https://example.invalid/original"
+                   (get-text-property (point-min) 'shr-url)))))
 
 ;;; teams4e-tests.el ends here

@@ -66,6 +66,20 @@ optional integration and can start a real configured agent even in mock mode.
 When finished, `M-x teams4e-mock-disable` returns to the live backend; it
 does not configure authentication.
 
+## Optional Link-Hint Integration Tests
+
+CI also tests link discovery, opening, and copying against pinned versions of
+link-hint and Avy. With those packages installed locally:
+
+```sh
+emacs -Q --batch -L . -L /path/to/link-hint -L /path/to/avy \
+  -l tests/teams4e-link-hint-tests.el -f ert-run-tests-batch-and-exit
+```
+
+These tests use synthetic URLs and intercept browser/clipboard actions.
+They cover rich-renderer link properties, plain HTML rendering, and card and
+attachment links; no Teams account or browser launch is needed.
+
 ## 3. Microsoft-Supported External Tests
 
 [Microsoft Dev Proxy][dev-proxy] can intercept Graph URLs and return documented

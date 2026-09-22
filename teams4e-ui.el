@@ -3216,6 +3216,7 @@ nonfatal unavailable label instead."
   (when (and (stringp url) (not (string-empty-p url)))
     (insert indent)
     (insert-text-button (or label url)
+                        'shr-url url
                         'action (lambda (_button) (browse-url url))
                         'follow-link t)
     (insert "\n")))
@@ -3316,6 +3317,7 @@ nonfatal unavailable label instead."
           (insert "  Attachment: ")
           (if (and (stringp url) (not (string-empty-p url)))
               (insert-text-button name
+                                  'shr-url url
                                   'action (lambda (_button) (browse-url url))
                                   'follow-link t)
             (insert name))
@@ -3383,6 +3385,23 @@ When RICH is non-nil, render the quoted content as Markdown."
            (require 'agent-shell-markdown nil t))
        (fboundp 'agent-shell-markdown-replace-markup)))
 
+(defun teams4e--expose-rendered-links (start end)
+  "Expose rendered links between START and END to standard link tools.
+
+Keep the renderer's keymaps and styling; add only the URL property used
+by SHR and link-hint.  Older Agent Shell versions store URLs in help-echo."
+  (let ((pos start))
+    (while (< pos end)
+      (let* ((next (next-property-change pos nil end))
+             (target (or (get-text-property pos 'agent-shell-markdown-url)
+                         (and (get-text-property pos 'keymap)
+                              (get-text-property pos 'help-echo)))))
+        (when (and (stringp target)
+                   (string-match-p "\\`[[:alpha:]][[:alnum:]+.-]*:" target)
+                   (not (get-text-property pos 'shr-url)))
+          (put-text-property pos next 'shr-url target))
+        (setq pos next)))))
+
 (defun teams4e--insert-rendered-markdown (markdown)
   "Insert MARKDOWN and render it in place with Agent Shell's renderer.
 
@@ -3402,6 +3421,7 @@ authenticated Graph image downloads and inserts those separately."
                :render-images nil
                :highlight-blocks teams4e-highlight-code-blocks)))
         (error nil))
+      (teams4e--expose-rendered-links start end)
       (add-text-properties start end
                            '(line-prefix "  " wrap-prefix "  "))
       (goto-char end)
@@ -3786,6 +3806,7 @@ When DATE-ONLY is non-nil, omit the time of day."
                           "Unavailable"))))
       (when (stringp join-url)
         (insert-text-button "Join meeting"
+                            'shr-url join-url
                             'action (lambda (_button)
                                       (teams4e--open-url-in-browser
                                        join-url))
@@ -3863,6 +3884,7 @@ When DATE-ONLY is non-nil, omit the time of day."
     (insert "  ")
     (when (teams4e--get teams4e--chat 'webUrl)
       (insert-text-button "Open in Teams"
+                          'shr-url (teams4e--get teams4e--chat 'webUrl)
                           'action (lambda (_button)
                                     (teams4e-open-in-browser))
                           'follow-link t))
@@ -5070,9 +5092,7 @@ with the absolute saved path after the mode-0600 file has been written."
 (defun teams4e--full-history-result (payload)
   "Validate PAYLOAD and return its messages and completion metadata."
   (let* ((history (teams4e--get payload 'history))
-         (messages
-          (teams4e--normalize-messages
-           (teams4e--payload-list (teams4e--get payload 'value))))
+         (messages (teams4e--payload-list (teams4e--get payload 'value)))
          (reported-count (teams4e--get history 'messageCount)))
     (unless (eq t (teams4e--get history 'complete))
       (error "Teams backend did not confirm complete history pagination"))
@@ -5080,7 +5100,8 @@ with the absolute saved path after the mode-0600 file has been written."
                (/= reported-count (length messages)))
       (error "Teams history count mismatch: backend %d, received %d"
              reported-count (length messages)))
-    (list :messages messages :history history)))
+    ;; The backend counts received rows, including repeated IDs across pages.
+    (list :messages (teams4e--normalize-messages messages) :history history)))
 
 (defun teams4e--copy-chat-thread-markdown (chat)
   "Fetch and copy complete CHAT history as Markdown."

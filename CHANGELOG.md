@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Made rendered message links discoverable by link-hint, including older
+  Agent Shell renderers, and exposed attachment/card URLs for link copying.
+- Fixed complete thread export and agent analysis rejecting duplicate message
+  IDs across history pages: validate the backend's raw row count before
+  deduplicating, while still rejecting missing rows and incomplete pagination.
+
 - Added an optional ongoing Agent Shell companion with bounded change detection,
   draft/busy protection, pause/resume, source-linked conversation evidence,
   opt-in linked meeting context, and explicitly selected reference files.

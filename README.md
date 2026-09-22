@@ -409,6 +409,12 @@ syntax-highlighted code, and aligned GFM tables. Without it, the same thread
 falls back to a dependency-free plain renderer. Authenticated images always use
 the Teams backend.
 
+Rendered message links and URL attachments support
+[link-hint](https://github.com/noctuid/link-hint.el) without extra Teams-specific
+configuration. Use your existing shortcut or `M-x link-hint-open-link`;
+`M-x link-hint-copy-link` copies the destination. After updating, refresh an
+already open thread to rebuild its rendered links.
+
 Thread export and agent analysis make a dedicated live request that follows
 every Graph pagination link. The exported document records message count,
 page count, and oldest/newest timestamps. A partial offline cache is never
