@@ -2465,7 +2465,11 @@ def outgoing_body(
   payload_mentions: list[dict[str, Any]] = []
   for index, (user_id, display_name) in enumerate(mentions):
     literal = f"@{display_name}"
-    escaped_literal = literal if content_type == "html" else html.escape(literal)
+    escaped_literal = html.escape(literal)
+    if content_type == "html" and escaped_literal not in content:
+      # Exporters need not escape quotes in text nodes; retain legacy raw HTML.
+      text_literal = html.escape(literal, quote=False)
+      escaped_literal = text_literal if text_literal in content else literal
     tag = f'<at id="{index}">{html.escape(display_name)}</at>'
     if escaped_literal not in content:
       raise BackendError(

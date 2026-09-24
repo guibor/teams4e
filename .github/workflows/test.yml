@@ -15,7 +15,7 @@ jobs:
       - name: Install Emacs
         run: |
           sudo apt-get update
-          sudo apt-get install --yes emacs-nox
+          sudo apt-get install --yes emacs-nox pandoc
       - name: Check out link-hint test dependency
         uses: actions/checkout@v4
         with:
@@ -48,6 +48,17 @@ jobs:
         run: |
           emacs -Q --batch -L . -L .tmp/expand-region -L .tmp/evil \
             -l tests/teams4e-selection-tests.el -f ert-run-tests-batch-and-exit
+      - name: Check out Markdown test dependency
+        uses: actions/checkout@v4
+        with:
+          repository: jrblevin/markdown-mode
+          ref: 76cb4ffecfdf95ee769e5cb4608e04202c3c1521
+          path: .tmp/markdown-mode
+      - name: Test Org and Markdown composition with Evil
+        run: |
+          emacs -Q --batch -L . -L .tmp/evil -L .tmp/markdown-mode \
+            -l evil -l markdown-mode -l tests/teams4e-compose-tests.el \
+            -f ert-run-tests-batch-and-exit
       - name: Run tests
         run: |
           make test

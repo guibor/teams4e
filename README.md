@@ -335,7 +335,43 @@ a complete message as an expansion step in chat and channel readers. `M-h`
 selects that message directly; `M-w` copies the selection, including in Evil.
 Date separators and neighboring messages are excluded.
 
-Compose buffers use `C-c C-c` to send and `C-c C-k` to abort.
+### Writing Messages
+
+New replies and messages use **Org mode** by default. Write normal Org
+emphasis, links, lists, tables and code blocks; teams4e sends a rendered HTML
+fragment, not the Org source. `C-c C-c` sends and `C-c C-k` aborts.
+Mentions and attachments work in every editor, and Evil starts in Insert state.
+
+Choose the default for **new** drafts:
+
+```elisp
+(setq teams4e-compose-editor 'org)       ; default, built into Emacs
+;; (setq teams4e-compose-editor 'markdown) ; markdown-mode + Pandoc
+;; (setq teams4e-compose-editor 'text)     ; previous plain/direct-HTML editor
+```
+
+For Markdown, install the Emacs `markdown-mode` package and
+[Pandoc](https://pandoc.org/installing.html) (`brew install pandoc` on macOS).
+It must be available on Emacs's executable path, or set
+`teams4e-compose-pandoc-program` to its full path. Conversion failures keep
+the draft and never fall back to sending raw markup. Org export does not
+execute Babel code and rejects includes, setup files, macros and calls.
+
+`C-c C-b`, `C-c C-i`, `` C-c C-` `` and `C-c C-l` insert bold, italic,
+code and link markup for the selected editor. The legacy editor alone uses
+`C-c C-h` to switch between plain text and direct HTML.
+
+Draft recovery keeps the source and editor together. Older saved drafts stay
+in the legacy editor rather than being reinterpreted as Org.
+
+When replying from a transcript or chat inbox, the editor opens **below the
+conversation**, leaving recent exchanges visible above. Sending or discarding
+closes only that editor split, never the frame. On very small frames the
+normal buffer display is used instead. Customize
+`teams4e-compose-window-height` (default `0.4`) for the editor's share.
+
+Opening a chat jumps to the absolute end. Cache refreshes keep you there
+until you move up; search results still jump to the requested message.
 Sending preserves the conversation's prior read/unread state.
 
 Use `M-x teams4e-dispatch` or `a ?` when you do not remember a key.

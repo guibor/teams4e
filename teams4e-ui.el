@@ -221,6 +221,11 @@
 (defvar-local teams4e--image-processes nil)
 (defvar-local teams4e--image-queue nil)
 (defvar-local teams4e--image-active 0)
+(defvar teams4e-compose-edit-mode)
+(declare-function teams4e-compose--start-editor "teams4e-compose" (target reply-to))
+(declare-function teams4e-compose--display "teams4e-compose" (buffer origin target))
+(declare-function teams4e-compose--render-body "teams4e-compose" (source))
+(defvar-local teams4e-compose--editor 'text)
 (defvar-local teams4e-compose--target nil)
 (defvar-local teams4e-compose--origin nil)
 (defvar-local teams4e-compose--reply-to nil)
@@ -3911,15 +3916,18 @@ When DATE-ONLY is non-nil, omit the time of day."
 
 (defun teams4e--render-chat ()
   "Render the current chat and its cached messages."
-  (let ((inhibit-read-only t)
-        (started (float-time))
-        (jump-to-bottom teams4e--jump-to-bottom-on-render)
-        (message-id
-         (unless teams4e--jump-to-bottom-on-render
-           (or teams4e--pending-message-id
-               (teams4e--get
-                (teams4e-message-at-point) 'id))))
-        last-day)
+  (let* ((inhibit-read-only t)
+         (started (float-time))
+         (jump-to-bottom
+          (and (not teams4e--pending-message-id)
+               (or teams4e--jump-to-bottom-on-render
+                   (and (> (buffer-size) 0)
+                        (= (point) (point-max))))))
+         (message-id
+          (or teams4e--pending-message-id
+              (unless jump-to-bottom
+                (teams4e--get (teams4e-message-at-point) 'id))))
+         last-day)
     (teams4e--cancel-image-loads)
     (erase-buffer)
     (insert (propertize (teams4e--chat-label teams4e--chat)
@@ -4134,7 +4142,8 @@ complete history, and MESSAGE-ID is selected after that history renders."
               teams4e--automatic-preview-p (not (null preview))
               teams4e--pending-message-id message-id
               teams4e--jump-to-bottom-on-render
-              (and (not preview) (not message-id)))
+              (and (not message-id)
+                   (or (not preview) (not same-chat))))
         (unless same-chat
           (teams4e--cancel-process teams4e--meeting-process)
           (cl-incf teams4e--meeting-request-id)
@@ -4494,6 +4503,11 @@ With PARTICIPANT non-nil, resolve a one-to-one chat by participant email."
          (teams4e--resolve-participant #'teams4e-open-chat)))
     (teams4e--select-chat #'teams4e-open-chat)))
 
+(defun teams4e-compose-p ()
+  "Return non-nil in a Teams composer, regardless of its major mode."
+  (or (bound-and-true-p teams4e-compose-edit-mode)
+      (derived-mode-p 'teams4e-compose-mode)))
+
 (defvar teams4e-compose-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map text-mode-map)
@@ -4549,9 +4563,13 @@ INITIAL, when non-nil, is inserted into an otherwise empty compose buffer."
          (buffer
           (get-buffer-create name))
          (fresh (not existing)))
-    (pop-to-buffer buffer)
-    (unless (derived-mode-p 'teams4e-compose-mode)
-      (teams4e-compose-mode)
+    (if (fboundp 'teams4e-compose--display)
+        (teams4e-compose--display buffer origin target)
+      (pop-to-buffer buffer))
+    (unless (teams4e-compose-p)
+      (if (fboundp 'teams4e-compose--start-editor)
+          (teams4e-compose--start-editor target reply-to)
+        (teams4e-compose-mode))
       (setq fresh t))
     (setq teams4e-compose--target target
           teams4e-compose--origin origin
@@ -4670,7 +4688,7 @@ REPLY-TO, when non-nil, is the source message for a native quoted reply."
   "Send the current compose buffer through Microsoft Graph."
   (interactive)
   (teams4e--require-online)
-  (unless (derived-mode-p 'teams4e-compose-mode)
+  (unless (teams4e-compose-p)
     (user-error "Not in a Teams compose buffer"))
   (let* ((buffer (current-buffer))
          (target teams4e-compose--target)
@@ -4690,6 +4708,10 @@ REPLY-TO, when non-nil, is the source message for a native quoted reply."
          args)
     (when (and (string-empty-p message-text) (null attachments))
       (user-error "Message and attachment list are empty"))
+    (when (fboundp 'teams4e-compose--render-body)
+      (let ((rendered (teams4e-compose--render-body message-text)))
+        (setq content-type (car rendered)
+              message-text (cdr rendered))))
     (setq args
           (teams4e--send-args
            target message-text reply-to attachments mentions content-type))

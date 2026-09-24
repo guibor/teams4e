@@ -598,7 +598,7 @@
           (teams4e-open-chat chat t)
           (should-not marked)
           (with-current-buffer buffer-name
-            (should-not teams4e--jump-to-bottom-on-render))
+            (should teams4e--jump-to-bottom-on-render))
           (setq teams4e-mark-read-on-open t)
           (teams4e-open-chat chat t)
           (should (eq 'read marked))
@@ -4564,6 +4564,7 @@
 (ert-deftest teams4e-forward-compose-preserves-draft-and-waits-for-send ()
   (dolist (format '("text" "html"))
     (let* ((directory (make-temp-file "teams4e-forward-test-" t))
+           (teams4e-compose-editor 'text)
            (teams4e-draft-directory directory)
            (target '((id . "forward-target") (topic . "Recipient")))
            (source (teams4e-test-forwarded-message))

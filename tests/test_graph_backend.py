@@ -1223,6 +1223,20 @@ class GraphBackendTests(unittest.TestCase):
           attachment_tags=[],
       )
 
+  def test_outgoing_body_accepts_exported_html_mention_entities(self) -> None:
+    for literal in ("@Ada &amp; Co", "@Ada & Co"):
+      with self.subTest(literal=literal):
+        body, mentions = backend.outgoing_body(
+            f"<p>Hello {literal}</p>",
+            content_type="html",
+            mention_specs=["ada-id|Ada & Co"],
+            attachment_tags=[],
+        )
+        self.assertEqual(
+            body["content"], '<p>Hello <at id="0">Ada &amp; Co</at></p>'
+        )
+        self.assertEqual(mentions[0]["mentionText"], "Ada & Co")
+
   def test_outgoing_body_tags_every_repeated_mention_once(self) -> None:
     body, mentions = backend.outgoing_body(
         "@Ada, please pair with @Ada",

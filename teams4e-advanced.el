@@ -1818,11 +1818,13 @@ normal reader without adding a second search cache."
   "Render current channel root and replies with stable message properties."
   (let* ((inhibit-read-only t)
          (pending-message-id teams4e-channel--pending-message-id)
-         (jump-to-bottom (and teams4e--jump-to-bottom-on-render
-                              (not pending-message-id)))
+         (jump-to-bottom
+          (and (not pending-message-id)
+               (or teams4e--jump-to-bottom-on-render
+                   (and (> (buffer-size) 0) (= (point) (point-max))))))
          (message-id
           (or pending-message-id
-              (unless teams4e--jump-to-bottom-on-render
+              (unless jump-to-bottom
                 (teams4e--get (teams4e-message-at-point) 'id))))
          last-day)
     (teams4e--cancel-image-loads)
@@ -2910,9 +2912,18 @@ destination is preserved, with the forward appended."
        (teams4e--open-compose target)
        (goto-char (point-max))
        (unless (bobp) (insert "\n\n"))
-       (if (equal teams4e-compose--content-type "html")
-           (insert "<pre>" (xml-escape-string text) "</pre>")
-         (insert text))
+       (pcase teams4e-compose--editor
+         ('org
+          ;; Fixed-width Org lines quote arbitrary forwarded text safely.
+          (insert (mapconcat (lambda (line) (concat ": " line))
+                             (split-string text "\n") "\n")))
+         ('markdown
+          (insert (mapconcat (lambda (line) (concat "    " line))
+                             (split-string text "\n") "\n")))
+         (_
+          (if (equal teams4e-compose--content-type "html")
+              (insert "<pre>" (xml-escape-string text) "</pre>")
+            (insert text))))
        (teams4e-compose--save-draft)
        (message "Forward added to draft; review and send with C-c C-c")))))
 
@@ -3226,7 +3237,9 @@ destination is preserved, with the forward appended."
                 (or reply-label "")
                 (teams4e--target-label
                  teams4e-compose--target)
-                teams4e-compose--content-type
+                (if (eq teams4e-compose--editor 'text)
+                    teams4e-compose--content-type
+                  (symbol-name teams4e-compose--editor))
                 (length teams4e-compose--attachments)
                 (if (= (length teams4e-compose--attachments) 1)
                     "" "s")
@@ -3267,7 +3280,7 @@ destination is preserved, with the forward appended."
   (when (timerp teams4e-compose--draft-timer)
     (cancel-timer teams4e-compose--draft-timer))
   (setq teams4e-compose--draft-timer nil)
-  (when (and (derived-mode-p 'teams4e-compose-mode)
+  (when (and (teams4e-compose-p)
              teams4e-compose--target
              (not teams4e-compose--discarded))
     (let ((body (teams4e--utf8-safe-string
@@ -3275,6 +3288,7 @@ destination is preserved, with the forward appended."
           (file (or teams4e-compose--draft-file
                     (teams4e-compose--path)))
           (content-type teams4e-compose--content-type)
+          (editor (symbol-name teams4e-compose--editor))
           (attachments teams4e-compose--attachments)
           (mentions teams4e-compose--mentions)
           ;; Capture buffer-local metadata before `with-temp-file' changes the
@@ -3297,6 +3311,7 @@ destination is preserved, with the forward appended."
                      (json-serialize
                       `((body . ,body)
                         (contentType . ,content-type)
+                        (editor . ,editor)
                         (attachments . ,(vconcat attachments))
                         (mentions . ,(vconcat mentions))
                         (target . ,target-record)
@@ -3377,7 +3392,7 @@ destination is preserved, with the forward appended."
 (defun teams4e-compose-add-attachment (path)
   "Add local file PATH to the current outgoing Teams message."
   (interactive "fAttach file: ")
-  (unless (derived-mode-p 'teams4e-compose-mode)
+  (unless (teams4e-compose-p)
     (user-error "Open a Teams compose buffer first"))
   (setq path (expand-file-name path))
   (unless (file-regular-p path) (user-error "Attachment is not a file"))
@@ -3405,7 +3420,7 @@ destination is preserved, with the forward appended."
 (defun teams4e-compose-paste-image ()
   "Save the macOS clipboard image and attach it to this Teams draft."
   (interactive)
-  (unless (derived-mode-p 'teams4e-compose-mode)
+  (unless (teams4e-compose-p)
     (user-error "Open a Teams compose buffer first"))
   (let ((program (executable-find "pngpaste")))
     (unless program
@@ -3588,7 +3603,7 @@ destination is preserved, with the forward appended."
 Optional QUERY is initial completion input.  Channel and new-chat targets fall
 back to tenant directory search because they do not have a chat member list."
   (interactive)
-  (unless (derived-mode-p 'teams4e-compose-mode)
+  (unless (teams4e-compose-p)
     (user-error "Open a Teams compose buffer first"))
   (let ((chat-id (teams4e--chat-id teams4e-compose--target)))
     (if (not chat-id)
@@ -3657,8 +3672,10 @@ from producing an invalid Graph payload after a mention is edited or deleted."
                (regexp-quote literal) "" remaining t t))))))
 
 (defun teams4e-compose-toggle-rich ()
-  "Toggle compose between plain text and direct Teams HTML mode."
+  "Toggle the legacy editor between plain text and direct Teams HTML."
   (interactive)
+  (unless (eq teams4e-compose--editor 'text)
+    (user-error "Org and Markdown are converted to HTML automatically"))
   (setq teams4e-compose--content-type
         (if (equal teams4e-compose--content-type "text")
             "html" "text"))
@@ -3670,8 +3687,15 @@ from producing an invalid Graph payload after a mention is edited or deleted."
 (defun teams4e-compose--wrap (open close)
   "Wrap active region in OPEN and CLOSE HTML tags."
   (unless (use-region-p) (user-error "Select text to format"))
-  (unless (equal teams4e-compose--content-type "html")
-    (setq teams4e-compose--content-type "html"))
+  (pcase teams4e-compose--editor
+    ((or 'org 'markdown)
+     (let ((delimiter
+            (pcase open
+              ("<strong>" (if (eq teams4e-compose--editor 'org) "*" "**"))
+              ("<em>" (if (eq teams4e-compose--editor 'org) "/" "*"))
+              ("<code>" (if (eq teams4e-compose--editor 'org) "~" "`")))))
+       (when delimiter (setq open delimiter close delimiter))))
+    (_ (setq teams4e-compose--content-type "html")))
   (let ((end (copy-marker (region-end))))
     (goto-char (region-beginning))
     (insert open)
@@ -3699,10 +3723,12 @@ from producing an invalid Graph payload after a mention is edited or deleted."
 (defun teams4e-compose-link (url)
   "Wrap active region in a Teams HTML link to URL."
   (interactive "sLink URL: ")
-  (teams4e-compose--wrap
-   (format "<a href=\"%s\">"
-           (replace-regexp-in-string "\"" "&quot;" url t t))
-   "</a>"))
+  (pcase teams4e-compose--editor
+    ('org (teams4e-compose--wrap (concat "[[" url "][") "]]"))
+    ('markdown (teams4e-compose--wrap "[" (concat "](" url ")")))
+    (_ (teams4e-compose--wrap
+        (format "<a href=\"%s\">" (xml-escape-string url))
+        "</a>"))))
 
 (defun teams4e-compose-new-frame ()
   "Show the current full Emacs compose buffer in a dedicated frame."
