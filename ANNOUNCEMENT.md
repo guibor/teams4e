@@ -1,83 +1,84 @@
 # r/emacs announcement draft
 
+Status: draft only. Nothing in this file has been posted.
+
 ## Title
 
-teams4e: a mu4e-inspired Microsoft Teams client for Emacs
+teams4e: Microsoft Teams in Emacs, with mu4e-style triage and Org replies
 
 ## Post
 
-I wanted to handle Teams conversations the way I handle mail in Emacs:
-scan a headers buffer, read in one reusable pane, reply, mark things done,
-and get back to work. So I built **teams4e**.
+I wanted to deal with Teams conversations the way I deal with mail in Emacs:
+scan headers, read in one pane, reply, capture an action, and move on.
+So I built **teams4e**, a native Emacs client with a mu4e-inspired workflow.
 
-Repository, illustrated demo, and setup:
-https://github.com/guibor/teams4e
+[Repository, demo, and setup](https://github.com/guibor/teams4e)
 
-The workflow borrows from mu4e and terminal Teams clients:
+It is not a browser embedded in Emacs or a terminal UI wrapper. Emacs owns the
+interface; a small Python backend talks to Microsoft Graph.
 
-- A conversation list and one reusable reader. `j`/`k` still select chats
-  while the reader is open; `M-j`/`M-k` move between messages.
-- Bookmarks and reversible unread filtering: `b t` for Today, then `F`
-  for just today's unread conversations. Press `F` again to remove it.
-- Snooze with `z` (three hours by default) or `Z` for a wake-time menu.
-  Snoozed chats leave the ordinary inbox; `b s` shows them by wake time.
-- Native compose buffers, participant `@` mentions, replies, attachments,
-  read/unread actions, and bulk triage.
-- Inline images and optional Markdown-style rendering through Agent Shell,
-  including code blocks and tables.
-- Compact Org capture with source links, complete paginated Markdown exports,
-  and optional analysis with an agent of your choice.
-- A meeting view with times, location, participants, RSVP, and an availability
-  workspace for proposing another time, when calendar permissions allow it.
+**The part that may matter most at work is authentication.** teams4e does not
+ask you to register another Entra app or run a new device-code login. Instead,
+it can reuse compatible access from an *already approved* Microsoft 365
+integration: an OAuth broker, CLI/TUI, or an MCP-backed service.
 
-Opening a conversation does not mark it read by default. Snoozes are local,
-and workday times, bookmarks, paths, agents, and browser choices are configurable.
-It works in ordinary Emacs, with optional Evil bindings; Spacemacs is not required.
-
-**The authentication approach is a big part of the project.** teams4e does not
-register another OAuth application or run its own device-code login. It can use
-a Microsoft 365 integration that already owns your login and consent, such as
-an approved broker, CLI/TUI, or MCP-backed service.
-
-If that integration can return a short-lived delegated Graph token, configure
-a helper that prints it:
+If that integration can provide a fresh delegated Graph token, point teams4e
+at a helper:
 
 ```elisp
-(setq teams4e-token-command
-      '("my-token-helper" "graph-token"))
+(setq teams4e-token-command '("my-token-helper" "graph-token"))
 ```
 
-That command is a placeholder for your own helper, not a bundled executable.
-The helper prints either a raw token or a JSON object with `access_token` and
-optionally `expires_at`; teams4e invokes it directly without a shell. The
-existing integration continues to handle login and refresh.
+That is a placeholder for **your** helper, not a command shipped with the
+package. It prints a raw token or JSON containing `access_token` and
+optionally `expires_at`. Your existing integration keeps responsibility for
+login, consent, and refresh.
 
 There is also a read-only credential-file interface. If an MCP service exposes
-operations but not tokens, you can write a backend adapter around those tools.
-That adapter is an extension point, not an included universal MCP connector.
-An existing MCP or DavMail login alone is not enough: you need compatible
-Graph access or the corresponding adapter. This reuses approved access; it
-does not bypass tenant policy or permissions.
+tools but not tokens, you can implement a backend adapter without exporting its
+tokens. No universal MCP adapter is bundled, and an arbitrary MCP or DavMail
+login does not automatically work. This reuses approved access; it does **not**
+bypass tenant policy or grant additional permissions.
 
-[Authentication guide](https://github.com/guibor/teams4e/blob/main/AUTHENTICATION.md)
+[Authentication guide and adapter contract](https://github.com/guibor/teams4e/blob/main/AUTHENTICATION.md)
 
-You can try the UI without an account:
+On the Emacs side:
+
+- **One reusable reader.** `j`/`k` still move through conversations while it is
+  open; `M-j`/`M-k` move between messages. No growing pile of chat buffers.
+- **Org replies by default.** Markdown and plain text are options. Org/Markdown
+  are converted to HTML on send, and recent exchanges stay visible above the
+  composer. Draft recovery, participant `@` mentions, and attachments are included.
+- **Triage that composes.** Bookmarks, deferred marks, bulk actions, and a
+  reversible unread overlay: `b t` for Today, `F` for today's unread chats,
+  another `F` to go back. `z` snoozes; `b s` shows snoozed conversations.
+- **Emacs integration.** Compact Org capture with source links, paginated
+  Markdown exports, link-hint, and whole-message expand-region selection.
+  Agent Shell optionally supplies rich rendering without starting an agent.
+- **Meeting context.** Times, location, participants, RSVP, and an availability
+  view for proposing another time, subject to calendar permissions.
+- **Optional agents.** Analyze one exported thread, or explicitly start an
+  ongoing Agent Shell conversation about open requests and next actions.
+  Ordinary reading does not start AI or send content to an agent.
+
+You can try the actual UI without a Teams account:
 
 ```elisp
+(require 'package-vc)
 (package-vc-install "https://github.com/guibor/teams4e")
 (require 'teams4e)
 (setq teams4e-mock-mode t)
 (teams4e)
 ```
 
-The mock has synthetic conversations and meetings and makes no Graph requests.
-Live use needs a work/school account and a compatible token source. Requirements
-are Emacs 29.1+ and Python 3.10+, with no third-party Python packages.
+The mock uses synthetic conversations and makes no Graph requests.
+Requirements are Emacs 29.1+ and Python 3.10+, with no third-party Python
+packages. Spacemacs and Evil are optional.
 
-This is a young, unofficial client. Calls and screen sharing stay in Teams,
-and the meetings workspace is not a complete Outlook replacement. The automated
-tests run without a tenant; permissions and payloads still vary in live use.
+This is a young, unofficial client. Calls and screen sharing stay in Teams;
+the meeting view is not a full Outlook replacement. The mock and automated
+tests cannot validate every tenant's permissions or payloads.
 
-I'd especially welcome feedback on the Emacs workflow, accessible keybindings,
-and adapters for other existing Microsoft 365 integrations. Please use synthetic
-examples rather than workplace messages or tokens in public issues.
+I'd especially like feedback on the plain-Emacs workflow, accessibility, and
+integration with other approved Microsoft 365 tools. Please use synthetic
+examples, not workplace conversations or credentials, in public reports.

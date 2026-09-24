@@ -49,3 +49,11 @@ particular tenant grants calendar or chat permissions.
 Use reserved example identities in fixtures and demos. Keep live data outside
 the checkout, and inspect the staged diff before submitting a pull request.
 The source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE).
+
+## Before Publishing
+
+Review [SECURITY.md](SECURITY.md) and [PUBLIC-READINESS.md](PUBLIC-READINESS.md).
+Secret scans do not anonymize Git author metadata. Use an appropriate Git
+identity and never include credentials, runtime stores, or real conversation
+screenshots in a contribution. Do not rewrite published history without
+coordinating with the maintainer.

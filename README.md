@@ -5,8 +5,8 @@
 <h1 align="center">teams4e</h1>
 
 <p align="center">
-  <strong>A mu4e-inspired Microsoft Teams client for Emacs.</strong><br>
-  Reuse approved Microsoft 365 access. Read, triage, and write without leaving Emacs.
+  <strong>Microsoft Teams, with a mu4e-inspired Emacs workflow.</strong><br>
+  One inbox. One reader. Your editor.
 </p>
 
 <p align="center">
@@ -18,99 +18,133 @@
 
 <p align="center">
   <a href="#try-it-without-a-teams-account">Try the mock</a> |
+  <a href="#reuse-the-login-you-already-have">Authentication</a> |
   <a href="#installation">Install</a> |
-  <a href="#reuse-the-login-you-already-have">Connect</a> |
-  <a href="#daily-workflow">Keys</a> |
-  <a href="#meetings-without-living-in-the-calendar">Meetings</a> |
-  <a href="#development">Develop</a>
+  <a href="USAGE.md">Workflow and keys</a> |
+  <a href="SECURITY.md">Privacy</a>
 </p>
 
-![teams4e mock tenant demo](assets/demo.gif)
+![Illustrative teams4e inbox and meeting workflow](assets/demo.gif)
 
-*Illustrative Moe Dark animation with synthetic conversations. To try the real
-UI, use the account-free mock below.*
+*Illustrative Moe Dark animation, not a recording of the current UI. All
+conversations and identities are synthetic. The mock below runs the real client.*
 
-`teams4e` gives Microsoft Teams the interaction model that makes `mu4e`
-effective: a compact headers buffer, one reusable reader, native compose
-buffers, bookmarks, deferred marks, bulk actions, and keyboard commands that
-continue to work while a thread is open.
+**teams4e is a native Emacs interface to Teams conversations, not an embedded
+browser or a terminal wrapper.** Scan headers, open a conversation in one
+reusable reader, reply in Org or Markdown, and turn a message into an Org action
+without losing your place.
 
-It is built for chat, triage, meeting context, capture, and automation. Calls,
-screen sharing, and advanced calendar editing still open in Microsoft Teams or
-Outlook.
+It borrows the useful parts of mu4e: bookmarks, deferred marks, bulk actions,
+a predictable reading pane, and keyboard-driven triage. Ordinary Emacs works;
+Spacemacs, Evil, Agent Shell, and a particular theme are not required.
 
 > [!IMPORTANT]
-> `teams4e` is deliberately not another OAuth application. If an MCP service,
-> corporate broker, CLI, TUI, or DavMail-like bridge already has approved
-> delegated Microsoft 365 access, it can continue to own login, consent, and
-> token refresh. `teams4e` consumes only a short-lived Graph token, or delegates
-> its backend operations to an adapter around that service.
+> **Live access reuses an existing approved Microsoft 365 integration.**
+> teams4e does not register another Entra application or implement its own
+> device-code login. It needs a compatible delegated Graph token from your
+> existing broker/CLI/TUI/MCP integration, or a custom backend adapter.
+> An arbitrary MCP connection is not sufficient, and tenant policy still applies.
+> [How to connect](#reuse-the-login-you-already-have).
 
-This separation matters in managed tenants where registering one more Entra
-application is difficult or prohibited. It does **not** bypass tenant policy or
-grant permissions: the existing integration must already be approved for the
-Graph operations you want to use.
+This is a young, unofficial client, not affiliated with Microsoft. Calls and
+screen sharing still belong in Teams; advanced calendar editing stays in Outlook.
 
-The package is not affiliated with or supported by Microsoft.
+## Why teams4e?
 
-## What It Feels Like
-
-| Surface | Experience |
+| What you want to do | How it works |
 | --- | --- |
-| Inbox | Aligned date, type, conversation, state, and preview columns; unread is bold, not noisy |
-| Reader | One singleton thread buffer, local-time day separators, inline images, attachments, reactions, and rich Markdown-style formatting |
-| Navigation | `j`/`k` stay on the conversation list even from the reader; `M-j`/`M-k` move between messages |
-| Triage | Read/unread, favorites, snooze with wake times, bookmarks, composable unread filtering, deferred marks, bulk actions, and undo |
-| Meetings | Upcoming meetings, intervals, location, response state, participants, conflicts, RSVP, join, and propose-new-time |
-| Capture | Compact or full Org capture, complete Markdown export, clipboard copy, and optional Agent Shell analysis |
-| Scale | Bounded Graph reads, asynchronous enrichment, one persistent backend, SQLite search cache, and cache-first opening |
-| Editing | Native compose buffers with chat-aware `@` mentions, replies, attachments, and Markdown-like rich text |
+| Read without accumulating buffers | One reusable reader for chats and channel threads; inline images, links, attachments, and optional rich rendering |
+| Write in your editor | Org by default, optional Markdown or plain text; rendered HTML on send, recoverable drafts, mentions, replies, and attachments |
+| Keep context while replying | The composer opens below the transcript, with recent exchanges visible above |
+| Triage a busy inbox | Bookmarks, reversible unread overlays, read/unread marks, favorites, bulk actions, and local snooze |
+| Find the meeting, not just its chat | Start-time ordering, time intervals, location, participants, RSVP, join, and an availability/propose-new-time workspace |
+| Take the conversation with you | Compact Org capture with source links, complete paginated Markdown export, and editable text forwarding |
+| Ask an agent for help, explicitly | Per-thread analysis or an optional ongoing Agent Shell companion; no agent starts during ordinary reading |
 
-Chats, group chats, one-to-one conversations, meeting chats, teams, channels,
-channel posts, and replies all use the same Emacs workflow.
+**A small example:** `b t` opens Today; `F` narrows it to unread conversations;
+`RET` opens one; `R` starts an Org reply below it. Send with `C-c C-c`.
+Another `F` restores Today without the unread overlay.
+
+Opening a conversation does **not** mark it read by default. Snooze is local,
+not a change to Teams read state. All of these defaults are configurable.
 
 ## Try It Without a Teams Account
 
-Install the package, enable its persistent local mock, and open the inbox:
+Requirements: **Emacs 29.1+ and Python 3.10+**. The bundled backend uses only
+Python's standard library. Git is needed for a source-based installation.
+
+Evaluate this in Emacs:
 
 ```elisp
+(require 'package-vc)
 (package-vc-install "https://github.com/guibor/teams4e")
-
+(require 'teams4e)
 (setq teams4e-mock-mode t)
 (teams4e)
 ```
 
-Or use the interactive commands:
+The persistent mock has synthetic people, chats, channels, messages, and
+meetings. It uses the real frontend/backend contract without reading tokens or
+contacting Graph. You can send mock replies, mark, snooze, search, and export.
 
-```text
-M-x teams4e-mock-enable
-M-x teams4e
+Run `M-x teams4e-mock-disable` before configuring a live account.
+The optional Agent Shell companion still uses your selected agent, even when
+Teams itself is in mock mode. See [LOCAL-TESTING.md](LOCAL-TESTING.md).
+
+## Reuse the Login You Already Have
+
+In a managed organization, another Microsoft 365 integration may already own
+login, consent, and refresh. teams4e keeps those responsibilities there.
+
+| Your existing integration can... | Configure... |
+| --- | --- |
+| Return a fresh delegated Microsoft Graph token | `teams4e-token-command`, the recommended boundary |
+| Maintain a compatible credential record | A read-only `teams4e-credentials-file` |
+| Expose tools but not tokens | Your own executable adapter behind `teams4e-backend-program` |
+
+For a token helper:
+
+```elisp
+(setq teams4e-token-command '("my-token-helper" "graph-token"))
 ```
 
-The mock uses the production argv/JSON boundary and supports messages,
-reactions, editing, deletion, read state, channels, search, exports, and
-meeting metadata. It never reads credentials or contacts Microsoft Graph.
+**That executable is a placeholder, not a bundled command.** Your helper must
+reuse the approved integration and print only a raw Graph access token or:
 
-Add controlled latency with `teams4e-mock-delay-ms`, then inspect
-`M-x teams4e-performance-report`. See
-[LOCAL-TESTING.md](LOCAL-TESTING.md) for the complete account-free workflow.
+```json
+{"access_token":"REDACTED","expires_at":1786123456}
+```
+
+It is invoked as an argument list, without a shell. The external owner handles
+login and refresh; teams4e consumes the short-lived token.
+
+An existing MCP or DavMail login alone does not establish compatibility.
+If a service does not export Graph tokens, an adapter must implement the needed
+operations. **No universal MCP adapter is bundled.** This architecture avoids
+duplicating an approved login setup; it does not expand its permissions or
+bypass Entra consent or conditional access.
+
+After configuration, run `M-x teams4e-status`, then `M-x teams4e`.
+Use `M-x teams4e-login` only when an external bootstrap helper is configured.
+
+[AUTHENTICATION.md](AUTHENTICATION.md) covers all three patterns, exact JSON
+formats, helper contracts, permissions, and troubleshooting. Chat can work
+without calendar access. Sovereign-cloud endpoints are not currently configurable.
 
 ## Installation
 
-### Emacs 29 package-vc
+### Emacs package-vc
+
+Use the install command above, then configure normally:
 
 ```elisp
-(package-vc-install "https://github.com/guibor/teams4e")
-
 (use-package teams4e
   :commands (teams4e teams4e-inbox teams4e-meetings teams4e-status))
 ```
 
-The repository includes its Python backend, so the package needs the `bin`
-directory as well as the Emacs Lisp files. Ensure `python3` is visible to the
-Emacs process, including when Emacs is launched from a desktop icon.
+### Spacemacs / Quelpa
 
-### Spacemacs or Quelpa
+Add the package recipe to your layer:
 
 ```elisp
 (teams4e :location
@@ -119,510 +153,190 @@ Emacs process, including when Emacs is launched from a desktop icon.
                  :files ("*.el" ("bin" "bin/*"))))
 ```
 
-Then configure it normally:
-
-```elisp
-(use-package teams4e
-  :defer t
-  :commands (teams4e teams4e-inbox teams4e-meetings teams4e-status))
-```
+Keep the `bin/` directory: the package is Emacs Lisp **and** its Python backend.
+This public recipe needs no private repository or personal configuration.
 
 ### Manual checkout
-
-Clone the complete repository into a directory of your choice:
 
 ```sh
 git clone https://github.com/guibor/teams4e.git ~/src/teams4e
 ```
-
-Then add it to your Emacs configuration:
 
 ```elisp
 (add-to-list 'load-path (expand-file-name "~/src/teams4e"))
 (require 'teams4e)
 ```
 
+Choose your own checkout directory. Make sure `python3` is on Emacs's
+executable path, especially when launching Emacs from a desktop icon.
+
 ### Updating
 
-Update the installation that Emacs actually loads:
+Update the installation Emacs actually loads:
 
-- **package-vc:** run `M-x package-vc-upgrade RET teams4e RET`.
-- **Spacemacs/Quelpa:** update `teams4e` through the package manager that
-  installed it, retaining the recipe's `bin` files.
-- **Manual checkout:** run `git -C ~/src/teams4e pull --ff-only`, substituting
-  your checkout path.
+- **package-vc:** `M-x package-vc-upgrade RET teams4e RET`.
+- **Spacemacs/Quelpa:** update through the package manager that installed it,
+  retaining the recipe's `bin` files.
+- **Manual:** `git -C ~/src/teams4e pull --ff-only`, with your checkout path.
 
-Restart Emacs after updating so Lisp and the persistent Python backend use the
-same version. Then run `M-x teams4e-status` and `M-x teams4e`.
-`M-x find-library RET teams4e RET` shows which installation is loaded.
-An unrelated clone does not update a package-manager installation.
-
-### Requirements
-
-- Emacs 29.1 or newer.
-- Python 3.10 or newer.
-- No third-party Python packages.
-- For live use, a Microsoft 365 work/school account and an external source of
-  delegated Microsoft Graph access tokens (or a configured backend adapter).
-
-Spacemacs, Evil, a specific theme, and Agent Shell are optional. Core chat
-workflows run in ordinary Emacs. The bundled backend targets Microsoft's
-commercial Graph endpoint; sovereign-cloud endpoints are not configurable.
-
-`M-x teams4e`, `M-x teams`, and `M-x teams4e-inbox` open the
-same inbox.
-
-## Reuse the Login You Already Have
-
-The normal live setup is a small bridge between `teams4e` and an existing
-Microsoft 365 integration:
-
-```text
-approved OAuth owner
-(MCP / broker / CLI / TUI / DavMail-like bridge)
-             |
-      fresh delegated Graph access
-             |
- token command, credential file, or backend adapter
-             |
-         teams4e in Emacs
-```
-
-There are three supported patterns:
-
-1. **Token command, recommended.** Point `teams4e-token-command` at an existing
-   helper that prints a fresh, short-lived Microsoft Graph access token.
-2. **Broker-owned credential file.** Let the approved integration maintain a
-   JSON credential record; `teams4e` reads the Graph access token but never
-   writes the file or handles its refresh token.
-3. **Backend adapter.** If an MCP server exposes tools but intentionally does
-   not export tokens, wrap those tools behind the `teams4e` argv/JSON backend
-   contract. The token then never leaves the approved service.
-
-Having an MCP connection by itself is not enough: its host must expose a Graph
-token through one of the first two boundaries, or provide the operations needed
-by the third. See [AUTHENTICATION.md](AUTHENTICATION.md) for complete examples,
-the credential JSON shape, adapter protocol, verification steps, and security
-notes.
-
-## Authentication
-
-### Use a token command
-
-This is the preferred boundary. Configure an argv list; no shell is involved:
-
-```elisp
-(setq teams4e-token-command
-      '("my-token-helper" "token" "--resource" "graph"))
-```
-
-`my-token-helper` is a placeholder for your own integration, not a bundled
-command. An existing MCP or DavMail login does not automatically provide a
-compatible Graph token. The command may print a raw token or one JSON object:
-
-```json
-{"access_token":"REDACTED","expires_at":1786123456}
-```
-
-`expires_at` can be Unix seconds or milliseconds. A JWT `exp` claim is
-also accepted. Only the short-lived access token is retained in backend memory,
-and the command is called again near expiry.
-
-### Read a broker-owned credential file
-
-The alternative is a read-only JSON credential store managed by another
-program:
-
-```elisp
-(setq teams4e-credentials-file "~/.config/my-m365/credentials.json"
-      teams4e-credential-server-name "m365"
-      teams4e-credential-server-url nil)
-```
-
-Candidate entries use `server_name`, optional `server_url`,
-`graph_access_token`, and `graph_expires_at`. If the same OAuth owner can
-refresh that file, expose it as:
-
-```elisp
-(setq teams4e-bootstrap-program "/path/to/my-oauth-owner")
-```
-
-It is invoked as:
-
-```text
-HELPER --refresh-if-needed --credentials FILE
-```
-
-`teams4e` never writes the credential file or stores a refresh token. Keep
-the file readable only by your user.
-
-After configuring either boundary, run:
-
-```text
-M-x teams4e-status
-M-x teams4e
-```
-
-Use `M-x teams4e-login` only when you configured
-`teams4e-bootstrap-program`; it asks that external owner to refresh or establish
-the shared credential. It does not implement a teams4e-specific login flow.
-
-### Graph permissions
-
-Permissions are determined by your token provider and tenant policy. Basic chat
-workflows typically need delegated chat and message permissions. Calendar
-features are independent:
-
-- Reading free/busy commonly needs `Calendars.ReadBasic`.
-- Ranked alternate-time suggestions commonly need
-  `Calendars.Read.Shared`.
-- RSVP and new-time proposals need `Calendars.ReadWrite`.
-
-Meeting chats remain readable when calendar access is unavailable. Sharing
-policy may hide another participant's calendar subject or location even when
-free/busy is visible.
+Restart Emacs so its Lisp and persistent backend use the same version.
+`M-x find-library RET teams4e RET` identifies the loaded installation.
+Pulling an unrelated checkout does not update your installed package.
 
 ## Daily Workflow
 
-The headers buffer owns navigation and actions. Opening a conversation does not
-turn the reader into a separate mini-application.
-
 | Key | Action |
 | --- | --- |
-| `j` / `k` | Next/previous conversation, including from the reader |
-| `RET` or `l` | Open the selected conversation |
-| `r` or `i` | Queue mark-read |
-| `R` | Reply |
-| `c` or `C` | Compose a new message |
-| `o` / `O` | Open in browser / native Teams app |
-| `b` | Choose a bookmark |
-| `F` | Toggle unread-only on top of the current view |
-| `U`, `b u`, or `M-F` | Compatibility aliases for unread-only |
-| `z` / `Z` | Snooze for the default duration / choose a wake time |
-| `M-U` | Undo the last completed action |
-| `m` | Deferred-mark prefix |
-| `x` | Apply deferred marks |
-| `M` / `T` | Select one / all visible conversations |
-| `X` | Run a bulk action |
-| `a` | Current-conversation action prefix |
-| `a a` / `a A` | Capture a summary / complete thread to Org |
-| `a f` | Forward the message at point to another chat for review |
-| `a e` / `a y` | Export / copy complete Markdown |
-| `a g` | Export and analyze with Agent Shell |
-| `a p` | Open participant availability |
-| `a v` / `a J` | RSVP / join |
-| `a C` | Open the linked Outlook event |
-| `G` / `L` | Load complete history / load more |
-| `M-j` / `M-k` | Next/previous message in the transcript |
-| `M-h` | Select the complete message at point |
-| `M-w` | Copy the selected region (ordinary Emacs behavior) |
-| `q` | Close the reader or restore the previous layout |
+| `j` / `k` | Next/previous conversation, even from the reader |
+| `RET` / `q` | Open / close the reader |
+| `R` / `c` | Reply / compose |
+| `r` or `i`, then `x` | Queue mark-read, then apply |
+| `b` | Bookmarks: `i` inbox, `a` all active, `t` today, `m` meetings, `s` snoozed |
+| `F` | Toggle unread-only on the current view; press again to undo |
+| `z` / `Z` | Default snooze / choose a wake time |
+| `o` / `O` | Open in browser / Teams app |
+| `M-j` / `M-k` | Move between messages |
+| `a a` | Capture a compact Org action with source metadata |
+| `a e` / `a g` | Export complete Markdown / export for agent analysis |
+| `a ?` | Action help |
 
-In a chat compose buffer, type `@` to choose one of the conversation's
-participants and insert a real Teams mention. `C-c C-m` invokes the same
-command. Use `C-q @` when you need a literal at-sign instead.
+`F` is the unread toggle, **not** forward; forwarding is `a f`.
+`b a` clears the view/unread filters but still hides active snoozes;
+`b s` is the explicit Snoozed view.
 
-Forward from a chat or channel reader with `a f` (or
-`M-x teams4e-forward-message`). Choose a destination chat, review the editable
-text, then send. This is a readable text forward like the TUI workflow, not a
-native Teams forwarding badge: it includes sender, date, available source URL,
-forwarded/quoted content, and attachment links. It does not reupload files or
-grant access to protected links. An existing destination draft is preserved
-and the forward is appended.
+[USAGE.md](USAGE.md) contains the full key reference, queries, bulk actions,
+snooze wake times, message selection, link-hint, and forwarding details.
 
-With expand-region installed, your existing `er/expand-region` binding includes
-a complete message as an expansion step in chat and channel readers. `M-h`
-selects that message directly; `M-w` copies the selection, including in Evil.
-Date separators and neighboring messages are excluded.
+### Write in Org or Markdown
 
-### Writing Messages
-
-New replies and messages use **Org mode** by default. Write normal Org
-emphasis, links, lists, tables and code blocks; teams4e sends a rendered HTML
-fragment, not the Org source. `C-c C-c` sends and `C-c C-k` aborts.
-Mentions and attachments work in every editor, and Evil starts in Insert state.
-
-Choose the default for **new** drafts:
+New drafts use real Org mode. Write emphasis, lists, links, tables, and code;
+teams4e converts the source to Teams HTML when sending.
 
 ```elisp
-(setq teams4e-compose-editor 'org)       ; default, built into Emacs
+(setq teams4e-compose-editor 'org)        ; default, built in
 ;; (setq teams4e-compose-editor 'markdown) ; markdown-mode + Pandoc
-;; (setq teams4e-compose-editor 'text)     ; previous plain/direct-HTML editor
+;; (setq teams4e-compose-editor 'text)     ; legacy plain/direct-HTML editor
 ```
 
-For Markdown, install the Emacs `markdown-mode` package and
-[Pandoc](https://pandoc.org/installing.html) (`brew install pandoc` on macOS).
-It must be available on Emacs's executable path, or set
-`teams4e-compose-pandoc-program` to its full path. Conversion failures keep
-the draft and never fall back to sending raw markup. Org export does not
-execute Babel code and rejects includes, setup files, macros and calls.
+`C-c C-c` sends; `C-c C-k` discards. `@` selects a real Teams mention.
+The reply editor opens below the conversation; closing it does not close your
+Emacs frame. Existing drafts retain their source format.
 
-`C-c C-b`, `C-c C-i`, `` C-c C-` `` and `C-c C-l` insert bold, italic,
-code and link markup for the selected editor. The legacy editor alone uses
-`C-c C-h` to switch between plain text and direct HTML.
+Markdown needs the Emacs `markdown-mode` package and [Pandoc](https://pandoc.org/installing.html).
+For rich incoming-message rendering, install [Agent Shell](https://github.com/xenodium/agent-shell);
+its renderer runs locally without starting an agent. Otherwise, reading falls
+back to plain text. [Composition details](USAGE.md#writing-messages).
 
-Draft recovery keeps the source and editor together. Older saved drafts stay
-in the legacy editor rather than being reinterpreted as Org.
+### How Far Back Does History Go?
 
-When replying from a transcript or chat inbox, the editor opens **below the
-conversation**, leaving recent exchanges visible above. Sending or discarding
-closes only that editor split, never the frame. On very small frames the
-normal buffer display is used instead. Customize
-`teams4e-compose-window-height` (default `0.4`) for the editor's share.
+Opening a chat defaults to a recent **30-day window and 50 messages** for speed.
+`L` loads more; `G` requests complete available history for that read.
+Configure `teams4e-message-days` and `teams4e-message-limit` to change the
+initial bounds; `nil` removes the respective bound.
 
-Opening a chat jumps to the absolute end. Cache refreshes keep you there
-until you move up; search results still jump to the requested message.
-Sending preserves the conversation's prior read/unread state.
-
-Use `M-x teams4e-dispatch` or `a ?` when you do not remember a key.
-Ordinary Emacs and optional Evil maps expose the same operations.
-
-## Views That Compose
-
-Bookmarks filter one canonical chat list. They do not create duplicate inboxes
-that need synchronization.
-
-| Bookmark | View | Order |
-| --- | --- | --- |
-| `b i` | Relevant inbox | Newest message first |
-| `b a` | All active chats; clear overlays | Newest message first |
-| `b u` | Toggle unread-only in the current view | Preserve current order |
-| `b s` | Snoozed chats, with wake times | Earliest wake first |
-| `b t` | Activity today in local time | Newest message first |
-| `b 2` | Activity in the last 24 hours | Newest message first |
-| `b w` | Activity in the last 7 days | Newest message first |
-| `b m` | Upcoming and active meetings | Earliest start first |
-| `b M` | All meeting chats | Earliest known start first |
-
-Active snoozes are hidden from ordinary views, including All and its unread-only
-overlay. `b s` is the explicit Snoozed view; it replaces the message-time column
-with each conversation's wake time. You can apply `F` there too to see only
-unread snoozed chats. In any view, a second `F` removes the unread overlay.
-
-For example, `b t`, then `F`, shows today's unread conversations; another `F`
-returns to all of today's conversations. `b a` clears the view and unread
-filters, but keeps active snoozes hidden.
-
-`z` applies `teams4e-default-snooze-minutes` immediately (three hours by
-default). `Z` offers 10 minutes, one hour, three hours, end of workday,
-tomorrow morning, next week, a custom date/time, and unsnooze. Tomorrow and
-next week use `teams4e-workday-start` (07:00 by default); end of workday uses
-`teams4e-workday-end` (18:00 by default) and wakes the next morning when the
-workday has already ended. Snoozing is local, persistent, and does not change
-Teams read state. Expired snoozes return on the next view redraw or refresh;
-there is no separate alarm notification or cross-device snooze synchronization.
-
-| After `Z` | Wake time |
-| --- | --- |
-| `m` / `1` / `3` | In 10 minutes / 1 hour / 3 hours |
-| `e` | End of workday, or next morning if it has ended |
-| `t` / `w` | Tomorrow / seven calendar days from now, at workday start |
-| `d` | Choose a date and time |
-| `u` | Unsnooze |
-
-Times use Emacs's local timezone. Workday settings are user preferences; the
-snooze menu does not consult calendar working hours or skip weekends.
-
-Queries support terms such as `unread`, `favorite`,
-`mentioned`, `attachment`, `type:meeting`,
-`name:TEXT`, `message:TEXT`, `today`, and `after:7d`.
-Terms are ANDed, `|` creates simple OR clauses, and `-` negates a term.
-`teams4e-bookmarks` accepts built-in queries, text queries, or your own
-predicate functions.
+Export and agent analysis make a separate request that follows every Graph
+pagination link, records counts and the date range, and rejects incomplete
+results. "Complete" means everything the API makes available to your account,
+not messages deleted or unavailable under retention/access policies.
 
 ## Meetings Without Living in the Calendar
 
-`M-x teams4e-meetings` or `b m` opens a calendar-light meeting view:
+`b m` orders upcoming/active meetings by **start time**, with intervals,
+location, and response state. Normal message views stay ordered by last message.
 
-1. **Scan** upcoming and active meetings by start time, including intervals,
-   response state, location, overlap warnings, and invitations awaiting action.
-2. **Inspect** participants, organizer, join link, proposal state, and meeting
-   chat in the singleton reader.
-3. **Act** with RSVP, join, and open-in-Outlook commands.
-4. **Negotiate** in a full-window availability buffer with ranked alternatives,
-   per-participant status, working hours, and returned calendar blocks.
-5. **Capture** the meeting summary or complete thread into Org or Markdown.
+Inspect participants, RSVP, join, or open the Outlook event. The availability
+workspace compares returned free/busy information and calendar blocks, offers
+alternate slots, and lets you propose a new time. Calendar permissions and
+sharing policy determine what is visible; unavailable data is not "free."
 
-In the availability buffer, `j`/`k` select an interval and `RET`
-proposes it. Use `s`/`b` for suggestions/calendar blocks, `r` to
-change the range, `w` to cycle work/personal/unrestricted hours, and
-`m` for an exact manual start.
+This is a useful calendar companion, not a complete replacement for Outlook.
+[Meeting workflow](USAGE.md#meetings-without-living-in-the-calendar).
 
-Private calendar blocks never expose returned subject or location through this
-UI. Advanced event creation, recurrence, organizer moves, and cancellation
-remain in Outlook.
+## Optional Agent Workflows
 
-## Rich Threads, Exports, and Agents
+- **One thread:** `a g` exports the full available conversation, then opens
+  Agent Shell with a configurable prompt and agent.
+- **Ongoing context:** `M-x teams4e-companion` opens a reusable discussion of
+  open requests, commitments, and possible next actions. Monitoring starts
+  when you invoke it; it is bounded, visible, and pausable.
 
-Teams HTML is converted into Markdown structure before display. When
-[Agent Shell](https://github.com/xenodium/agent-shell) is installed, the reader
-renders headings, emphasis, links, blockquotes, lists, checkboxes,
-syntax-highlighted code, and aligned GFM tables. Without it, the same thread
-falls back to a dependency-free plain renderer. Authenticated images always use
-the Teams backend.
-
-Rendered message links and URL attachments support
-[link-hint](https://github.com/noctuid/link-hint.el) without extra Teams-specific
-configuration. Use your existing shortcut or `M-x link-hint-open-link`;
-`M-x link-hint-copy-link` copies the destination. After updating, refresh an
-already open thread to rebuild its rendered links.
-
-Thread export and agent analysis make a dedicated live request that follows
-every Graph pagination link. The exported document records message count,
-page count, and oldest/newest timestamps. A partial offline cache is never
-presented as a complete transcript.
-
-```elisp
-(setq teams4e-message-renderer 'auto
-      teams4e-highlight-code-blocks t
-      teams4e-thread-analysis-agent 'codex)
-```
-
-Set the agent identifier to any configuration registered with Agent Shell.
-Agent analysis is an explicit `a g` action; ordinary reading does not start an
-agent. The configured agent can read the exported conversation, so use a
-provider appropriate for that content.
-
-The default prompt asks for decisions, questions, and action items without
-requiring a custom skill. Customize `teams4e-thread-analysis-prompt` to supply
-your own instructions; `%s` expands to the absolute Markdown path:
-
-```elisp
-(setq teams4e-thread-analysis-prompt
-      "Read %s and extract decisions and next actions with owners.")
-```
-
-For an agent with a separately installed `thread-analysis` skill, the previous
-prompt is still available as configuration:
-
-```elisp
-(setq teams4e-thread-analysis-prompt "$thread-analysis of this thread: %s")
-```
-
-## Ongoing Interaction Companion
-
-`M-x teams4e-companion` opens a reusable Agent Shell conversation about what
-needs your response, what you are waiting on, and sensible next actions. It
-checks Teams every ten minutes by default, sends changed context when the agent
-is idle, and lets you correct its understanding in conversation.
-
-There is no generated task ledger. Calendar context and selected Org/Markdown
-files are opt-in. Monitoring is bounded, visible, and pausable; read state is
-never treated as proof that an obligation is complete.
-
-See [COMPANION.md](COMPANION.md) for setup, keys, scope, and the mock walkthrough.
+Neither starts during ordinary reading. Calendar context and reference files
+are opt-in. The companion does not send messages or mutate calendars itself,
+but it does not restrict your agent's tools or permissions. Choose a provider
+approved for the content. [Companion setup and limits](COMPANION.md).
 
 ## Configuration Belongs to You
 
-No organization-specific tenant domain, client ID, employee identity, file path,
-browser profile, or OAuth implementation is built into `teams4e`. Public settings are Emacs
-customization options, including:
+`M-x customize-group RET teams4e RET` exposes package options. Authentication,
+paths, bookmarks, browser/app launchers, history limits, work hours, compose
+format, renderer, and agent instructions are configurable.
 
-- Token command, credential file, bootstrap helper, and credential selectors.
-- Browser command and native app command.
-- Cache, state, draft, image, download, export, and Org capture paths.
-- Bookmarks, default view, message order, unread behavior, and preview behavior.
-- Chat, message, member, image, and meeting load/concurrency limits.
-- Meeting search horizon, confidence, work-hour policy, and proposal text.
-- Snooze duration, local workday start/end, Markdown renderer, and agent/prompt.
-
-A complete, portable starting point might look like:
+For example, after setting up authentication:
 
 ```elisp
-(use-package teams4e
-  :commands (teams4e teams4e-meetings)
-  :custom
-  (teams4e-token-command '("my-token-helper" "graph-token"))
-  (teams4e-default-view 'inbox)
-  (teams4e-default-snooze-minutes 180)
-  (teams4e-workday-start "07:00")
-  (teams4e-workday-end "18:00")
-  (teams4e-mark-read-on-open nil)
-  (teams4e-preview-on-move nil)
-  (teams4e-message-order 'oldest-first)
-  (teams4e-message-limit 50)
-  (teams4e-load-more-count 100)
-  (teams4e-message-renderer 'auto)
-  (teams4e-confirm-send nil)
-  (teams4e-confirm-apply nil)
-  (teams4e-capture-file "~/Documents/teams.org"))
+(setq teams4e-compose-editor 'org
+      teams4e-mark-read-on-open nil
+      teams4e-preview-on-move nil
+      teams4e-message-order 'oldest-first
+      teams4e-message-days 30
+      teams4e-message-limit 50
+      teams4e-default-snooze-minutes 180
+      teams4e-capture-file "~/Documents/teams.org")
 ```
 
-Run `M-x customize-group RET teams4e RET` for every option.
+The capture path above is an example, not a required directory.
+Sending and applying marks do not ask for an extra confirmation by default.
+Set `teams4e-confirm-send` and `teams4e-confirm-apply` to `t` if you prefer one.
 
-## Architecture
+## Privacy and Public Use
 
-```text
-Emacs UI and workflow
-        |
-        | argv request / one JSON response
-        v
-Bundled Python Graph adapter -------- SQLite reading/search cache
-        |
-        | short-lived delegated token
-        v
-Your OAuth owner -------------------- Microsoft Graph
-```
+The package ships no organization-specific login owner, tenant ID, credentials,
+private-repository dependency, or required agent skill. Demos and fixtures use
+synthetic data. Ordinary use does not require AI services.
 
-Emacs owns views, reader state, rendering, compose buffers, marks, capture, and
-actions. The Python adapter owns Graph HTTP details, retries, pagination,
-bounded concurrency, cache persistence, and the mock protocol. Your external
-provider remains the sole owner of app registration, login, consent, and token
-refresh.
+**Your runtime data is still sensitive.** Caches, drafts, images, downloads,
+exports, captures, and agent snapshots may contain workplace information.
+Local storage is not an encrypted vault; keep it outside Git and use suitable
+device protections. Redact diagnostics before sharing them.
 
-Message bodies and tokens are never interpolated into shell commands.
-Performance reporting excludes people, titles, IDs, URLs, message content, and
-tokens.
+[SECURITY.md](SECURITY.md) describes data boundaries and safe reporting.
+[PUBLIC-READINESS.md](PUBLIC-READINESS.md) records the publication audit and its
+limits; a clean secret scan is not a guarantee of security.
 
-More implementation detail is in [DESIGN.md](DESIGN.md).
+## Development and Documentation
 
-## Development
-
-Run the complete offline suite:
+The Emacs frontend owns views, composition, capture, and navigation. The bundled
+Python adapter owns Graph requests, pagination, retries, caching, and the mock.
+An external provider owns authentication. See [DESIGN.md](DESIGN.md).
 
 ```sh
 make test
 make compile
+git diff --check
 ```
 
-The tests use patched Graph requests and the persistent mock. They require no
-credentials or tenant.
+No account is needed for the test suite. CI also exercises real Evil,
+link-hint, expand-region, and Org/Markdown composition. Live tenant behavior
+still needs live validation.
 
-Launch the reproducible graphical demo with:
+| Guide | What it covers |
+| --- | --- |
+| [Authentication](AUTHENTICATION.md) | Token helpers, credential files, adapters, and permissions |
+| [Usage](USAGE.md) | All keys, views, snooze, composition, meetings, capture, and exports |
+| [Local testing](LOCAL-TESTING.md) | Synthetic tenant, latency simulation, fixtures, and integration testing |
+| [Companion](COMPANION.md) | Optional ongoing agent discussion and its data scope |
+| [Contributing](CONTRIBUTING.md) | Portable changes and reproducible, redacted reports |
+| [Changelog](CHANGELOG.md) | Changes and compatibility notes |
 
-```sh
-emacs -Q --load tools/teams4e-demo.el
-```
+Feedback and focused PRs are welcome, especially on accessibility, plain-Emacs
+workflows, and adapters for approved integrations. Please use synthetic examples
+in public reports. An [r/emacs announcement draft](ANNOUNCEMENT.md) is included.
 
-The demo prefers Moe Dark when installed and falls back to Emacs's built-in
-Wombat theme. Its data uses reserved example identities only.
+## Compatibility and License
 
-See [LOCAL-TESTING.md](LOCAL-TESTING.md) for delayed UI testing, Microsoft Dev
-Proxy, and live developer-tenant validation.
-
-## Current Boundaries
-
-- Live use requires a separately configured delegated Graph token source.
-- Calls, screen sharing, and rich meeting participation stay in Teams.
-- Calendar data depends on Graph permissions and tenant sharing policy.
-- This is a young package. The mock and automated suite are comprehensive, but
-  live tenants still differ in policy and payload details.
-
-Issues and focused pull requests are welcome. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for mock reproductions and what to include
-in a public report. A ready-to-adapt [r/emacs announcement](ANNOUNCEMENT.md)
-describes the workflow and authentication setup.
-
-## Compatibility
-
-The project was renamed before its first public release. `(require 'msteams)`
-and `bin/msteams-graph` remain compatibility shims. New configuration should
-use `teams4e-*`, `(require 'teams4e)`, and
-`bin/teams4e-graph`.
-
-Microsoft's official desktop URL scheme is still `msteams://`; that
-scheme is unrelated to the package name.
-
-## License
+`M-x teams4e`, `M-x teams`, and `M-x teams4e-inbox` open the same inbox.
+The former `msteams` Lisp package and executable remain compatibility shims;
+new configuration should use `teams4e`. Microsoft's `msteams://` URL scheme
+is unrelated to that rename.
 
 GNU General Public License version 3 or later. See [LICENSE](LICENSE).

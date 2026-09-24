@@ -5,3 +5,15 @@ __pycache__/
 .DS_Store
 /.cache/
 /.tmp/
+
+# Accidental local configuration/runtime stores. Never put live data in Git.
+/.env
+/.env.*
+!/.env.example
+/credentials.json
+/teams-state.json
+/mock-tenant.json
+/teams.sqlite3*
+/drafts/
+/exports/
+/downloads/

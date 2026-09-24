@@ -136,8 +136,9 @@ For an initial adapter, support one-shot operation:
 - print exactly one JSON document to stdout;
 - send diagnostics to stderr and return a nonzero status on failure.
 
-The bundled `bin/teams4e-graph` and `bin/teams4e-mock` executables are reference
-implementations of this argv/JSON boundary. The Emacs side treats the backend
+The bundled `bin/teams4e-graph` executable is the reference implementation.
+Its mock path is implemented in `bin/teams4e_mock.py` and selected by
+`teams4e-mock-mode`; there is no separate `bin/teams4e-mock` executable. The Emacs side treats the backend
 as a replaceable integration layer, so views, rendering, bookmarks, compose,
 capture, and keybindings do not need to know where authentication lives.
 
@@ -178,6 +179,22 @@ For UI evaluation without any identity provider, use:
 After testing the mock, run `M-x teams4e-mock-disable` before connecting to your
 real account.
 
+## Permissions Are Feature-Specific
+
+Configure scopes through the approved OAuth owner, not by editing a token.
+Use the least privileges needed for your chosen operations. Chat access alone
+does not imply calendar access, and permissions do not override sharing policy.
+
+- Free/busy through [getSchedule](https://learn.microsoft.com/en-us/graph/api/calendar-getschedule?view=graph-rest-1.0)
+  supports delegated `Calendars.ReadBasic` as its least-privileged option.
+- Ranked alternatives through [findMeetingTimes](https://learn.microsoft.com/en-us/graph/api/user-findmeetingtimes?view=graph-rest-1.0)
+  use delegated `Calendars.Read.Shared` or an appropriate higher permission.
+- Calendar responses and new-time proposals require calendar write access.
+  Consult the endpoint permissions for the operations you enable.
+
+These are examples, not an exhaustive permission manifest for every feature.
+Resolve chat access first; add calendar and attachment capabilities as needed.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -203,10 +220,14 @@ your selected agent access to an exported thread; it is optional.
 - `teams4e` does not include a client ID, client secret, tenant ID, refresh token,
   or organization-specific endpoint.
 - Token commands are argv arrays and are not evaluated by a shell.
-- Tokens and outgoing message content are redacted from package diagnostics.
+- Package diagnostics redact tokens and outgoing message arguments, but review
+  provider/server output and screenshots yourself before sharing them.
 - Access tokens exist in the backend process memory and in the HTTP
   `Authorization` header; use the backend-adapter pattern if even short-lived
   token export is unacceptable.
 - A token grants only what its scopes and tenant policy permit. Reusing an
   approved OAuth owner reduces duplicate identity machinery; it does not expand
   authority.
+
+For local storage, process-argument visibility, agent sharing, and safe reports,
+see [SECURITY.md](SECURITY.md).

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Make Org the default compose editor, with Markdown and legacy text options;
+  send rendered HTML while preserving source-format drafts and native mentions.
+- Keep the transcript visible above replies and preserve the reader's end
+  position across cache, network, and meeting-context refreshes.
+- Restructure the README around evaluation, approved authentication, and daily
+  use; move the complete workflow reference to `USAGE.md`.
+- Add security/data-handling guidance and a scoped public-readiness review;
+  refresh the draft r/emacs announcement with composition and agent workflows.
+
 - Render native forwarded-message attachments using their original content,
   sender, and date; include every reference in reader, copy, and Markdown export.
 - Restore editable message forwarding with `a f`, preserving destination drafts,
