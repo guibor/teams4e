@@ -1,0 +1,53 @@
+name: Capture real Emacs demo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install graphical Emacs and capture tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes emacs-gtk xvfb python3-pil unzip
+      - uses: actions/checkout@v4
+        with:
+          repository: kuanyui/moe-theme.el
+          ref: 01d00a8d75b19f641b639ba23793cdd507c61f05
+          path: .tmp/moe-theme
+      - uses: actions/checkout@v4
+        with:
+          repository: xenodium/agent-shell
+          ref: 19e9d0175a5392af9999447f6be99f65e43f37bb
+          path: .tmp/agent-shell
+      - name: Install Iosevka
+        run: |
+          curl -fL --retry 3 -o /tmp/iosevka.zip https://github.com/be5invis/Iosevka/releases/download/v34.8.1/PkgTTF-Iosevka-34.8.1.zip
+          mkdir -p ~/.local/share/fonts/iosevka
+          unzip -q /tmp/iosevka.zip -d ~/.local/share/fonts/iosevka
+          fc-cache -f
+      - name: Capture actual Emacs frames
+        run: |
+          mkdir -p .tmp/capture
+          timeout 150s xvfb-run -a -s "-screen 0 1600x1200x24" emacs -Q \
+            -L . -L .tmp/moe-theme -L .tmp/agent-shell \
+            --load tools/capture-demo.el
+      - name: Assemble captured frames
+        run: python3 tools/assemble-demo.py .tmp/capture
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-emacs-demo
+          path: .tmp/capture
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: capture-diagnostics
+          path: .tmp/capture
+          retention-days: 3
