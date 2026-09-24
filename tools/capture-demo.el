@@ -70,13 +70,15 @@
         (scroll-bar-mode -1)
         (blink-cursor-mode -1)
         (set-frame-font "Iosevka-12" nil t)
-        (set-frame-size nil 180 46)
+        (set-frame-size nil 180 38)
         (set-frame-position nil 0 0)
         (setq inhibit-startup-screen t)
         (teams4e-inbox)
         (teams4e-capture-wait
          (lambda () (and (teams4e--find-chat "mock-chat-atlas")
                          (get-buffer-window (teams4e--recent-buffer)))))
+        (unless (string-match-p "Teams:" (format-mode-line global-mode-string))
+          (error "Teams status failed to render in the default mode line"))
         (teams4e-capture-frame "inbox.png")
         (let ((chat (teams4e--find-chat "mock-chat-atlas")))
           (teams4e-open-chat chat)
@@ -102,6 +104,14 @@
            (and (eq teams4e--active-view 'upcoming)
                 (with-current-buffer (teams4e--recent-buffer)
                   (>= (length tabulated-list-entries) 3)))))
+        (teams4e-open-chat (teams4e--find-chat "mock-chat-future-meeting"))
+        (teams4e-capture-wait
+         (lambda ()
+           (with-current-buffer teams4e--read-buffer-name
+             (and (teams4e--meeting-time-label teams4e--chat)
+                  (save-excursion
+                    (goto-char (point-min))
+                    (search-forward "Video room 4" nil t))))))
         (teams4e-capture-frame "meetings.png")
         (with-temp-file (expand-file-name "capture.json" teams4e-capture-output)
           (insert (json-serialize

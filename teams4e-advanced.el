@@ -93,6 +93,8 @@
   (setq teams4e--mode-line (concat " Teams: " text))
   (force-mode-line-update t))
 
+;; An empty global-mode-string needs a string head, not a conditional form.
+(unless global-mode-string (setq global-mode-string '("")))
 (unless (member 'teams4e--mode-line global-mode-string)
   (setq global-mode-string
         (append global-mode-string '(teams4e--mode-line))))

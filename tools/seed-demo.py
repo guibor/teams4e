@@ -43,6 +43,12 @@ def build_state():
         ("API integration", "The mock covers pagination and expired-token recovery."),
         ("Engineering", "Today's review notes are ready."),
         ("Design discussion", "Let's keep the reading pane quiet and predictable."),
+        ("Testing", "The offline fixtures are ready for review."),
+        ("Platform", "No changes needed to the rollout plan."),
+        ("Release notes", "The draft is ready for comments."),
+        ("Developer experience", "The setup walkthrough now includes Linux."),
+        ("Bug triage", "Two fixes landed; one report needs reproduction steps."),
+        ("Onboarding", "Welcome! The getting-started notes are in the channel."),
     ]):
         chat = copy.deepcopy(atlas)
         chat_id = f"demo-chat-{i}"
