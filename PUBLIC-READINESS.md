@@ -36,8 +36,19 @@ Contributors who want less identifying metadata should choose an appropriate
 Git identity for future commits; changing existing published history is a
 separate, coordinated decision and cannot erase already downloaded copies.
 
-The illustrated GIF is not a current Emacs recording. It is labeled as an
-illustration; the account-free mock is the way to evaluate the actual UI.
+The original illustrated GIF has been replaced with actual graphical Emacs
+captures (media follow-up on 2026-09-24). All four new PNGs were visually
+inspected: inbox, thread, Org reply, and meeting details. The capture uses Moe
+Dark, Iosevka, the optional Agent Shell Markdown renderer, and a synthetic tenant
+through the real mock backend. No private configuration or live account was
+loaded. The former HTML illustration source was removed.
+
+The capture workflow passed its nonblank/different-frame checks and its
+graphical mode-line assertion. Full package CI passed after the capture-related
+mode-line fix. A new working-tree Gitleaks scan reported no leaks. Image
+provenance is recorded in `assets/capture.json`; reproduction instructions
+are in [tools/README.md](tools/README.md). These are clean Emacs captures, not
+screenshots of a complete personal Spacemacs setup.
 
 This is a scoped review, not a penetration test, tenant validation, exhaustive
 privacy assessment, or security certification. Scanners can miss secrets, and

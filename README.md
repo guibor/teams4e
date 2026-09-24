@@ -24,10 +24,21 @@
   <a href="SECURITY.md">Privacy</a>
 </p>
 
-![Illustrative teams4e inbox and meeting workflow](assets/demo.gif)
+![Actual teams4e inbox, reader, Org reply, and meetings in Moe Dark](assets/demo.gif)
 
-*Illustrative Moe Dark animation, not a recording of the current UI. All
-conversations and identities are synthetic. The mock below runs the real client.*
+*Actual graphical Emacs captures with Moe Dark and Iosevka, using synthetic
+Teams conversations and meetings. Incoming formatting uses Agent Shell's
+optional Markdown renderer. This is clean Emacs, not a private Spacemacs
+profile. [Reproduce the captures](tools/README.md).*
+
+<details>
+<summary>Inspect the reader and Org reply at full resolution</summary>
+
+[Reader](assets/thread.png) | [Org reply with recent messages visible](assets/reply.png)
+
+![Actual Org reply below the Teams reader](assets/reply.png)
+
+</details>
 
 **teams4e is a native Emacs interface to Teams conversations, not an embedded
 browser or a terminal wrapper.** Scan headers, open a conversation in one

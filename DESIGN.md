@@ -329,12 +329,18 @@ keeps Graph authoritative and avoids a second calendar synchronization model.
 ## Documentation Assets
 
 `assets/logo.png` is a minimal chat-outline and block-cursor package mark.
-`assets/demo.gif` illustrates the headers, singleton reader, and meeting
-projection with non-account data and the installed Moe Dark palette.
-`tools/teams4e-demo.el` launches the real UI against the bundled mock and
-prefers `moe-dark`, with `wombat` as a dependency-free fallback.
-`tools/readme-demo.html` is the fixed-format Moe Dark source used to render the
-compact README animation.
+`assets/demo.gif` consists of actual graphical Emacs captures of the headers,
+singleton reader, Org reply split, and meeting details. Moe Dark and Iosevka
+are loaded normally; conversation data comes from the bundled mock backend.
+There is no HTML reconstruction or screenshot restyling.
+
+`tools/capture-demo.el` exercises those UI states and exports the frames with
+`x-export-frames`. The capture workflow pins the theme, font, and optional
+Agent Shell Markdown renderer, then assembles the PNGs into a GIF.
+`tools/teams4e-demo.el` launches an interactive version with the same synthetic
+tenant and fresh temporary state, without attaching to a user's Emacs server.
+See [capture instructions](tools/README.md) and `assets/capture.json` for
+reproduction details and image provenance.
 
 ## Reader And Navigation
 
