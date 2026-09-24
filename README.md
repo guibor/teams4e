@@ -17,12 +17,24 @@
 </p>
 
 <p align="center">
+  <a href="#the-mu4e-analogy">Why mu4e?</a> |
+  <a href="#write-in-org-or-markdown">Org replies</a> |
   <a href="#try-it-without-a-teams-account">Try the mock</a> |
   <a href="#reuse-the-login-you-already-have">Authentication</a> |
   <a href="#installation">Install</a> |
   <a href="USAGE.md">Workflow and keys</a> |
   <a href="SECURITY.md">Privacy</a>
 </p>
+
+**What if working through Teams felt like working through mail in mu4e?**
+teams4e brings that workflow to Teams: scan a headers list, open a conversation
+in one reusable reader, mark items for action, and move on. Replies are written
+in **real Org mode by default** and converted to formatted Teams messages when
+you send.
+
+This is a native Emacs client, not an embedded browser or a terminal wrapper.
+mu4e is the inspiration, not a dependency. Ordinary Emacs works; Spacemacs,
+Evil, Agent Shell, and a particular theme are optional.
 
 ![Actual teams4e inbox, reader, Org reply, and meetings in Moe Dark](assets/demo.gif)
 
@@ -40,15 +52,6 @@ profile. [Reproduce the captures](tools/README.md).*
 
 </details>
 
-**teams4e is a native Emacs interface to Teams conversations, not an embedded
-browser or a terminal wrapper.** Scan headers, open a conversation in one
-reusable reader, reply in Org or Markdown, and turn a message into an Org action
-without losing your place.
-
-It borrows the useful parts of mu4e: bookmarks, deferred marks, bulk actions,
-a predictable reading pane, and keyboard-driven triage. Ordinary Emacs works;
-Spacemacs, Evil, Agent Shell, and a particular theme are not required.
-
 > [!IMPORTANT]
 > **Live access reuses an existing approved Microsoft 365 integration.**
 > teams4e does not register another Entra application or implement its own
@@ -60,7 +63,30 @@ Spacemacs, Evil, Agent Shell, and a particular theme are not required.
 This is a young, unofficial client, not affiliated with Microsoft. Calls and
 screen sharing still belong in Teams; advanced calendar editing stays in Outlook.
 
-## Why teams4e?
+## The mu4e Analogy
+
+The useful idea from [mu4e](https://www.djcbsoftware.nl/code/mu/mu4e/) is a
+**headers-first workflow**: choose a view, scan the list, inspect an item, and
+act without losing your place. teams4e applies that model to conversations.
+
+| Familiar mail workflow | How teams4e applies it to Teams |
+| --- | --- |
+| Headers beside a message view | A conversation list beside one reusable reader; opening another chat replaces its contents rather than accumulating buffers |
+| Bookmarks for recurring searches | `b` opens views such as Inbox, Today, and Meetings; custom bookmarks can use queries or Lisp predicates |
+| Mark now, execute together | Queue read/unread actions across conversations, then apply with `x`; selection and bulk actions are also available |
+| Keep navigating while reading | Conversation navigation and actions remain available from the reader; `j`/`k` move through chats, while `M-j`/`M-k` move through messages |
+| Compose in an Emacs buffer | `R` replies and `c` composes; edit in Org, Markdown, or plain text with recoverable drafts |
+
+The unit of triage is usually a **whole conversation**, not an individual
+email. This is not a mu4e backend, a Maildir mirror, or an exact keymap clone.
+For example, `r` and `i` queue mark-read here; `R` replies.
+You do not need to know or install mu4e to use it.
+
+teams4e also adds chat-specific conveniences: `F` toggles unread-only on top
+of the current view, snooze hides a conversation until later, and the meeting
+view sorts by meeting start time rather than the last chat message.
+
+## Key Features
 
 | What you want to do | How it works |
 | --- | --- |
@@ -220,8 +246,26 @@ snooze wake times, message selection, link-hint, and forwarding details.
 
 ### Write in Org or Markdown
 
-New drafts use real Org mode. Write emphasis, lists, links, tables, and code;
-teams4e converts the source to Teams HTML when sending.
+**Org is the editing mode, not just an export destination.** Press `R` to
+reply or `c` to compose, and the draft opens in `org-mode` with teams4e's
+compose minor mode. Use familiar Org editing commands for emphasis, lists,
+links, tables, and source blocks. For example:
+
+```org
+*Quick update*
+
+- *Done:* the pagination fix.
+- *Next:* review [[https://example.org/review][the notes]].
+```
+
+Send with `C-c C-c`: teams4e exports the draft to an HTML fragment, so people
+in Teams receive formatted text and clickable links, **not raw Org syntax**.
+Recipients do not need Emacs or Org. Org composition uses Emacs's built-in
+exporter; it does not require Pandoc or an AI service.
+
+The reply buffer opens below the reader, keeping recent exchanges visible
+while you write. Recoverable drafts retain their source and editor choice.
+Real Teams `@` mentions and attachments work in all three editors.
 
 ```elisp
 (setq teams4e-compose-editor 'org)        ; default, built in
@@ -229,11 +273,14 @@ teams4e converts the source to Teams HTML when sending.
 ;; (setq teams4e-compose-editor 'text)     ; legacy plain/direct-HTML editor
 ```
 
-`C-c C-c` sends; `C-c C-k` discards. `@` selects a real Teams mention.
-The reply editor opens below the conversation; closing it does not close your
-Emacs frame. Existing drafts retain their source format.
+`C-c C-k` discards the draft; closing the composer does not close your Emacs
+frame. Conversion errors preserve the draft instead of sending raw markup.
+Org export does not execute Babel code; includes, setup files, macros, and
+calls are rejected.
 
-Markdown needs the Emacs `markdown-mode` package and [Pandoc](https://pandoc.org/installing.html).
+Markdown drafts similarly become HTML on send. They need the Emacs
+`markdown-mode` package and [Pandoc](https://pandoc.org/installing.html).
+The `text` option retains the original plain/direct-HTML editor.
 For rich incoming-message rendering, install [Agent Shell](https://github.com/xenodium/agent-shell);
 its renderer runs locally without starting an agent. Otherwise, reading falls
 back to plain text. [Composition details](USAGE.md#writing-messages).
