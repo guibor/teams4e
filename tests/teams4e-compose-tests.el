@@ -204,4 +204,3 @@
       (should (equal (teams4e--get (teams4e-message-at-point) 'id) "one")))))
 
 ;;; teams4e-compose-tests.el ends here
-

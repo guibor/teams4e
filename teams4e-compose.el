@@ -107,8 +107,8 @@ or evaluating content pasted into a draft."
   (let ((org-export-use-babel nil)
         (org-export-allow-bind-keywords nil)
         (org-export-global-macros nil)
-        (org-export-before-processing-hook nil)
-        (org-export-before-parsing-hook nil)
+        (org-export-before-processing-functions nil)
+        (org-export-before-parsing-functions nil)
         (org-export-filter-final-output-functions nil)
         (org-html-htmlize-output-type nil))
     (org-export-string-as
@@ -198,4 +198,3 @@ or evaluating content pasted into a draft."
 
 (provide 'teams4e-compose)
 ;;; teams4e-compose.el ends here
-
