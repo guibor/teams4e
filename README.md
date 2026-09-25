@@ -1,109 +1,76 @@
-<p align="center">
-  <img src="assets/logo.png" width="104" alt="teams4e logo">
-</p>
+# teams4e
 
-<h1 align="center">teams4e</h1>
+<img src="assets/logo.png" alt="teams4e logo" width="64" align="right">
 
-<p align="center">
-  <strong>Microsoft Teams, with a mu4e-inspired Emacs workflow.</strong><br>
-  One inbox. One reader. Your editor.
-</p>
+teams4e is an Emacs client for Microsoft Teams chats, channels, and meetings.
+It is inspired by [mu4e](https://www.djcbsoftware.nl/code/mu/mu4e/): use
+bookmarks to select conversations, read them in a headers/message layout, and
+act on them without leaving Emacs. Replies can be composed in Org mode, and
+conversations can be captured into Org with links back to their source.
 
-<p align="center">
-  <a href="https://github.com/guibor/teams4e/actions/workflows/test.yml"><img alt="Tests" src="https://github.com/guibor/teams4e/actions/workflows/test.yml/badge.svg"></a>
-  <a href="https://www.gnu.org/software/emacs/"><img alt="Emacs 29.1+" src="https://img.shields.io/badge/Emacs-29.1%2B-7f5ab6?logo=gnuemacs&logoColor=white"></a>
-  <a href="https://www.python.org/"><img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white"></a>
-  <a href="LICENSE"><img alt="GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-187b75"></a>
-</p>
+The package provides interactive commands, mode-local keymaps, and user
+options. The bindings below are defaults, not a required workflow; use
+`M-x`, bind the commands you need, and configure the views and actions to
+suit your setup. mu4e, Evil, Spacemacs, and AI services are not required.
 
-<p align="center">
-  <a href="#the-mu4e-analogy">Why mu4e?</a> |
-  <a href="#write-in-org-or-markdown">Org replies</a> |
-  <a href="#try-it-without-a-teams-account">Try the mock</a> |
-  <a href="#reuse-the-login-you-already-have">Authentication</a> |
-  <a href="#installation">Install</a> |
-  <a href="USAGE.md">Workflow and keys</a> |
-  <a href="SECURITY.md">Privacy</a>
-</p>
+## Features
 
-**What if working through Teams felt like working through mail in mu4e?**
-teams4e brings that workflow to Teams: scan a headers list, open a conversation
-in one reusable reader, mark items for action, and move on. Replies are written
-in **real Org mode by default** and converted to formatted Teams messages when
-you send.
-
-This is a native Emacs client, not an embedded browser or a terminal wrapper.
-mu4e is the inspiration, not a dependency. Ordinary Emacs works; Spacemacs,
-Evil, Agent Shell, and a particular theme are optional.
-
-![Actual teams4e inbox, reader, Org reply, and meetings in Moe Dark](assets/demo.gif)
-
-*Actual graphical Emacs captures with Moe Dark and Iosevka, using synthetic
-Teams conversations and meetings. Incoming formatting uses Agent Shell's
-optional Markdown renderer. This is clean Emacs, not a private Spacemacs
-profile. [Reproduce the captures](tools/README.md).*
-
-<details>
-<summary>Inspect the reader and Org reply at full resolution</summary>
-
-[Reader](assets/thread.png) | [Org reply with recent messages visible](assets/reply.png)
-
-![Actual Org reply below the Teams reader](assets/reply.png)
-
-</details>
-
-> [!IMPORTANT]
-> **Live access reuses an existing approved Microsoft 365 integration.**
-> teams4e does not register another Entra application or implement its own
-> device-code login. It needs a compatible delegated Graph token from your
-> existing broker/CLI/TUI/MCP integration, or a custom backend adapter.
-> An arbitrary MCP connection is not sufficient, and tenant policy still applies.
-> [How to connect](#reuse-the-login-you-already-have).
-
-This is a young, unofficial client, not affiliated with Microsoft. Calls and
-screen sharing still belong in Teams; advanced calendar editing stays in Outlook.
+- Bookmarks defined by queries or Lisp predicates, with an unread-only filter
+  that can be applied to the current view and removed again.
+- Conversation actions for Org capture, Markdown export, read/unread state,
+  snooze, and opening the source in Teams. Marks and bulk actions allow
+  several conversations to be processed together.
+- An Org-mode composer with HTML conversion on send, recoverable drafts,
+  participant mentions, and attachments. Markdown and plain text are
+  alternative editors. Recent messages remain visible while replying.
+- One reusable reader for chats and channel threads, with images, attachments,
+  message navigation, and optional rich rendering, link-hint, and
+  expand-region integration.
+- A meeting view with start times, intervals, participants, location, RSVP,
+  joining, and an availability workspace for proposing another time.
+- Optional Agent Shell commands for analysing an exported thread or discussing
+  outstanding requests. These run only when invoked.
 
 ## The mu4e Analogy
 
-The useful idea from [mu4e](https://www.djcbsoftware.nl/code/mu/mu4e/) is a
-**headers-first workflow**: choose a view, scan the list, inspect an item, and
-act without losing your place. teams4e applies that model to conversations.
+The main connection is between correspondence and the rest of an Emacs
+workflow. A conversation may need a reply, a task in Org, a reference in a
+project note, or no further attention. Bookmarks let you choose what to work
+on; the reader and conversation actions let you deal with it in place.
 
-| Familiar mail workflow | How teams4e applies it to Teams |
-| --- | --- |
-| Headers beside a message view | A conversation list beside one reusable reader; opening another chat replaces its contents rather than accumulating buffers |
-| Bookmarks for recurring searches | `b` opens views such as Inbox, Today, and Meetings; custom bookmarks can use queries or Lisp predicates |
-| Mark now, execute together | Queue read/unread actions across conversations, then apply with `x`; selection and bulk actions are also available |
-| Keep navigating while reading | Conversation navigation and actions remain available from the reader; `j`/`k` move through chats, while `M-j`/`M-k` move through messages |
-| Compose in an Emacs buffer | `R` replies and `c` composes; edit in Org, Markdown, or plain text with recoverable drafts |
+Like mu4e's [bookmarks](https://www.djcbsoftware.nl/code/mu/mu4e/Bookmarks.html),
+teams4e bookmarks are named queries with configurable shortcut keys.
+Its Org capture actions serve a similar purpose to
+[mu4e's Org integration](https://www.djcbsoftware.nl/code/mu/mu4e/Org_002dmode.html):
+keep actionable material in your notes with enough context to return to the
+original correspondence.
 
-The unit of triage is usually a **whole conversation**, not an individual
-email. This is not a mu4e backend, a Maildir mirror, or an exact keymap clone.
-For example, `r` and `i` queue mark-read here; `R` replies.
-You do not need to know or install mu4e to use it.
+This is an independent client, not a mu4e backend or an exact keymap clone.
+The usual unit of triage is a Teams conversation rather than a mail message.
+Org capture uses package-provided entries, not mu4e's link types or capture
+template fields. See [Org capture](#org-capture-and-conversation-actions)
+and [customization](#customization) below.
 
-teams4e also adds chat-specific conveniences: `F` toggles unread-only on top
-of the current view, snooze hides a conversation until later, and the meeting
-view sorts by meeting start time rather than the last chat message.
+## Screenshots
 
-## Key Features
+![Actual teams4e inbox, reader, Org reply, and meetings in Moe Dark](assets/demo.gif)
 
-| What you want to do | How it works |
-| --- | --- |
-| Read without accumulating buffers | One reusable reader for chats and channel threads; inline images, links, attachments, and optional rich rendering |
-| Write in your editor | Org by default, optional Markdown or plain text; rendered HTML on send, recoverable drafts, mentions, replies, and attachments |
-| Keep context while replying | The composer opens below the transcript, with recent exchanges visible above |
-| Triage a busy inbox | Bookmarks, reversible unread overlays, read/unread marks, favorites, bulk actions, and local snooze |
-| Find the meeting, not just its chat | Start-time ordering, time intervals, location, participants, RSVP, join, and an availability/propose-new-time workspace |
-| Take the conversation with you | Compact Org capture with source links, complete paginated Markdown export, and editable text forwarding |
-| Ask an agent for help, explicitly | Per-thread analysis or an optional ongoing Agent Shell companion; no agent starts during ordinary reading |
+Actual graphical Emacs captures using Moe Dark, Iosevka, and synthetic Teams
+data. Incoming formatting uses Agent Shell's optional Markdown renderer.
+[Reader](assets/thread.png), [Org reply](assets/reply.png),
+[meeting details](assets/meetings.png), and
+[capture instructions](tools/README.md).
 
-**A small example:** `b t` opens Today; `F` narrows it to unread conversations;
-`RET` opens one; `R` starts an Org reply below it. Send with `C-c C-c`.
-Another `F` restores Today without the unread overlay.
+## Requirements
 
-Opening a conversation does **not** mark it read by default. Snooze is local,
-not a change to Teams read state. All of these defaults are configurable.
+Emacs 29.1+, Python 3.10+, and Git for installation from source. The bundled
+Python backend has no third-party Python dependencies.
+
+Live access requires a compatible, approved Microsoft 365 integration to
+provide authentication, or a custom backend adapter. teams4e does not
+register an Entra application or implement device-code login.
+See [authentication](#reuse-the-login-you-already-have); the mock below needs
+no account.
 
 ## Try It Without a Teams Account
 
@@ -220,36 +187,82 @@ Restart Emacs so its Lisp and persistent backend use the same version.
 `M-x find-library RET teams4e RET` identifies the loaded installation.
 Pulling an unrelated checkout does not update your installed package.
 
-## Daily Workflow
+## Commands and Key Bindings
 
-| Key | Action |
-| --- | --- |
-| `j` / `k` | Next/previous conversation, even from the reader |
-| `RET` / `q` | Open / close the reader |
-| `R` / `c` | Reply / compose |
-| `r` or `i`, then `x` | Queue mark-read, then apply |
-| `b` | Bookmarks: `i` inbox, `a` all active, `t` today, `m` meetings, `s` snoozed |
-| `F` | Toggle unread-only on the current view; press again to undo |
-| `z` / `Z` | Default snooze / choose a wake time |
-| `o` / `O` | Open in browser / Teams app |
-| `M-j` / `M-k` | Move between messages |
-| `a a` | Capture a compact Org action with source metadata |
-| `a e` / `a g` | Export complete Markdown / export for agent analysis |
-| `a ?` | Action help |
+Start with `M-x teams4e`. Use `M-x customize-group RET teams4e RET` for user
+options, `C-h f` for a command's documentation, and `C-h m` for the active
+mode's bindings. `M-x teams4e-dispatch` provides command help.
 
-`F` is the unread toggle, **not** forward; forwarding is `a f`.
-`b a` clears the view/unread filters but still hides active snoozes;
-`b s` is the explicit Snoozed view.
+The following are selected **default local bindings**, primarily in the
+headers buffer. The chat reader delegates conversation actions to the linked
+headers buffer. They can be changed independently of the commands.
 
-[USAGE.md](USAGE.md) contains the full key reference, queries, bulk actions,
-snooze wake times, message selection, link-hint, and forwarding details.
+| Command | Default binding | Purpose |
+| --- | --- | --- |
+| `teams4e-bookmark-jump` | `b` | Select a configured bookmark |
+| `teams4e-filter` | `s` | Enter a query |
+| `teams4e-toggle-unread-filter` | `F` | Toggle unread-only within the current view |
+| `teams4e-recent-open` | `RET` | Open the selected conversation |
+| `teams4e-reply` / `teams4e-send` | `R` / `c` | Reply / compose |
+| `teams4e-mark-read-later` | `r` or `i` | Queue mark-read |
+| `teams4e-execute-marks` | `x` | Apply queued actions |
+| `teams4e-snooze-quick` / `teams4e-snooze` | `z` / `Z` | Default snooze / choose a wake time |
+| `teams4e-capture-current-summary` | `a a` | Start a compact Org capture |
+| `teams4e-capture-current-thread` | `a A` | Capture the available transcript |
+| `teams4e-jump-to-capture` | `a j` | Visit an existing capture |
+| `teams4e-export-current-thread` | `a e` | Export Markdown |
+| `teams4e-analyze-current-thread` | `a g` | Export for Agent Shell analysis |
 
-### Write in Org or Markdown
+The full [usage reference](USAGE.md) covers reader navigation, bulk actions,
+snooze choices, message selection, and channel-specific commands.
+See [changing bindings](#changing-bindings) for examples.
 
-**Org is the editing mode, not just an export destination.** Press `R` to
-reply or `c` to compose, and the draft opens in `org-mode` with teams4e's
-compose minor mode. Use familiar Org editing commands for emphasis, lists,
-links, tables, and source blocks. For example:
+## Org Capture and Conversation Actions
+
+`teams4e-capture-current-summary` starts an editable `org-capture` entry
+containing the conversation title, source link, dates, participants when
+available, and a short last/selected-message excerpt. It does not download
+the whole thread. Meeting captures also include available calendar context.
+
+Use this to turn a request into a task: capture it, give the heading a
+meaningful title and a TODO keyword, and schedule or refile it using Org's
+ordinary commands. The source link remains with the task. To include the
+destination in your agenda, add it to `org-agenda-files` as you would any
+other Org file; teams4e does not change your agenda configuration.
+
+The destination is configurable:
+
+```elisp
+(with-eval-after-load 'teams4e
+  (setq teams4e-capture-file "~/org/teams.org")) ; choose your own file
+```
+
+The default value is `nil`, which resolves to `teams.org` under
+`org-directory`, or under `~/Documents` if necessary. The compact capture
+opens an existing matching entry when one is found instead of creating another.
+`teams4e-jump-to-capture` also returns to that entry.
+
+For reference material, use `teams4e-capture-current-thread` to capture the
+available transcript, or `teams4e-export-current-thread` to save Markdown.
+`teams4e-capture-current-message` writes the selected message to the capture
+file. These are separate choices: capturing an action need not copy a long
+conversation into your notes.
+
+The compact and full-thread commands supply their own editable capture
+entries. They do not currently expose a user-defined capture-template option
+or mu4e-compatible `org-store-link` fields. The captured entry is ordinary
+Org text, not a second task database synchronized with Teams.
+
+The `teams4e-action-map` prefix groups these commands with read/unread,
+snooze, browser, and other conversation actions. You can bind its commands
+directly or add bindings for your own interactive functions.
+
+## Write in Org or Markdown
+
+New drafts use `org-mode` with a compose minor mode.
+`teams4e-reply` and `teams4e-send` open the editor; normal Org commands
+remain available for emphasis, lists, links, tables, and source blocks.
+For example:
 
 ```org
 *Quick update*
@@ -258,7 +271,7 @@ links, tables, and source blocks. For example:
 - *Next:* review [[https://example.org/review][the notes]].
 ```
 
-Send with `C-c C-c`: teams4e exports the draft to an HTML fragment, so people
+`teams4e-compose-send` (default `C-c C-c`) exports an HTML fragment, so people
 in Teams receive formatted text and clickable links, **not raw Org syntax**.
 Recipients do not need Emacs or Org. Org composition uses Emacs's built-in
 exporter; it does not require Pandoc or an AI service.
@@ -273,8 +286,8 @@ Real Teams `@` mentions and attachments work in all three editors.
 ;; (setq teams4e-compose-editor 'text)     ; legacy plain/direct-HTML editor
 ```
 
-`C-c C-k` discards the draft; closing the composer does not close your Emacs
-frame. Conversion errors preserve the draft instead of sending raw markup.
+The default `C-c C-k` binding discards the draft; closing it does not close
+your Emacs frame. Conversion errors preserve the draft instead of sending raw markup.
 Org export does not execute Babel code; includes, setup files, macros, and
 calls are rejected.
 
@@ -285,10 +298,11 @@ For rich incoming-message rendering, install [Agent Shell](https://github.com/xe
 its renderer runs locally without starting an agent. Otherwise, reading falls
 back to plain text. [Composition details](USAGE.md#writing-messages).
 
-### How Far Back Does History Go?
+## History and Export
 
 Opening a chat defaults to a recent **30-day window and 50 messages** for speed.
-`L` loads more; `G` requests complete available history for that read.
+`teams4e-chat-load-more` (default `L`) loads more;
+`teams4e-chat-load-all` (default `G`) requests complete available history.
 Configure `teams4e-message-days` and `teams4e-message-limit` to change the
 initial bounds; `nil` removes the respective bound.
 
@@ -299,8 +313,8 @@ not messages deleted or unavailable under retention/access policies.
 
 ## Meetings Without Living in the Calendar
 
-`b m` orders upcoming/active meetings by **start time**, with intervals,
-location, and response state. Normal message views stay ordered by last message.
+`M-x teams4e-meetings` orders upcoming/active meetings by start time, with
+intervals, location, and response state. Normal message views stay ordered by last message.
 
 Inspect participants, RSVP, join, or open the Outlook event. The availability
 workspace compares returned free/busy information and calendar blocks, offers
@@ -312,9 +326,9 @@ This is a useful calendar companion, not a complete replacement for Outlook.
 
 ## Optional Agent Workflows
 
-- **One thread:** `a g` exports the full available conversation, then opens
-  Agent Shell with a configurable prompt and agent.
-- **Ongoing context:** `M-x teams4e-companion` opens a reusable discussion of
+- `teams4e-analyze-current-thread` exports the full available conversation,
+  then opens Agent Shell with a configurable prompt and agent.
+- `teams4e-companion` opens a reusable discussion of
   open requests, commitments, and possible next actions. Monitoring starts
   when you invoke it; it is bounded, visible, and pausable.
 
@@ -323,28 +337,90 @@ are opt-in. The companion does not send messages or mutate calendars itself,
 but it does not restrict your agent's tools or permissions. Choose a provider
 approved for the content. [Companion setup and limits](COMPANION.md).
 
-## Configuration Belongs to You
+## Customization
 
-`M-x customize-group RET teams4e RET` exposes package options. Authentication,
-paths, bookmarks, browser/app launchers, history limits, work hours, compose
-format, renderer, and agent instructions are configurable.
-
-For example, after setting up authentication:
+User options belong to the `teams4e` customization group. Use Customize or
+set them in your init file after loading the package. For example:
 
 ```elisp
-(setq teams4e-compose-editor 'org
-      teams4e-mark-read-on-open nil
-      teams4e-preview-on-move nil
-      teams4e-message-order 'oldest-first
-      teams4e-message-days 30
-      teams4e-message-limit 50
-      teams4e-default-snooze-minutes 180
-      teams4e-capture-file "~/Documents/teams.org")
+(with-eval-after-load 'teams4e
+  ;; These values show the current defaults; change them to suit your setup.
+  (setq teams4e-compose-editor 'org
+        teams4e-mark-read-on-open nil
+        teams4e-preview-on-move nil
+        teams4e-message-order 'oldest-first
+        teams4e-message-days 30
+        teams4e-message-limit 50
+        teams4e-default-snooze-minutes 180))
 ```
 
-The capture path above is an example, not a required directory.
-Sending and applying marks do not ask for an extra confirmation by default.
-Set `teams4e-confirm-send` and `teams4e-confirm-apply` to `t` if you prefer one.
+Authentication, paths, work hours, browser/app launchers, rendering, and agent
+instructions are also configurable. Sending and applying marks do not ask for
+an extra confirmation by default; set `teams4e-confirm-send` and
+`teams4e-confirm-apply` to `t` to enable one.
+
+### Bookmarks
+
+`teams4e-bookmarks` is a list of plists with `:name`, `:query`, and
+`:key`. A query can be a built-in view symbol, a query string, or a function
+accepting a chat. For example, add a project view without replacing the
+built-in bookmarks:
+
+```elisp
+(with-eval-after-load 'teams4e
+  (add-to-list 'teams4e-bookmarks
+               '(:name "Project Atlas"
+                 :query "name:Atlas"
+                 :key ?p)
+               t))
+```
+
+With the default bookmark binding, this makes `b p` select that view.
+Choose an unused shortcut of your own. Query terms include `unread`,
+`favorite`, `mentioned`, `type:meeting`, `name:TEXT`, and `after:7d`.
+See [query syntax](USAGE.md#views-that-compose) for combinations and predicates.
+
+`teams4e-toggle-unread-filter` narrows the current view without replacing
+its query; invoke it again to remove that restriction. Active snoozes stay
+hidden from ordinary views, including All; the Snoozed bookmark exposes them.
+Snooze is local and does not change Teams read state.
+
+### Changing Bindings
+
+Use the package's mode maps rather than global bindings for buffer-local
+actions. For example, add an alternative unread-filter binding in both the
+headers and chat reader, and an Org-capture alias under the action prefix:
+
+```elisp
+(with-eval-after-load 'teams4e
+  (keymap-set teams4e-recent-mode-map "C-c u"
+              #'teams4e-toggle-unread-filter)
+  (keymap-set teams4e-chat-mode-map "C-c u"
+              #'teams4e-chat-toggle-unread-filter)
+  (keymap-set teams4e-action-map "n"
+              #'teams4e-capture-current-summary))
+```
+
+These are examples, not additional package defaults. The last form adds
+`a n` alongside the default `a a` binding. Use `keymap-unset` if you
+also want to remove an old binding. Your own interactive commands can be added
+to the same prefix map; this does not add them to the separate dispatcher menu.
+
+With Evil, state-specific maps may take precedence over ordinary mode maps.
+For example, add the same reader binding in Normal and Motion states from
+your init file:
+
+```elisp
+(with-eval-after-load 'teams4e
+  (with-eval-after-load 'evil
+    (evil-define-key* '(normal motion) teams4e-chat-mode-map
+      (kbd "C-c u") #'teams4e-chat-toggle-unread-filter)))
+```
+
+The package refreshes some built-in Evil bindings when its modes start. When
+overriding those keys, put your customization in a mode hook registered after
+loading teams4e. Ordinary mode hooks can also configure buffer-local settings;
+no Evil or Spacemacs configuration is needed for non-modal use.
 
 ## Privacy and Public Use
 
