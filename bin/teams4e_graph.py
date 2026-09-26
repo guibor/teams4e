@@ -43,7 +43,7 @@ MEETING_EVENT_SELECT = (
 )
 CALENDAR_LOOKUP_PAST_DAYS = 30
 CALENDAR_LOOKUP_PAST_FALLBACK_DAYS = 21
-CALENDAR_LOOKUP_FUTURE_DAYS = 45
+CALENDAR_LOOKUP_FUTURE_DAYS = 60
 CALENDAR_LOOKUP_PAGE_SIZE = 50
 CALENDAR_LOOKUP_CHUNK_DAYS = 7
 CALENDAR_LOOKUP_MAX_PAGES_PER_CHUNK = 2
@@ -2194,10 +2194,10 @@ def list_messages(
     modified_start: str | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-  """Return all selected messages for CHAT_ID, newest pages first."""
+  """Read newest-created messages, or modified-date changes for sync/window queries."""
   parameters = [
       ("$top", "50"),
-      ("$orderby", "lastModifiedDateTime desc"),
+      ("$orderby", "lastModifiedDateTime desc" if modified_start else "createdDateTime desc"),
   ]
   if modified_start:
     parameters.append(
@@ -3192,7 +3192,7 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
   if args[:3] == ["teams", "chat", "list"]:
     result = list_chats(
         access_token,
-        integer_option(args, "--metadataLimit", 150, minimum=1),
+        integer_option(args, "--metadataLimit", 300, minimum=1),
     )
     with TeamsCache() as cache:
       cache.upsert_resources("chat", result)

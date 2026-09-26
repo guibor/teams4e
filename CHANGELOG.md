@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Raise default chat coverage to 300, opened-thread history to 100 messages,
+  meeting batches to 64, and calendar lookahead to 60 days. Keep automatic
+  previews at 50 and remove the default message date cutoff.
+- Read newest-created messages by default, matching the terminal client;
+  retain modified-date ordering for explicit date-window and sync requests.
+- Start the live thread request alongside its SQLite cache read. Ignore
+  late cache results after a live response or a chat switch.
+- Select the latest end immediately on explicit reopen, respecting display
+  order. Defer calendar enrichment outside meeting views/readers and retain
+  matching calendar context for five minutes.
+
 - Resolve recurring calendar links to the current or nearest future occurrence,
   including rescheduled exceptions; skip cancelled and declined occurrences.
 - Choose the nearest calendar match independently of parallel response order,

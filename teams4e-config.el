@@ -247,15 +247,16 @@ The renderer also constrains images to the width of their transcript window."
   :type '(choice (const "text") (const "html"))
   :group 'teams4e)
 
-(defcustom teams4e-message-days 30
+(defcustom teams4e-message-days nil
   "Number of recent days loaded when opening a Teams chat.
 
-Set this to nil to request the complete message history.  The `G' binding in a
-chat always requests complete history for that refresh."
-  :type '(choice (const :tag "Complete history" nil) integer)
+Nil removes the date cutoff, but `teams4e-message-limit' still bounds the
+request.  This lets quiet chats show their latest exchange regardless of age.
+The `G' binding requests complete history for that refresh."
+  :type '(choice (const :tag "No date cutoff" nil) integer)
   :group 'teams4e)
 
-(defcustom teams4e-message-limit 50
+(defcustom teams4e-message-limit 100
   "Maximum number of returned messages rendered in a chat buffer.
 
 The newest messages are retained.  Nil renders every returned message."
@@ -284,7 +285,7 @@ refresh and export remain unbounded."
   :type '(choice (const :tag "Use normal message limit" nil) integer)
   :group 'teams4e)
 
-(defcustom teams4e-chat-metadata-limit 150
+(defcustom teams4e-chat-metadata-limit 300
   "Maximum chat metadata records considered for the native inbox.
 
 The frontend sorts this bounded set by recent activity before resolving member
@@ -309,13 +310,14 @@ Emacs starts that single batch asynchronously after rendering chat metadata."
   :type 'integer
   :group 'teams4e)
 
-(defcustom teams4e-meeting-enrichment-limit 32
+(defcustom teams4e-meeting-enrichment-limit 64
   "Maximum meeting chats resolved in one calendar-enrichment batch.
 
-Ordinary inbox loads request one batch.  Explicit meeting views continue
-through the loaded chats in bounded batches, prioritizing recent message-less
-stubs first.  Results attach to the existing chat objects, not a second
-calendar cache.  Set this to zero to keep meeting details reader-only."
+Explicit meeting views continue through the loaded chats in bounded batches,
+prioritizing recent message-less stubs first.  Results attach to the existing
+chat objects, not a second
+calendar cache.  Ordinary inbox views do not request calendar enrichment.
+Set this to zero to keep meeting details reader-only."
   :type 'integer
   :group 'teams4e)
 
@@ -332,7 +334,7 @@ timeout instead of staying on \"Loading calendar...\" indefinitely."
   :type 'integer
   :group 'teams4e)
 
-(defcustom teams4e-meeting-context-cache-seconds 120
+(defcustom teams4e-meeting-context-cache-seconds 300
   "Seconds to preserve matching in-memory meeting context across chat refreshes.
 
 The context remains attached to the canonical chat object.  An explicit inbox

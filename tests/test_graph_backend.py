@@ -276,6 +276,21 @@ class GraphBackendTests(unittest.TestCase):
     with mock.patch.object(backend, "graph_collection", return_value=[]) as request:
       backend.list_messages("chat-id", "token", limit=75)
     self.assertEqual(75, request.call_args.kwargs["limit"])
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(request.call_args.args[0]).query)
+    self.assertEqual(["createdDateTime desc"], query["$orderby"])
+    self.assertNotIn("$filter", query)
+
+  def test_latest_messages_follow_two_pages_without_reordering_by_edits(self) -> None:
+    with mock.patch.object(backend, "graph_json", side_effect=[
+        {"value": [{"id": "newest", "createdDateTime": "2026-09-26T10:00:00Z"}],
+         "@odata.nextLink": "/older"},
+        {"value": [{"id": "older", "createdDateTime": "2026-09-25T10:00:00Z"}]},
+    ]) as request:
+      rows = backend.list_messages("chat-id", "token", limit=100)
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(request.call_args_list[0].args[0]).query)
+    self.assertEqual(["createdDateTime desc"], query["$orderby"])
+    self.assertEqual(["newest", "older"], [row["id"] for row in rows])
+    self.assertEqual(2, request.call_count)
 
   def test_chat_list_requests_last_message_preview(self) -> None:
     with mock.patch.object(backend, "graph_collection", return_value=[]) as request:
@@ -650,7 +665,7 @@ class GraphBackendTests(unittest.TestCase):
       event, error = backend.next_recurring_event(
           {"id": "master", "type": "seriesMaster"}, "token")
     self.assertIsNone(event)
-    self.assertIn("45 days", error)
+    self.assertIn(f"{backend.CALENDAR_LOOKUP_FUTURE_DAYS} days", error)
 
   def test_series_permission_failure_does_not_return_master(self) -> None:
     with mock.patch.object(backend, "graph_collection",
@@ -721,8 +736,8 @@ class GraphBackendTests(unittest.TestCase):
 
     def events(_token, **kwargs):
       self.assertIsNone(kwargs["max_pages"])
-      if kwargs["start"] > now + backend.timedelta(days=34):
-        yield self.meeting_row("distant", 24 * 40, onlineMeeting={"joinUrl": url})
+      if kwargs["start"] > now + backend.timedelta(days=48):
+        yield self.meeting_row("distant", 24 * 55, onlineMeeting={"joinUrl": url})
 
     with mock.patch.object(backend, "iterate_calendar_view_events", side_effect=events) as request:
       rows = backend.calendar_events_by_join_url("token", needed_join_urls={url})

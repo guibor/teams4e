@@ -248,6 +248,26 @@ can exercise destructive and asynchronous workflows without Graph access.
 delay to each non-cache request so cache-first and concurrency behavior can be
 tested locally under controlled latency.
 
+## Chat Loading
+
+An opened thread requests the newest 100 messages without a date cutoff;
+automatic previews retain a 50-message bound. Without a modified-date filter,
+the adapter uses `createdDateTime desc`, matching the terminal client.
+Explicit modified-date windows and background sync still pair their filter
+with `lastModifiedDateTime desc`, as required by Graph.
+
+The SQLite snapshot and live request run independently. The live request owns
+the reader's cancellation handle. Cache callbacks verify the request generation,
+chat identity, and absence of a completed live response before rendering.
+They cannot overwrite a newer response or start another network fetch on error.
+This uses the existing message list and SQLite store, not another chat cache.
+
+Explicit reopen selects the latest end immediately, then refreshes. Subsequent
+responses retain navigation into older messages and explicit message-link
+targets. Backend request and transcript rendering timings are available through
+`M-x teams4e-performance-report`; offline tests verify ordering, not tenant
+latency.
+
 ## Meeting Metadata
 
 Graph chat data may include `onlineMeetingInfo.calendarEventId`. The adapter
@@ -257,7 +277,7 @@ meeting view fetches `/chats/{id}` through the same bounded JSON batch helper.
 Batch containers may run concurrently up to the configured enrichment bound.
 Any rows still unresolved by direct IDs contribute their join URLs to one bounded
 `calendarView` scan for that backend request. Emacs merges the result into
-`meetingContext.event`. Ordinary inbox enrichment sends one bounded request.
+`meetingContext.event`. Ordinary inbox refreshes defer calendar enrichment.
 An explicit meeting view continues through the remaining loaded candidates in
 batches of `teams4e-meeting-enrichment-limit`, stopping when the user leaves the
 meeting view. Each pass removes its attempted rows before continuing, so a
@@ -268,7 +288,7 @@ Recurring event IDs may identify a series master or an old occurrence.
 The adapter resolves either through
 [`/me/events/{seriesMasterId}/instances`](https://learn.microsoft.com/en-us/graph/api/event-list-instances?view=graph-rest-1.0),
 following pagination and choosing the current or nearest future occurrence
-within 45 days. Rescheduled exceptions participate; cancelled and declined
+within 60 days. Rescheduled exceptions participate; cancelled and declined
 occurrences do not. Each series is resolved once per backend batch. Single
 events need no instances request. An explicit null event clears a previous
 occurrence when the lookup returns no upcoming instance or fails.
@@ -281,7 +301,7 @@ could truncate the advertised 45-day range even when windows were empty.
 Historical fallback remains page-capped. The future scan is date-bounded,
 not page-capped, so dense calendars can require more requests.
 
-Coverage is still limited to the loaded chat metadata set (150 by default).
+Coverage is still limited to the loaded chat metadata set (300 by default).
 This is not calendar-first discovery: invitations without a loaded Teams chat
 will not appear. Raising `teams4e-chat-metadata-limit` and explicitly refreshing
 can cover older chats, at additional request cost. Regression tests use mock

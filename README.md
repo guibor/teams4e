@@ -300,7 +300,9 @@ back to plain text. [Composition details](USAGE.md#writing-messages).
 
 ## History and Export
 
-Opening a chat defaults to a recent **30-day window and 50 messages** for speed.
+Opening a chat fetches the **newest 100 messages, without a date cutoff**.
+Automatic previews remain limited to 50. The live request starts alongside
+the SQLite cache read; a late cache result cannot replace newer network data.
 `teams4e-chat-load-more` (default `L`) loads more;
 `teams4e-chat-load-all` (default `G`) requests complete available history.
 Configure `teams4e-message-days` and `teams4e-message-limit` to change the
@@ -349,8 +351,9 @@ set them in your init file after loading the package. For example:
         teams4e-mark-read-on-open nil
         teams4e-preview-on-move nil
         teams4e-message-order 'oldest-first
-        teams4e-message-days 30
-        teams4e-message-limit 50
+        teams4e-message-days nil
+        teams4e-message-limit 100
+        teams4e-chat-metadata-limit 300
         teams4e-default-snooze-minutes 180))
 ```
 

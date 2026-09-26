@@ -2428,10 +2428,9 @@ CHATS in bounded batches, without retrying the same row in one pass."
                  (teams4e--render-recent)
                  (teams4e--schedule-preview)))
              (teams4e--enrich-members chats)
-             (teams4e--enrich-meetings
-              chats
-              (and (fboundp 'teams4e--meeting-view-p)
-                   (teams4e--meeting-view-p))))
+             (when (and (fboundp 'teams4e--meeting-view-p)
+                        (teams4e--meeting-view-p))
+               (teams4e--enrich-meetings chats t)))
            (lambda (status detail)
              (when (buffer-live-p buffer)
                (with-current-buffer buffer
@@ -3928,6 +3927,16 @@ When DATE-ONLY is non-nil, omit the time of day."
   (dolist (window (get-buffer-window-list (current-buffer) nil t))
     (set-window-point window (point-max))))
 
+(defun teams4e--goto-reader-latest ()
+  "Select the newest end of the reader in its configured display order."
+  (if (eq (teams4e--effective-message-order) 'newest-first)
+      (progn
+        (goto-char (point-min))
+        (teams4e-chat-next-message)
+        (dolist (window (get-buffer-window-list (current-buffer) nil t))
+          (set-window-point window (point))))
+    (teams4e--goto-reader-bottom)))
+
 (defun teams4e--render-chat ()
   "Render the current chat and its cached messages."
   (let* ((inhibit-read-only t)
@@ -3972,7 +3981,7 @@ When DATE-ONLY is non-nil, omit the time of day."
       (goto-char (point-min))
       (teams4e--goto-message-id message-id))
      (jump-to-bottom
-      (teams4e--goto-reader-bottom))
+      (teams4e--goto-reader-latest))
      ((eq (teams4e--effective-message-order) 'newest-first)
       (goto-char (point-min))
       (teams4e-chat-next-message))
@@ -4174,6 +4183,10 @@ complete history, and MESSAGE-ID is selected after that history renders."
             (insert (format "Loading %s...\n"
                             (teams4e--chat-label chat)))))
         (unless (or reuse-preview same-request-running)
+          (when (and same-chat (not preview) (not message-id)
+                     teams4e--messages)
+            (teams4e--goto-reader-latest)
+            (setq teams4e--jump-to-bottom-on-render nil))
           (let ((teams4e--cache-first-open (not same-chat)))
             (teams4e-chat-refresh
              all (and preview teams4e-preview-message-limit))))
@@ -4216,58 +4229,40 @@ complete history, and MESSAGE-ID is selected after that history renders."
     (teams4e-inbox)))
 
 (defun teams4e--chat-refresh-cache-first (all request-limit)
-  "Render cached messages, then refresh them from Graph.
-
-This reads the existing SQLite cache and never creates another message store."
-  (teams4e--cancel-process teams4e--process)
-  (cl-incf teams4e--request-id)
+  "Start a live refresh immediately and show SQLite data while it is pending."
+  (let ((teams4e--cache-first-open nil))
+    (teams4e-chat-refresh all request-limit))
   (let* ((buffer (current-buffer))
          (request-id teams4e--request-id)
-         (chat teams4e--chat)
-         (chat-id (teams4e--chat-id chat))
-         (limit (or request-limit
-                    teams4e-preview-message-limit
-                    teams4e-message-limit
-                    300))
-         (args (list "teams" "cache" "chat" "message" "list"
-                     "--chatId" chat-id
-                     "--limit" (number-to-string limit)))
-         request)
-    (setq header-line-format "Loading cached Teams messages...")
-    (setq
-     request
-     (teams4e--run-json
-      args
-      (lambda (payload)
-        (when (and (buffer-live-p buffer)
-                   (= request-id teams4e--request-id))
-          (with-current-buffer buffer
-            (when (and (derived-mode-p 'teams4e-chat-mode)
-                       (equal chat-id
-                              (teams4e--chat-id
-                               teams4e--chat)))
-              (setq teams4e--process nil)
-              (let ((messages
-                     (teams4e--normalize-messages
-                      (teams4e--payload-list payload))))
-                (when messages
-                  (setq teams4e--messages messages
-                        teams4e--loaded-all nil)
-                  (let ((teams4e-display-images nil))
-                    (teams4e--render-chat))))
-              (let ((teams4e--cache-first-open nil))
-                (teams4e-chat-refresh all request-limit))))))
-      (lambda (_status _detail)
-        (when (and (buffer-live-p buffer)
-                   (= request-id teams4e--request-id))
-          (with-current-buffer buffer
-            (setq teams4e--process nil)
-            (let ((teams4e--cache-first-open nil))
-              (teams4e-chat-refresh all request-limit)))))))
-    ;; Synchronous test backends can advance the generation in CALLBACK.
-    (when (= request-id teams4e--request-id)
-      (setq teams4e--process request))
-    request))
+         (chat-id (teams4e--chat-id teams4e--chat))
+         (limit (or request-limit teams4e-message-limit 300)))
+    ;; A synchronous backend may already have delivered the live response.
+    (unless teams4e--loaded-at
+      (teams4e--run-json
+       (list "teams" "cache" "chat" "message" "list"
+             "--chatId" chat-id "--limit" (number-to-string limit))
+       (lambda (payload)
+         (when (buffer-live-p buffer)
+           (with-current-buffer buffer
+             (when (and (= request-id teams4e--request-id)
+                        (derived-mode-p 'teams4e-chat-mode)
+                        (equal chat-id (teams4e--chat-id teams4e--chat))
+                        (not teams4e--loaded-at))
+               (let ((messages (teams4e--normalize-messages
+                                (teams4e--payload-list payload)))
+                     (status header-line-format))
+                 (when messages
+                   (setq teams4e--messages messages
+                         teams4e--loaded-all nil)
+                   (let ((teams4e-display-images nil))
+                     (teams4e--render-chat))
+                   (setq header-line-format
+                         (if (and (stringp status)
+                                  (string-match-p "failed" status))
+                             "Showing cached Teams messages; live refresh failed - see *M365 Errors*"
+                           "Showing cached Teams messages; refreshing..."))))))))
+       ;; Cache failure must not cancel or delay the independent live request.
+       #'ignore))))
 
 (defun teams4e-chat-refresh
     (&optional all request-limit ignore-date)
@@ -4315,6 +4310,13 @@ date window while retaining that bound, which supports incremental loading."
                                        teams4e-message-limit))))
                   (when (and limit (> (length messages) limit))
                     (setq messages (last messages limit)))
+                  (when (and (eq (teams4e--effective-message-order) 'newest-first)
+                             teams4e--messages
+                             (equal (teams4e--get (teams4e-message-at-point) 'id)
+                                    (teams4e--get
+                                     (car (teams4e--messages-for-display
+                                           teams4e--messages)) 'id)))
+                    (setq teams4e--jump-to-bottom-on-render t))
                   (setq teams4e--messages messages
                         teams4e--process nil
                         teams4e--loaded-at (float-time)

@@ -177,10 +177,10 @@ The usual `c` command chooses from loaded conversations instead.
 5. **Capture** the meeting summary or complete thread into Org or Markdown.
 
 Recurring chats show the current or nearest future occurrence in the next
-45 days, including rescheduled exceptions, rather than the series' original
+60 days, including rescheduled exceptions, rather than the series' original
 start date. Cancelled and declined occurrences are excluded. The view
 continues resolving loaded meeting chats in batches; it does not stop after
-the first 32.
+the first batch. Each batch contains up to 64 meeting chats by default.
 
 This remains a **chat-backed view, not a complete calendar listing**.
 Invitations without a loaded Teams chat, events beyond the lookup horizon,
@@ -189,13 +189,35 @@ meeting chat is missing from the loaded set, increase the metadata limit and
 refresh:
 
 ```elisp
-(setq teams4e-chat-metadata-limit 500) ; default 150; more rows cost more requests
+(setq teams4e-chat-metadata-limit 500) ; default 300; more rows cost more requests
 ```
 
 Then run `M-x teams4e-recent-refresh` and open `b m` again. The option
-`teams4e-meeting-enrichment-limit` controls the batch size (default 32), not
+`teams4e-meeting-enrichment-limit` controls the batch size (default 64), not
 the total number processed in an explicit meeting view. Setting it to zero
 disables automatic calendar enrichment.
+
+Ordinary inbox refreshes defer calendar requests until you enter a meeting
+view or open a meeting chat. Matching calendar context is reused for five
+minutes across background chat refreshes. An explicit inbox refresh clears
+that context, so use it when a changed invitation needs to appear immediately.
+
+### Loading Defaults
+
+| Option | Default |
+| --- | --- |
+| `teams4e-chat-metadata-limit` | 300 chats |
+| `teams4e-message-limit` | 100 messages per opened chat |
+| `teams4e-preview-message-limit` | 50 messages per automatic preview |
+| `teams4e-message-days` | `nil`, no date cutoff |
+| `teams4e-meeting-enrichment-limit` | 64 meeting chats per batch |
+| `teams4e-meeting-context-cache-seconds` | 300 seconds |
+
+Explicitly opening a chat starts a fresh request and selects its newest end:
+bottom in the default oldest-first order, top in newest-first order. Browsing
+older messages while the request is pending keeps your reading position.
+Message links still select their target. Existing Customize or init-file
+values override these defaults; remove or update older overrides to adopt them.
 
 In the availability buffer, `j`/`k` select an interval and `RET`
 proposes it. Use `s`/`b` for suggestions/calendar blocks, `r` to
