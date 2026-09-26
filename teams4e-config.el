@@ -315,8 +315,8 @@ Emacs starts that single batch asynchronously after rendering chat metadata."
 
 Explicit meeting views continue through the loaded chats in bounded batches,
 prioritizing recent message-less stubs first.  Results attach to the existing
-chat objects, not a second
-calendar cache.  Ordinary inbox views do not request calendar enrichment.
+chat objects, not a second calendar cache.  Ordinary inbox views do not
+request calendar enrichment.
 Set this to zero to keep meeting details reader-only."
   :type 'integer
   :group 'teams4e)

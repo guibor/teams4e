@@ -4531,8 +4531,11 @@
                    (gethash "chat-send"
                             teams4e--pending-send-read-states)))))
 
-(ert-deftest teams4e-default-chat-load-uses-one-graph-page ()
-  (should (= 50 (default-value 'teams4e-message-limit)))
+(ert-deftest teams4e-default-chat-load-is-bounded-without-a-date-cutoff ()
+  (should (= 100 (default-value 'teams4e-message-limit)))
+  (should-not (default-value 'teams4e-message-days))
+  (should (= 300 (default-value 'teams4e-chat-metadata-limit)))
+  (should (= 64 (default-value 'teams4e-meeting-enrichment-limit)))
   (should (= 50 (default-value 'teams4e-preview-message-limit)))
   (should (= 100 (default-value 'teams4e-load-more-count))))
 
