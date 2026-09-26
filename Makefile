@@ -8,7 +8,7 @@ test: test-elisp test-python
 test-elisp:
 	$(EMACS) -Q --batch -L . -L tests \
 		-l tests/teams4e-tests.el -l tests/teams4e-companion-tests.el \
-		-l tests/teams4e-compose-tests.el \
+		-l tests/teams4e-compose-tests.el -l tests/teams4e-availability-tests.el \
 		-f ert-run-tests-batch-and-exit
 
 test-python:

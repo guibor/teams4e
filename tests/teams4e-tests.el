@@ -1664,6 +1664,7 @@
       (teams4e-availability-mode)
       (setq teams4e-availability--chat chat
             teams4e-availability--event-id "event-availability"
+            teams4e-availability--view 'suggestions
             teams4e-availability--payload payload
             teams4e-availability--window
             (list (date-to-time "2099-08-11T00:00:00Z")
@@ -1671,7 +1672,7 @@
       (teams4e-availability--render)
       (should (= 2 (length teams4e-availability--row-ids)))
       (should (string-match-p "Architecture review" (buffer-string)))
-      (should (string-match-p "100% confidence" (buffer-string)))
+      (should (string-match-p "100% confirmed free" (buffer-string)))
       (should (string-match-p "Everyone is available" (buffer-string)))
       (should (string-match-p "Ada Lovelace" (buffer-string)))
       (teams4e-availability-next)

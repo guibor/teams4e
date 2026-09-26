@@ -19,6 +19,8 @@
 (declare-function evil-define-key* "evil-core")
 
 (defvar teams4e-meeting-availability-interval)
+(defvar teams4e-availability--time-cache nil
+  "Temporary timestamp memo used only while projecting availability rows.")
 
 (defconst teams4e--availability-buffer-name "*Teams Availability*")
 
@@ -27,7 +29,8 @@
 (defvar-local teams4e-availability--payload nil)
 (defvar-local teams4e-availability--window nil)
 (defvar-local teams4e-availability--activity-domain 'work)
-(defvar-local teams4e-availability--view 'suggestions)
+(defvar-local teams4e-availability--view 'timeline)
+(defvar-local teams4e-availability--day nil)
 (defvar-local teams4e-availability--selected-id nil)
 (defvar-local teams4e-availability--row-ids nil)
 (defvar-local teams4e-availability--request nil)
@@ -73,9 +76,168 @@
   "Return free/busy schedules from the current availability payload."
   (teams4e--get teams4e-availability--payload 'schedules))
 
+(defun teams4e-availability--midnight (time &optional days)
+  "Return local midnight for TIME, offset by calendar DAYS (DST safe)."
+  (let ((parts (decode-time time)))
+    (encode-time 0 0 0 (+ (nth 3 parts) (or days 0))
+                 (nth 4 parts) (nth 5 parts))))
+
+(defun teams4e-availability--original-time ()
+  "Return the original start time, falling back to the loaded window."
+  (or (teams4e-availability--time
+       (teams4e--get teams4e-availability--payload 'event) 'start)
+      (teams4e-availability--time
+       (teams4e--meeting-event teams4e-availability--chat) 'start)
+      (car teams4e-availability--window)
+      (current-time)))
+
+(defun teams4e-availability--slot-status (participant slot)
+  "Return conservative free/busy for PARTICIPANT over the whole SLOT."
+  (let* ((schedule (teams4e-availability--schedule participant))
+         (items (teams4e--get schedule 'scheduleItems))
+         (view (teams4e--get schedule 'availabilityView))
+         (start (teams4e-availability--time slot 'start))
+         (end (teams4e-availability--time slot 'end))
+         (interval (* 60 (max 5 teams4e-meeting-availability-interval)))
+         (base (car teams4e-availability--window))
+         (statuses
+          (mapcar (lambda (item) (or (teams4e--get item 'status) "unknown"))
+                  (seq-filter
+                   (lambda (item) (teams4e-availability--overlap-p item slot))
+                   items))))
+    (cond
+     ((or (null schedule) (teams4e--get schedule 'error)) "unknown")
+     (t
+      ;; Merged free/busy also covers private blocks lacking item details.
+      (when (and (stringp view) (> (length view) 0) base)
+        (let ((first (floor (/ (float-time (time-subtract start base)) interval)))
+              (last (ceiling (/ (float-time (time-subtract end base)) interval))))
+          (cl-loop for index from first below last do
+                   (push (if (and (>= index 0) (< index (length view)))
+                             (pcase (aref view index)
+                               (?0 "free") (?1 "tentative") (?2 "busy")
+                               (?3 "oof") (?4 "workingelsewhere") (_ "unknown"))
+                           "unknown")
+                         statuses))))
+      (or (seq-find (lambda (state) (member state statuses))
+                    '("unknown" "oof" "outofoffice" "busy" "tentative"))
+          (and (or (assoc 'scheduleItems schedule)
+                   (and (stringp view) (> (length view) 0)))
+               "free")
+          "unknown")))))
+
+(defun teams4e-availability--continuous-slots ()
+  "Derive consecutive duration-preserving slots from the loaded schedules."
+  (let* ((event (teams4e--get teams4e-availability--payload 'event))
+         (original (teams4e-availability--original-time))
+         (end (teams4e-availability--time event 'end))
+         (duration (if (and end (time-less-p original end))
+                       (time-subtract end original)
+                     (seconds-to-time 1800)))
+         (participants (teams4e-availability--participants))
+         (step (* 60 (max 5 teams4e-meeting-availability-interval)))
+         (from (car teams4e-availability--window))
+         (until (cadr teams4e-availability--window))
+         (day (and (eq teams4e-availability--view 'timeline)
+                   (or teams4e-availability--day
+                       (teams4e-availability--midnight original))))
+         (cursor (and from (if (and day (time-less-p from day))
+                                   day
+                                 (teams4e-availability--midnight from))))
+         result)
+    (while (and cursor until
+                (or (null day)
+                    (time-less-p cursor (teams4e-availability--midnight day 1)))
+                (not (time-less-p until (time-add cursor duration))))
+      (when (not (time-less-p cursor from))
+        (let* ((slot `((start . ((dateTime . ,(teams4e--proposal-utc-string cursor))
+                                 (timeZone . "UTC")))
+                       (end . ((dateTime . ,(teams4e--proposal-utc-string
+                                            (time-add cursor duration)))
+                               (timeZone . "UTC")))))
+               (free 0) (self "unknown") attendees)
+          (dolist (participant participants)
+            (let ((status (teams4e-availability--slot-status participant slot)))
+              (unless (teams4e-availability--blocking-status-p status)
+                (cl-incf free))
+              (if (teams4e--get participant 'isSelf)
+                  (setq self status)
+                (push `((availability . ,status)
+                        (attendee . ((emailAddress
+                                      . ((address
+                                          . ,(teams4e-availability--participant-email
+                                              participant)))))))
+                      attendees))))
+          (push `((meetingTimeSlot . ,slot)
+                  (confidence . ,(if participants
+                                     (/ (* 100 free) (length participants)) 0))
+                  (organizerAvailability . ,self)
+                  (attendeeAvailability . ,attendees))
+                result)))
+      (setq cursor (time-add cursor step)))
+    (nreverse result)))
+
 (defun teams4e-availability--suggestions ()
-  "Return ranked suggestions from the current availability payload."
-  (teams4e--get teams4e-availability--payload 'suggestions))
+  "Return slots ordered for the current view, derived from one payload."
+  (if (eq teams4e-availability--view 'suggestions)
+      (teams4e--get teams4e-availability--payload 'suggestions)
+    (let* ((teams4e-availability--time-cache (make-hash-table :test #'equal))
+           (original (teams4e-availability--original-time))
+           (day (or teams4e-availability--day
+                    (teams4e-availability--midnight original)))
+           (next-day (teams4e-availability--midnight day 1))
+           (slots (teams4e-availability--continuous-slots))
+           (distance (lambda (slot)
+                       (abs (float-time
+                             (time-subtract
+                              (teams4e-availability--time
+                               (teams4e--get slot 'meetingTimeSlot) 'start)
+                              original))))))
+      (if (eq teams4e-availability--view 'timeline)
+          (seq-filter
+           (lambda (slot)
+             (let ((start (teams4e-availability--time
+                           (teams4e--get slot 'meetingTimeSlot) 'start)))
+               (and (not (time-less-p start day))
+                    (time-less-p start next-day))))
+           slots)
+        (cl-stable-sort
+         slots
+         (lambda (left right)
+           (let ((l (teams4e--get left 'confidence))
+                 (r (teams4e--get right 'confidence)))
+             (cond
+              ((and (eq teams4e-availability--view 'availability) (/= l r))
+               (> l r))
+              ((/= (funcall distance left) (funcall distance right))
+               (< (funcall distance left) (funcall distance right)))
+              (t (> l r))))))))))
+
+(defun teams4e-availability--time-label (slot)
+  "Return an untruncated local time interval for SLOT."
+  (let ((start (teams4e-availability--time slot 'start))
+        (end (teams4e-availability--time slot 'end)))
+    (if (and start end)
+        (format "%s - %s%s"
+                (format-time-string
+                 (if (eq teams4e-availability--view 'timeline)
+                     "%H:%M" "%a %b %d %H:%M") start)
+                (format-time-string "%H:%M" end)
+                (if (equal (format-time-string "%F" start)
+                           (format-time-string "%F" end))
+                    ""
+                  (format " (+%dd)"
+                          (- (time-to-days end) (time-to-days start)))))
+      "Unknown time")))
+
+(defun teams4e-availability--insert-cell (text width &optional face)
+  "Insert TEXT in WIDTH columns, with an explicit alignment gutter."
+  (let ((target (+ (current-column) width 2)))
+    (insert (propertize (truncate-string-to-width text width nil nil "...")
+                        'face face 'help-echo text))
+    (insert (propertize
+             (make-string (max 1 (- target (current-column))) ?\s)
+             'display `(space :align-to ,target)))))
 
 (defun teams4e-availability--participant-name (participant)
   "Return a compact display name for PARTICIPANT."
@@ -142,8 +304,15 @@
 
 (defun teams4e-availability--time (object field)
   "Return OBJECT FIELD as an Emacs time value."
-  (when-let ((value (teams4e--event-date-time object field)))
-    (ignore-errors (date-to-time value))))
+  (let* ((key (teams4e--get object field))
+         (cached (and teams4e-availability--time-cache
+                      (gethash key teams4e-availability--time-cache))))
+    (or cached
+        (when-let* ((value (teams4e--event-date-time object field))
+                    (time (ignore-errors (date-to-time value))))
+          (when teams4e-availability--time-cache
+            (puthash key time teams4e-availability--time-cache))
+          time))))
 
 (defun teams4e-availability--overlap-p (item slot)
   "Return non-nil when calendar ITEM overlaps time SLOT."
@@ -267,9 +436,25 @@
       (insert (propertize "This meeting is cancelled.\n"
                           'face 'teams4e-availability-busy)))
     (insert "\n")
-    (teams4e-availability--insert-tab "Suggestions" 'suggestions)
-    (insert "   ")
-    (teams4e-availability--insert-tab "Calendar blocks" 'blocks)
+    (dolist (tab '(("Day timeline" . timeline)
+                   ("Best availability" . availability)
+                   ("Closest to original" . proximity)
+                   ("Calendar blocks" . blocks)))
+      (teams4e-availability--insert-tab (car tab) (cdr tab))
+      (insert "   "))
+    (insert "\nAll times local; consecutive slots cover all hours. Free % = confirmed free / all participants.")
+    (when (eq teams4e-availability--view 'timeline)
+      (insert "\n\n")
+      (insert-text-button "Previous day" 'action
+                          (lambda (_) (teams4e-availability-previous-day)))
+      (insert (propertize
+               (format-time-string
+                "    %A, %B %e, %Y    "
+                (or teams4e-availability--day
+                    (teams4e-availability--original-time)))
+               'face 'bold))
+      (insert-text-button "Next day" 'action
+                          (lambda (_) (teams4e-availability-next-day))))
     (insert "\n\n")))
 
 (defun teams4e-availability--insert-suggestion-details (suggestion)
@@ -280,7 +465,7 @@
            (reason (teams4e--get suggestion 'suggestionReason))
            available conflicts)
       (insert (propertize
-               (format "Selected: %s  |  %d%% confidence\n"
+               (format "Selected: %s  |  %d%% confirmed free\n"
                        (or (teams4e--meeting-slot-time-label slot)
                            "unknown time")
                        confidence)
@@ -351,72 +536,90 @@
              'face (teams4e-availability--status-face status)))))
 
 (defun teams4e-availability--insert-suggestions ()
-  "Insert the ranked participant availability matrix."
+  "Insert the participant matrix in the current ordering."
   (let* ((suggestions (teams4e-availability--suggestions))
          (participants (teams4e-availability--participants))
-         (participant-width 12))
-    (unless (and teams4e-availability--selected-id suggestions)
-      (setq teams4e-availability--selected-id
-            (and suggestions
-                 (teams4e-availability--slot-id (car suggestions)))))
+         (time-width (apply #'max 17
+                            (mapcar
+                             (lambda (item)
+                               (string-width
+                                (teams4e-availability--time-label
+                                 (teams4e--get item 'meetingTimeSlot))))
+                             suggestions)))
+         (participant-width 14))
+    (unless (seq-some
+             (lambda (item)
+               (equal teams4e-availability--selected-id
+                      (teams4e-availability--slot-id item)))
+             suggestions)
+      (let ((first
+             (if (eq teams4e-availability--view 'timeline)
+                 (car (sort
+                       (copy-sequence suggestions)
+                       (lambda (left right)
+                         (let ((original (teams4e-availability--preferred-time)))
+                           (< (abs (float-time
+                                    (time-subtract
+                                     (teams4e-availability--time
+                                      (teams4e--get left 'meetingTimeSlot) 'start)
+                                     original)))
+                              (abs (float-time
+                                    (time-subtract
+                                     (teams4e-availability--time
+                                      (teams4e--get right 'meetingTimeSlot) 'start)
+                                     original))))))))
+               (car suggestions))))
+        (setq teams4e-availability--selected-id
+              (and first (teams4e-availability--slot-id first)))))
     (teams4e-availability--insert-suggestion-details
-     (teams4e-availability--selected-suggestion))
-    (insert (propertize (format "  %-27s %7s " "Time" "Score") 'face 'bold))
+     (seq-find (lambda (item)
+                 (equal teams4e-availability--selected-id
+                        (teams4e-availability--slot-id item)))
+               suggestions))
+    (insert "  ")
+    (teams4e-availability--insert-cell "Time" time-width 'bold)
+    (teams4e-availability--insert-cell "Free" 6 'bold)
     (dolist (participant participants)
-      (insert (propertize
-               (format (format "%%-%ds" participant-width)
-                       (truncate-string-to-width
-                        (teams4e-availability--participant-name participant)
-                        participant-width nil nil "..."))
-               'face 'bold)))
-    (insert (propertize "Conflicts\n" 'face 'bold))
-    (insert (make-string (+ 40 (* participant-width (length participants)) 28)
-                         ?-)
+      (teams4e-availability--insert-cell
+       (teams4e-availability--participant-name participant)
+       participant-width 'bold))
+    (insert (propertize "Conflicts / unknown\n" 'face 'bold))
+    (insert (make-string (+ time-width 14 (* (+ participant-width 2)
+                                            (length participants))) ?-)
             "\n")
     (setq teams4e-availability--row-ids nil)
-    (if suggestions
-        (dolist (suggestion suggestions)
-          (let* ((id (teams4e-availability--slot-id suggestion))
-                 (slot (teams4e--get suggestion 'meetingTimeSlot))
-                 (confidence (or (teams4e--get suggestion 'confidence) 0))
-                 (start (point))
-                 blocking)
-            (push id teams4e-availability--row-ids)
-            (insert (if (equal id teams4e-availability--selected-id) "> " "  "))
-            (insert (format "%-27s "
-                            (truncate-string-to-width
-                             (or (teams4e--meeting-slot-time-label slot)
-                                 "Unknown time") 27 nil nil "...")))
-            (insert (propertize (format "%6d%% " confidence)
-                                'face
-                                (teams4e-availability--confidence-face
-                                 confidence)))
-            (dolist (participant participants)
-              (let ((status
-                     (teams4e-availability--suggestion-status
-                      suggestion participant)))
-                (when (teams4e-availability--blocking-status-p status)
-                  (push (teams4e-availability--participant-name participant)
-                        blocking))
-                (teams4e-availability--insert-status-cell
-                 status participant-width)))
-            (insert (if blocking
-                        (string-join (nreverse blocking) ", ")
-                      "None")
-                    "\n")
-            (add-text-properties
-             start (point)
-             (list 'teams4e-availability-id id
-                   'teams4e-availability-record suggestion
-                   'mouse-face 'highlight
-                   'help-echo "Select this proposed meeting time"))
-            (when (equal id teams4e-availability--selected-id)
-              (add-face-text-property start (1- (point))
-                                      'teams4e-availability-selected t))))
-      (insert (propertize
-               (concat "No ranked suggestions were returned. Review calendar "
-                       "blocks or enter an exact time manually.\n")
-               'face 'teams4e-availability-unknown)))
+    (dolist (suggestion suggestions)
+      (let* ((id (teams4e-availability--slot-id suggestion))
+             (slot (teams4e--get suggestion 'meetingTimeSlot))
+             (confidence (or (teams4e--get suggestion 'confidence) 0))
+             (start (point))
+             blocking)
+        (push id teams4e-availability--row-ids)
+        (insert (if (equal id teams4e-availability--selected-id) "> " "  "))
+        (teams4e-availability--insert-cell
+         (teams4e-availability--time-label slot) time-width)
+        (teams4e-availability--insert-cell
+         (format "%d%%" confidence) 6
+         (teams4e-availability--confidence-face confidence))
+        (dolist (participant participants)
+          (let ((status (teams4e-availability--suggestion-status
+                         suggestion participant)))
+            (when (teams4e-availability--blocking-status-p status)
+              (push (teams4e-availability--participant-name participant) blocking))
+            (teams4e-availability--insert-cell
+             (teams4e-availability--status-name status) participant-width
+             (teams4e-availability--status-face status))))
+        (insert (if blocking (string-join (nreverse blocking) ", ") "None") "\n")
+        (add-text-properties
+         start (point)
+         (list 'teams4e-availability-id id
+               'teams4e-availability-record suggestion
+               'mouse-face 'highlight))
+        (when (equal id teams4e-availability--selected-id)
+          (add-face-text-property start (1- (point))
+                                  'teams4e-availability-selected t))))
+    (unless suggestions
+      (insert "No slots in this loaded day/range. Choose another day or range.\n"))
     (setq teams4e-availability--row-ids
           (nreverse teams4e-availability--row-ids))))
 
@@ -564,12 +767,13 @@
 
 (defun teams4e-availability--goto-selected ()
   "Move point to the selected availability row."
-  (let ((position
-         (and teams4e-availability--selected-id
-              (text-property-any
-               (point-min) (point-max)
-               'teams4e-availability-id teams4e-availability--selected-id))))
-    (goto-char (or position (point-min)))
+  (let ((position (point-min)))
+    (while (and (< position (point-max))
+                (not (equal teams4e-availability--selected-id
+                            (get-text-property position 'teams4e-availability-id))))
+      (setq position (next-single-property-change
+                      position 'teams4e-availability-id nil (point-max))))
+    (goto-char (if (< position (point-max)) position (point-min)))
     (beginning-of-line)))
 
 (defun teams4e-availability--render ()
@@ -589,11 +793,15 @@
      (t (teams4e-availability--insert-suggestions)))
     (teams4e-availability--goto-selected)
     (setq header-line-format
-          (format "Teams meeting workspace - %s - %s"
-                  (teams4e--chat-label teams4e-availability--chat)
-                  (if (eq teams4e-availability--view 'blocks)
-                      "calendar blocks"
-                    "suggestions")))))
+          (format "Teams availability - %s%s - %s"
+                  (symbol-name teams4e-availability--view)
+                  (if (eq teams4e-availability--view 'timeline)
+                      (format-time-string
+                       " / %a %b %e"
+                       (or teams4e-availability--day
+                           (teams4e-availability--original-time)))
+                    "")
+                  (teams4e--chat-label teams4e-availability--chat)))))
 
 (defun teams4e-availability-next (&optional count)
   "Select the next availability row by COUNT."
@@ -619,17 +827,73 @@
   "Switch the availability workspace to VIEW."
   (interactive
    (list (intern (completing-read "Meeting view: "
-                                  '("suggestions" "blocks") nil t))))
-  (unless (memq view '(suggestions blocks))
+                                  '("timeline" "availability" "proximity" "blocks") nil t))))
+  (unless (memq view '(timeline availability proximity suggestions blocks))
     (user-error "Unsupported meeting workspace view: %s" view))
   (setq teams4e-availability--view view
         teams4e-availability--selected-id nil)
+  (unless teams4e-availability--day
+    (setq teams4e-availability--day
+          (teams4e-availability--midnight
+           (teams4e-availability--original-time))))
   (teams4e-availability--render))
 
 (defun teams4e-availability-show-suggestions ()
   "Show ranked suggestions in the meeting workspace."
   (interactive)
-  (teams4e-availability-set-view 'suggestions))
+  (teams4e-availability-set-view 'availability))
+
+(defun teams4e-availability-show-timeline ()
+  "Show consecutive slots on the selected day."
+  (interactive)
+  (teams4e-availability-set-view 'timeline))
+
+(defun teams4e-availability-show-proximity ()
+  "Rank slots by distance from the original start, then by availability."
+  (interactive)
+  (teams4e-availability-set-view 'proximity))
+
+(defun teams4e-availability--visit-day (day)
+  "Show DAY, fetching another window only outside the loaded range."
+  (setq teams4e-availability--day day
+        teams4e-availability--view 'timeline
+        teams4e-availability--selected-id nil)
+  (if (and (car teams4e-availability--window)
+           (not (time-less-p day (car teams4e-availability--window)))
+           (not (time-less-p (cadr teams4e-availability--window)
+                            (teams4e-availability--midnight day 1))))
+      (teams4e-availability--render)
+    (setq teams4e-availability--window
+          (list day (teams4e-availability--midnight
+                     day (max 1 teams4e-meeting-proposal-search-days))))
+    (teams4e-availability--request)))
+
+(defun teams4e-availability-next-day (&optional count)
+  "Move COUNT calendar days forward; keep the original meeting time in view."
+  (interactive "p")
+  (teams4e-availability--visit-day
+   (teams4e-availability--midnight
+    (or teams4e-availability--day (teams4e-availability--original-time))
+    (or count 1))))
+
+(defun teams4e-availability-previous-day (&optional count)
+  "Move COUNT calendar days backward."
+  (interactive "p")
+  (teams4e-availability-next-day (- (or count 1))))
+
+(defun teams4e-availability-original-day ()
+  "Return to the original meeting's day."
+  (interactive)
+  (teams4e-availability--visit-day
+   (teams4e-availability--midnight (teams4e-availability--original-time))))
+
+(defun teams4e-availability--preferred-time ()
+  "Return the original wall-clock time on the selected day."
+  (let ((original (decode-time (teams4e-availability--original-time)))
+        (day (decode-time (or teams4e-availability--day
+                             (teams4e-availability--original-time)))))
+    (encode-time (nth 0 original) (nth 1 original) (nth 2 original)
+                 (nth 3 day) (nth 4 day) (nth 5 day))))
 
 (defun teams4e-availability-show-blocks ()
   "Show returned participant calendar blocks in the meeting workspace."
@@ -657,8 +921,8 @@
 (defun teams4e-availability-choose ()
   "Propose the selected ranked time from the availability workspace."
   (interactive)
-  (unless (eq teams4e-availability--view 'suggestions)
-    (user-error "Calendar blocks are not proposal slots; choose Suggestions"))
+  (when (eq teams4e-availability--view 'blocks)
+    (user-error "Calendar blocks are not proposal slots; choose a time view"))
   (teams4e-availability--require-proposal)
   (let ((suggestion (or (teams4e-availability--selected-suggestion)
                         (user-error "No ranked meeting time is selected")))
@@ -746,7 +1010,9 @@
 (defun teams4e-availability-change-range ()
   "Choose another search date range and refresh availability."
   (interactive)
-  (setq teams4e-availability--window (teams4e--proposal-read-window))
+  (setq teams4e-availability--window (teams4e--proposal-read-window)
+        teams4e-availability--day
+        (teams4e-availability--midnight (car teams4e-availability--window)))
   (teams4e-availability--request))
 
 (defun teams4e-availability-cycle-hours ()
@@ -792,6 +1058,12 @@
     (define-key map (kbd "k") #'teams4e-availability-previous)
     (define-key map (kbd "p") #'teams4e-availability-previous)
     (define-key map (kbd "RET") #'teams4e-availability-choose)
+    (define-key map (kbd "d") #'teams4e-availability-show-timeline)
+    (define-key map (kbd "a") #'teams4e-availability-show-suggestions)
+    (define-key map (kbd "c") #'teams4e-availability-show-proximity)
+    (define-key map (kbd "]") #'teams4e-availability-next-day)
+    (define-key map (kbd "[") #'teams4e-availability-previous-day)
+    (define-key map (kbd "=") #'teams4e-availability-original-day)
     (define-key map (kbd "s") #'teams4e-availability-show-suggestions)
     (define-key map (kbd "b") #'teams4e-availability-show-blocks)
     (define-key map (kbd "g") #'teams4e-availability-refresh)
@@ -811,8 +1083,10 @@
 (define-derived-mode teams4e-availability-mode special-mode "Teams-Availability"
   "Inspect meeting suggestions, participant conflicts, and calendar blocks.
 
-Use j/k to move rows, RET to propose the selected suggestion, s/b to switch
-between suggestions and blocks, r to change the range, w to cycle hour domains,
+Use j/k to move rows and RET to propose.  Use d for the day timeline,
+a for availability ranking, c for closest to original, and b for blocks.
+Use [/] for previous/next day, = for the original day, r for the range,
+w to cycle the Outlook suggestion hour domain,
 m for an exact time, v to RSVP, J to join, o for the calendar event, and q to
 return to the previous Teams layout."
   (setq-local truncate-lines t)
@@ -865,7 +1139,12 @@ return to the previous Teams layout."
                teams4e-availability--window window
                teams4e-availability--activity-domain
                teams4e-meeting-proposal-activity-domain
-               teams4e-availability--view 'suggestions
+               teams4e-availability--view 'timeline
+               teams4e-availability--day
+               (teams4e-availability--midnight
+                (or (teams4e-availability--time
+                     (teams4e--meeting-event resolved-chat) 'start)
+                    (car window)))
                teams4e-availability--selected-id nil
                teams4e-availability--window-configuration configuration
                teams4e-availability--origin-frame frame)
@@ -996,6 +1275,12 @@ Accepting with an empty note sends no response to the organizer."
     (kbd "j") #'teams4e-availability-next
     (kbd "k") #'teams4e-availability-previous
     (kbd "RET") #'teams4e-availability-choose
+    (kbd "d") #'teams4e-availability-show-timeline
+    (kbd "a") #'teams4e-availability-show-suggestions
+    (kbd "c") #'teams4e-availability-show-proximity
+    (kbd "]") #'teams4e-availability-next-day
+    (kbd "[") #'teams4e-availability-previous-day
+    (kbd "=") #'teams4e-availability-original-day
     (kbd "s") #'teams4e-availability-show-suggestions
     (kbd "b") #'teams4e-availability-show-blocks
     (kbd "g") #'teams4e-availability-refresh

@@ -238,10 +238,39 @@ older messages while the request is pending keeps your reading position.
 Message links still select their target. Existing Customize or init-file
 values override these defaults; remove or update older overrides to adopt them.
 
-In the availability buffer, `j`/`k` select an interval and `RET`
-proposes it. Use `s`/`b` for suggestions/calendar blocks, `r` to
-change the range, `w` to cycle work/personal/unrestricted hours, and
-`m` for an exact manual start.
+The availability workspace opens on the original meeting's day, near its
+original time. It shows consecutive slots, including busy and unknown ones,
+rather than only Outlook's short list of recommendations.
+
+| Default key | Availability view/action |
+| --- | --- |
+| `d` | Day timeline: consecutive slots, grouped under a full date heading |
+| `a` (also `s`) | Best availability across the loaded range; ties prefer the original time |
+| `c` | Closest to the original start; ties prefer better availability |
+| `[` / `]` | Previous/next calendar day |
+| `=` | Return to the original meeting day |
+| `b` | Calendar blocks, with privacy-aware details |
+| `j` / `k`, `RET` | Select a slot, propose it |
+| `r`, `g`, `m` | Change loaded range, refresh, enter an exact manual start |
+
+These bindings are customizable in `teams4e-availability-mode-map`.
+Time intervals are never shortened with an ellipsis; participant columns have
+explicit alignment gutters and full names on hover. Cross-midnight intervals
+show a day offset. All times are local.
+
+Slots keep the meeting's exact duration and advance by
+`teams4e-meeting-availability-interval` (30 minutes by default). All hours are
+shown, not only work hours. The Free percentage is the number of participants
+confirmed free for the **whole** slot divided by all participants; it is not
+Outlook's recommendation confidence. Missing/denied/truncated schedule data
+stays Unknown and never counts as free. Availability is a snapshot, not a
+reservation; refresh before sending when necessary.
+
+Changing views or days inside the loaded range uses the existing schedules.
+Crossing its boundary fetches a new window; `r` sets an explicit range.
+The older prompt-based proposal flow still uses Outlook recommendations and
+`teams4e-meeting-proposal-activity-domain`; the consecutive-slot views do not
+hide nights, weekends, conflicts, or unknowns based on that setting.
 
 Private calendar blocks never expose returned subject or location through this
 UI. Advanced event creation, recurrence, organizer moves, and cancellation

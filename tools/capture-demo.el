@@ -175,6 +175,35 @@
                     (goto-char (point-min))
                     (search-forward "Video room 4" nil t))))))
         (teams4e-capture-frame "meetings.png")
+        (teams4e-meeting-availability
+         (teams4e--find-chat "mock-chat-future-meeting"))
+        (teams4e-capture-wait
+         (lambda ()
+           (with-current-buffer teams4e--availability-buffer-name
+             teams4e-availability--payload)))
+        (switch-to-buffer teams4e--availability-buffer-name)
+        ;; Keep seven synthetic participants visible to exercise a crowded matrix.
+        (cl-loop for name in '("Katherine Johnson" "Alan Turing"
+                               "Margaret Hamilton" "Edsger Dijkstra"
+                               "Barbara Liskov" "Donald Knuth")
+                 for index from 0
+                 while (< (length (teams4e-availability--participants)) 7)
+                 do
+                 (let ((email (format "capture-%s@example.test" index)))
+                   (setf (alist-get 'participants teams4e-availability--payload)
+                         (append (teams4e-availability--participants)
+                                 (list `((email . ,email) (name . ,name))))
+                         (alist-get 'schedules teams4e-availability--payload)
+                         (append (teams4e-availability--schedules)
+                                 (list `((scheduleId . ,email) (scheduleItems)))))))
+        (dolist (width '(180 130))
+          (set-frame-size nil width 44)
+          (dolist (view '(timeline availability proximity))
+            (teams4e-availability-set-view view)
+            (unless (> (length teams4e-availability--row-ids) 20)
+              (error "Availability matrix has no continuous slots"))
+            (teams4e-capture-frame
+             (format "availability-%s-%s.png" view width))))
         (with-temp-file (expand-file-name "capture.json" teams4e-capture-output)
           (insert (json-serialize
                    `((emacs . ,emacs-version)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Open meeting availability on the original day with consecutive, duration-preserving
+  slots. Add availability and proximity rankings, local previous/next-day navigation,
+  full time intervals, and aligned participant gutters. Unknown schedules never count
+  as free; day/view changes reuse the loaded schedules.
+
 - Anchor every inbox column boundary, including exactly full and truncated
   cells, and widen meeting-column separators to keep unread bold rows aligned.
 
