@@ -515,7 +515,7 @@ class GraphBackendTests(unittest.TestCase):
       self.assertEqual("token", token)
       self.assertEqual("POST", kwargs["method"])
       requests = kwargs["payload"]["requests"]  # type: ignore[index]
-      self.assertLessEqual(len(requests), backend.GRAPH_JSON_BATCH_LIMIT)
+      self.assertLessEqual(len(requests), backend.OUTLOOK_JSON_BATCH_LIMIT)
       responses = []
       for request in requests:
         event_id = urllib.parse.unquote(
@@ -536,7 +536,7 @@ class GraphBackendTests(unittest.TestCase):
     with mock.patch.object(backend, "graph_json", side_effect=batch) as request:
       result = backend.get_calendar_events_batch(event_ids, "token")
 
-    self.assertEqual(2, request.call_count)
+    self.assertEqual(11, request.call_count)
     self.assertEqual("event-0", result["event-0"][0]["id"])
     self.assertIsNone(result["event-20"][0])
     self.assertIn("HTTP 404", result["event-20"][1])

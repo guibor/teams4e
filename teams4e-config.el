@@ -313,16 +313,27 @@ Emacs starts that single batch asynchronously after rendering chat metadata."
 (defcustom teams4e-meeting-enrichment-limit 64
   "Maximum meeting chats resolved in one calendar-enrichment batch.
 
-Explicit meeting views continue through the loaded chats in bounded batches,
-prioritizing recent message-less stubs first.  Results attach to the existing
+The all-meeting-chats view resolves loaded chats in bounded batches.
+Upcoming meetings instead use one calendar-window lookup for all candidates.
+Results attach to the existing
 chat objects, not a second calendar cache.  Ordinary inbox views do not
 request calendar enrichment.
 Set this to zero to keep meeting details reader-only."
   :type 'integer
   :group 'teams4e)
 
-(defcustom teams4e-meeting-enrichment-concurrency 6
-  "Maximum concurrent linked-calendar requests for meeting inbox metadata."
+(defcustom teams4e-meeting-upcoming-days 14
+  "Days scanned by the upcoming-meetings view, between 1 and 60.
+The view matches calendar occurrences to loaded chats in one window lookup.
+It does not resolve every old meeting chat or search historical calendars.
+Increase this value and refresh with g when planning farther ahead."
+  :type '(integer :tag "Lookahead days")
+  :group 'teams4e)
+
+(defcustom teams4e-meeting-enrichment-concurrency 2
+  "Requested parallelism for legacy linked-meeting lookups.
+The backend independently serializes Outlook envelopes across workers and
+limits Outlook JSON batches to two items, even with older higher overrides."
   :type 'integer
   :group 'teams4e)
 

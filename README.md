@@ -29,6 +29,8 @@ suit your setup. mu4e, Evil, Spacemacs, and AI services are not required.
 - A meeting view with start times, intervals, participants, location, RSVP,
   joining, and an availability workspace for proposing another time: a daily
   timeline, availability and proximity rankings, and participant calendar blocks.
+  Upcoming meetings use a calendar-first lookup for the next 14 days
+  (configurable), without resolving every historical meeting chat.
 - Optional Agent Shell commands for analysing an exported thread or discussing
   outstanding requests. These run only when invoked.
 

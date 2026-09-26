@@ -469,6 +469,21 @@ sleeping conversations out of the way."
       (teams4e--meeting-only-query-p teams4e--active-query)
     (memq teams4e--active-view '(meeting upcoming))))
 
+(defun teams4e--upcoming-view-p ()
+  "Return non-nil when the active view requests only upcoming meetings."
+  (let ((query (or teams4e--active-query teams4e--active-view)))
+    (or (eq query 'upcoming)
+        (and (stringp query)
+             (let ((clauses (split-string query "|" t)))
+               (and clauses
+                    (seq-every-p
+                     (lambda (clause)
+                       (seq-some
+                        (lambda (term)
+                          (member (downcase term) '("upcoming" "meeting:upcoming")))
+                        (split-string-and-unquote (string-trim clause))))
+                     clauses)))))))
+
 (defun teams4e--snoozed-only-query-p (query)
   "Return non-nil when every QUERY clause explicitly requests snoozed chats."
   (cond
@@ -515,7 +530,7 @@ sleeping conversations out of the way."
              (lambda (chat)
                (teams4e--dig chat 'meetingContext 'eventError))
              teams4e--chats)))
-      (format " - next %s - %d conflict%s - %d to respond%s"
+      (format " - next %s - %d conflict%s - %d to respond%s%s"
               (if-let ((start (and next
                                    (teams4e--meeting-start-time next))))
                   (if (and (not (time-less-p now start))
@@ -525,6 +540,9 @@ sleeping conversations out of the way."
                     (format-time-string "%a %H:%M" start))
                 "none")
               conflicts (if (= conflicts 1) "" "s") responses
+              (if (teams4e--upcoming-view-p)
+                  (format " - %dd lookup" (max 1 (min 60 teams4e-meeting-upcoming-days)))
+                "")
               (if (> calendar-errors 0)
                   (format " - %d calendar unavailable" calendar-errors)
                 "")))))

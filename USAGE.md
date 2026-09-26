@@ -180,6 +180,15 @@ If retries are exhausted, the meeting row says `Calendar throttled`; refresh
 with `g` once the service has recovered. Larger loaded sets are retained,
 but their network requests may be paced over a longer interval.
 
+A `MailboxConcurrency` 429 is a different limit: Outlook permits four
+concurrent requests per mailbox/application. The backend serializes Outlook
+HTTP envelopes across its workers and caps Outlook JSON batches at two
+subrequests. Chat requests keep their existing batching. This safety limit
+applies even with an older `teams4e-meeting-enrichment-concurrency` override.
+Other processes can still consume the same mailbox quota; retries and
+Retry-After handling remain necessary.
+[Microsoft documents both mailbox concurrency and JSON batch behavior](https://learn.microsoft.com/en-us/graph/throttling-limits#outlook-service-limits).
+
 ## Meetings Without Living in the Calendar
 
 `M-x teams4e-meetings` or `b m` opens a calendar-light meeting view:
@@ -195,11 +204,22 @@ but their network requests may be paced over a longer interval.
    per-participant status, working hours, and returned calendar blocks.
 5. **Capture** the meeting summary or complete thread into Org or Markdown.
 
-Recurring chats show the current or nearest future occurrence in the next
-60 days, including rescheduled exceptions, rather than the series' original
-start date. Cancelled and declined occurrences are excluded. The view
-continues resolving loaded meeting chats in batches; it does not stop after
-the first batch. Each batch contains up to 64 meeting chats by default.
+Upcoming meetings use a **calendar-first, next-14-days lookup**, including
+ongoing meetings. One paginated calendar window is matched locally to all loaded
+meeting chats; old chats do not each trigger metadata lookups, series queries,
+60-day searches, or historical fallback. Recurring meetings use the nearest
+active/future occurrence returned by calendarView, including exceptions.
+Cancelled and declined occurrences are excluded.
+
+A successful empty match is not an error and is remembered for
+`teams4e-meeting-context-cache-seconds` (five minutes). Reopening the bookmark
+does not immediately scan those old chats again. A partial pagination failure
+retains already-received meetings and reports the error rather than hiding it.
+
+For a longer planning horizon, set `teams4e-meeting-upcoming-days` to 30 or 60
+(maximum), then refresh with `g`. The header shows the lookup horizon.
+The explicit all-meeting-chats view (`b M`) and opening a particular chat
+retain the broader linked-event lookup, including historical fallback.
 
 This remains a **chat-backed view, not a complete calendar listing**.
 Invitations without a loaded Teams chat, events beyond the lookup horizon,
@@ -229,7 +249,9 @@ that context, so use it when a changed invitation needs to appear immediately.
 | `teams4e-message-limit` | 100 messages per opened chat |
 | `teams4e-preview-message-limit` | 50 messages per automatic preview |
 | `teams4e-message-days` | `nil`, no date cutoff |
-| `teams4e-meeting-enrichment-limit` | 64 meeting chats per batch |
+| `teams4e-meeting-upcoming-days` | 14 days for the calendar-first upcoming lookup |
+| `teams4e-meeting-enrichment-limit` | 64 chats per legacy all-meetings batch |
+| `teams4e-meeting-enrichment-concurrency` | 2; Outlook transport is guarded separately |
 | `teams4e-meeting-context-cache-seconds` | 300 seconds |
 
 Explicitly opening a chat starts a fresh request and selects its newest end:

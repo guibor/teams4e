@@ -1250,6 +1250,21 @@ class MockTenant:
           record["event"] = copy.deepcopy(event)
         else:
           record["eventError"] = "No linked mock calendar event"
+        upcoming_days = option(args, "--upcomingDays", required=False)
+        if upcoming_days is not None:
+          days = max(1, min(60, int(upcoming_days)))
+          now = datetime.now(timezone.utc)
+          until = now + timedelta(days=days)
+          record.update(event=None, eventError=None, upcomingWindowDays=days,
+                        upcomingWindowEnd=until.strftime("%Y-%m-%dT%H:%M:%SZ"))
+          if isinstance(event, dict):
+            start = event.get("start", {}).get("dateTime")
+            end = event.get("end", {}).get("dateTime")
+            if (start and end and not event.get("isCancelled") and
+                event.get("responseStatus", {}).get("response") != "declined" and
+                self._meeting_datetime(start) < until and
+                self._meeting_datetime(end) > now):
+              record["event"] = copy.deepcopy(event)
         records.append(record)
       return records
     if args[:4] == ["teams", "meeting", "propose", "suggest"]:

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Load upcoming meetings from one next-14-days calendarView projection matched
+  to loaded chats, avoiding per-chat metadata and historical scans. Keep nearest
+  recurring occurrences, briefly remember empty matches, and preserve partial
+  results on pagination errors. Configure the horizon with
+  `teams4e-meeting-upcoming-days` (up to 60).
+- Coordinate Outlook envelopes across backend workers and cap their JSON batches
+  at two items to reduce MailboxConcurrency throttling. Older concurrency
+  overrides cannot bypass this guard; Teams chat batching stays unchanged.
+
 - Open meeting availability on the original day with consecutive, duration-preserving
   slots. Add availability and proximity rankings, local previous/next-day navigation,
   full time intervals, and aligned participant gutters. Unknown schedules never count

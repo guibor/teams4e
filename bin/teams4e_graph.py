@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import nullcontext
 from collections import deque
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -95,6 +96,35 @@ class GraphRequestBudget:
 
 
 GRAPH_REQUEST_BUDGET = GraphRequestBudget()
+# One Outlook envelope at a time; its JSON batches contain at most two items.
+# Leave headroom under the four-request mailbox limit for other clients.
+OUTLOOK_REQUEST_LOCK = threading.Lock()
+OUTLOOK_JSON_BATCH_LIMIT = 2
+
+
+def outlook_request(path: str) -> bool:
+  """Recognize Outlook routes, including absolute Graph pagination URLs."""
+  parts = urllib.parse.urlparse(path).path.strip("/").split("/")
+  if parts and parts[0] in {"v1.0", "beta"}:
+    parts = parts[1:]
+  if parts and parts[0] == "me":
+    parts = parts[1:]
+  elif len(parts) >= 2 and parts[0] == "users":
+    parts = parts[2:]
+  else:
+    return False
+  return bool(parts) and parts[0].casefold() in {
+      "calendar", "calendars", "calendarview", "events", "findmeetingtimes",
+      "messages", "mailfolders", "outlook",
+  }
+
+
+def outlook_envelope(path: str, payload: dict[str, Any] | None) -> bool:
+  """Return whether an HTTP envelope consumes mailbox concurrency."""
+  return outlook_request(path) or any(
+      isinstance(item, dict) and outlook_request(str(item.get("url", "")))
+      for item in (payload or {}).get("requests", [])
+  )
 
 
 def graph_retry_delay(headers, attempt, *, throttled=False):
@@ -475,10 +505,13 @@ def graph_json(
   for attempt in range(GRAPH_RETRY_ATTEMPTS):
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     cost = len(payload["requests"]) if url == GRAPH_ROOT + "/$batch" and payload else 1
-    GRAPH_REQUEST_BUDGET.acquire(max(1, cost))
     try:
-      with urllib.request.urlopen(request, timeout=60) as response:
-        response_body = response.read().decode("utf-8")
+      guard = OUTLOOK_REQUEST_LOCK if outlook_envelope(url, payload) else nullcontext()
+      with guard:
+        # Reserve at dispatch, not before waiting for another mailbox worker.
+        GRAPH_REQUEST_BUDGET.acquire(max(1, cost))
+        with urllib.request.urlopen(request, timeout=60) as response:
+          response_body = response.read().decode("utf-8")
       break
     except urllib.error.HTTPError as exception:
       detail = exception.read().decode("utf-8", errors="replace")
@@ -873,9 +906,12 @@ def graph_get_json_batch(
 ) -> dict[str, tuple[dict[str, Any] | None, str | None]]:
   """Resolve keyed Graph GET paths in parallel batches of at most 20."""
   unique_paths = dict(keyed_paths)
+  batch_size = (OUTLOOK_JSON_BATCH_LIMIT
+                if any(outlook_request(path) for path in unique_paths.values())
+                else GRAPH_JSON_BATCH_LIMIT)
   batches = [
-      list(unique_paths.items())[offset:offset + GRAPH_JSON_BATCH_LIMIT]
-      for offset in range(0, len(unique_paths), GRAPH_JSON_BATCH_LIMIT)
+      list(unique_paths.items())[offset:offset + batch_size]
+      for offset in range(0, len(unique_paths), batch_size)
   ]
 
   def run_batch(
@@ -1018,7 +1054,7 @@ def calendar_event_thread_key(event: dict[str, Any]) -> str | None:
   """Return the meeting-thread prefix for EVENT's join URL, when present."""
   meeting = event.get("onlineMeeting")
   meeting = meeting if isinstance(meeting, dict) else {}
-  join_url = meeting.get("joinUrl")
+  join_url = meeting.get("joinUrl") or event.get("onlineMeetingUrl")
   return meeting_thread_key_from_join_url(
       join_url if isinstance(join_url, str) else None
   )
@@ -1982,11 +2018,63 @@ def get_meeting_chat_metadata_batch(
   return results
 
 
+def list_upcoming_meeting_events(
+    meetings: list[dict[str, Any]], access_token: str, days: int = 14,
+) -> list[dict[str, Any]]:
+  """Match loaded chats against one near-term calendar projection.
+
+  calendarView expands recurrence. No chat metadata, event-by-ID fan-out,
+  series-instance requests, historical search, or second calendar cache.
+  """
+  now = datetime.now(timezone.utc)
+  days = max(1, min(days, 60))
+  end = now + timedelta(days=days)
+  rows = {str(item["chatId"]): item for item in meetings if item.get("chatId")}
+  if not rows:
+    return []
+  by_thread: dict[str, list[str]] = {}
+  by_id: dict[str, list[str]] = {}
+  for chat_id, item in rows.items():
+    key = meeting_thread_key_from_chat_id(chat_id)
+    if key:
+      by_thread.setdefault(key, []).append(chat_id)
+    event_id = item.get("eventId")
+    if isinstance(event_id, str) and event_id:
+      by_id.setdefault(event_id, []).append(chat_id)
+  found: dict[str, dict[str, Any]] = {}
+  error = None
+  try:
+    # calendarView's overlap query includes meetings still in progress.
+    for event in iterate_calendar_view_events(
+        access_token, start=now, end=end, page_size=100):
+      boundary = calendar_event_start(event, "end")
+      start = calendar_event_start(event)
+      if (calendar_event_excluded(event) or start is None or
+          boundary is None or boundary <= now or start >= end):
+        continue
+      matches = set(by_thread.get(calendar_event_thread_key(event), []))
+      matches.update(by_id.get(event.get("id"), []))
+      matches.update(by_id.get(event.get("seriesMasterId"), []))
+      for chat_id in matches:
+        found[chat_id] = prefer_calendar_event(found.get(chat_id), event, now=now)
+  except BackendError as exception:
+    # A late page failure must not discard the meetings already received.
+    error = str(exception)
+  return [
+      {"chatId": chat_id, "event": found.get(chat_id),
+       "eventError": error,
+       "upcomingWindowDays": days,
+       "upcomingWindowEnd": end.strftime("%Y-%m-%dT%H:%M:%SZ")}
+      for chat_id in rows
+  ]
+
+
 def list_meeting_events_batch(
     meetings: list[dict[str, Any]],
     access_token: str,
     *,
-    meeting_concurrency: int = 6,
+    meeting_concurrency: int = 2,
+    upcoming_days: int | None = None,
 ) -> list[dict[str, Any]]:
   """Resolve linked events with JSON batches and one shared calendar scan.
 
@@ -1994,6 +2082,8 @@ def list_meeting_events_batch(
   IDs cost one bounded chat metadata lookup.  Every still-unresolved join URL
   then shares one calendarView scan instead of starting one scan per chat.
   """
+  if upcoming_days is not None:
+    return list_upcoming_meeting_events(meetings, access_token, upcoming_days)
   unique: dict[str, str | None] = {}
   for meeting in meetings:
     chat_id = meeting.get("chatId")
@@ -3294,8 +3384,10 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
         json_object_list_option(args, "--meetings"),
         access_token,
         meeting_concurrency=integer_option(
-            args, "--meetingConcurrency", 6, minimum=1
+            args, "--meetingConcurrency", 2, minimum=1
         ),
+        upcoming_days=(integer_option(args, "--upcomingDays", 14, minimum=1)
+                       if option(args, "--upcomingDays", required=False) is not None else None),
     )
   elif args[:4] == ["teams", "meeting", "propose", "suggest"]:
     result = get_meeting_time_suggestions(

@@ -92,6 +92,7 @@
 (defvar teams4e-member-enrichment-limit)
 (defvar teams4e-meeting-enrichment-concurrency)
 (defvar teams4e-meeting-enrichment-limit)
+(defvar teams4e-meeting-upcoming-days)
 (defvar teams4e-load-more-count)
 (defvar teams4e-message-days)
 (defvar teams4e-message-limit)
@@ -2222,9 +2223,10 @@ Return non-nil when a linked reader exists, even when it already matches."
       (teams4e--dig chat 'meetingContext 'onlineMeetingInfo 'calendarEventId)
       (teams4e--get (teams4e--meeting-event chat) 'id)))
 
-(defun teams4e--meeting-event-batch-args (chats)
-  "Return one backend request for the linked calendar events of CHATS."
-  (list
+(defun teams4e--meeting-event-batch-args (chats &optional upcoming)
+  "Return one calendar request for CHATS, using a window when UPCOMING."
+  (append
+   (list
    "teams" "meeting" "event" "batch"
    "--meetings"
    (json-encode
@@ -2236,7 +2238,10 @@ Return non-nil when a linked reader exists, even when it already matches."
      chats))
    "--meetingConcurrency"
    (number-to-string
-    (max 1 teams4e-meeting-enrichment-concurrency))))
+    (max 1 teams4e-meeting-enrichment-concurrency)))
+   (when upcoming
+     (list "--upcomingDays"
+           (number-to-string (max 1 (min 60 teams4e-meeting-upcoming-days)))))))
 
 (defun teams4e--meeting-enrichment-newer-p (left right)
   "Return non-nil when meeting LEFT should be enriched before RIGHT.
@@ -2300,8 +2305,12 @@ Results are merged into the existing chat alists.  The inbox therefore has
 one conversation representation even while meeting metadata arrives later.
 When RESOLVE-MISSING is non-nil, the backend may first resolve an event ID
 omitted by the chat-list response.  Explicit meeting views continue through
-CHATS in bounded batches, without retrying the same row in one pass."
+CHATS in bounded batches, without retrying the same row in one pass.
+Upcoming views instead match all candidates in one near-term calendar lookup."
   (let* ((base-limit (max 0 teams4e-meeting-enrichment-limit))
+         (upcoming (and resolve-missing
+                        (fboundp 'teams4e--upcoming-view-p)
+                        (teams4e--upcoming-view-p)))
          (candidates
           (seq-filter
            (lambda (chat)
@@ -2322,11 +2331,19 @@ CHATS in bounded batches, without retrying the same row in one pass."
                                (not (time-less-p (current-time) boundary)))))
                     (or (not error)
                         (teams4e--calendar-error-retriable-p error))
+                    (not (and upcoming (not error)
+                              (equal (teams4e--get context 'upcomingWindowDays)
+                                     (max 1 (min 60 teams4e-meeting-upcoming-days)))
+                              (< (- (float-time)
+                                    (or (teams4e--get context 'teams4eFetchedAt) 0))
+                                 teams4e-meeting-context-cache-seconds)))
                     (not (gethash id teams4e--meeting-inflight)))))
            chats))
-         (limit (if resolve-missing
-                   (min base-limit (length candidates))
-                 base-limit))
+         (limit (cond
+                 ((zerop base-limit) 0)
+                 (upcoming (length candidates))
+                 (resolve-missing (min base-limit (length candidates)))
+                 (t base-limit)))
          (selected
           (seq-take
            (if resolve-missing
@@ -2339,7 +2356,7 @@ CHATS in bounded batches, without retrying the same row in one pass."
       (teams4e--schedule-meeting-enrichment-timeouts ids)
       (when resolve-missing
         (teams4e--refresh-visible-recent))
-      (let ((args (teams4e--meeting-event-batch-args selected)))
+      (let ((args (teams4e--meeting-event-batch-args selected upcoming)))
         (teams4e--run-json
          args
          (lambda (payload)
@@ -2351,7 +2368,7 @@ CHATS in bounded batches, without retrying the same row in one pass."
                (teams4e--apply-meeting-context chat record)))
            (dolist (id ids) (remhash id teams4e--meeting-inflight))
            (teams4e--schedule-visible-recent-refresh)
-           (when (and resolve-missing
+           (when (and resolve-missing (not upcoming)
                       (fboundp 'teams4e--meeting-view-p)
                       (teams4e--meeting-view-p))
              ;; Consume this pass's remaining rows, never retry its failures.

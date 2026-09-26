@@ -292,11 +292,37 @@ See [the accept API](https://learn.microsoft.com/en-us/graph/api/event-accept?vi
 
 ## Meeting Metadata
 
+Upcoming views now take a calendar-first path: one paginated `calendarView`
+lookup from now through `teams4e-meeting-upcoming-days` (14 by default, capped
+at 60). Match the returned events to the loaded chat thread keys or known
+event/series IDs in memory. CalendarView already expands recurrence, so this
+path makes no per-chat metadata requests, series-instance requests, or
+historical fallback scans. Keep the nearest active/future non-declined,
+non-cancelled occurrence. A late page failure preserves received events and
+marks the result incomplete through the existing eventError field.
+
+Successful unmatched rows carry their lookup horizon in the canonical
+meetingContext, not an error or a separate cache. The ordinary context TTL
+prevents repeated scans on bookmark switches; changing the horizon or pressing
+g permits another lookup. The view remains chat-backed: a calendar event
+without a loaded Teams chat is not synthesized into a new conversation.
+
+This addresses a MailboxConcurrency report where six legacy workers plus
+parallel calendar chunks could exceed Outlook's four-request mailbox limit.
+All Outlook JSON envelopes now share one process-wide transport lock. Outlook
+JSON batches hold at most two items, reserving some headroom for other clients;
+Teams chat batches still hold up to 20. The lock is released on HTTP errors and
+exceptions; queued workers recheck the shared rate budget at dispatch.
+Other processes are outside this guard.
+
+The broader lookup below remains for explicit all-meeting views and individual
+chat inspection.
+
 Graph chat data may include `onlineMeetingInfo.calendarEventId`. The adapter
-fetches those events with a narrow field selection in Graph JSON batches of at
-most 20 requests. If a list row omits the ID, or its ID returns 404, an explicit
+fetches those events with a narrow field selection in Outlook JSON batches of
+at most two requests. If a list row omits the ID, or its ID returns 404, an explicit
 meeting view fetches `/chats/{id}` through the same bounded JSON batch helper.
-Batch containers may run concurrently up to the configured enrichment bound.
+Workers may prepare requests concurrently, but Outlook transport is serialized.
 Any rows still unresolved by direct IDs contribute their join URLs to one bounded
 `calendarView` scan for that backend request. Emacs merges the result into
 `meetingContext.event`. Ordinary inbox refreshes defer calendar enrichment.
