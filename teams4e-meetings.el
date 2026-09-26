@@ -919,7 +919,8 @@ return to the previous Teams layout."
 
 ;;;###autoload
 (defun teams4e-meeting-respond (&optional chat)
-  "Accept, tentatively accept, or decline meeting CHAT."
+  "Accept, tentatively accept, or decline meeting CHAT.
+Accepting with an empty note sends no response to the organizer."
   (interactive)
   (teams4e--require-online)
   (setq chat (or chat (teams4e--meeting-current-chat)))
@@ -939,7 +940,10 @@ return to the previous Teams layout."
             (label (completing-read "Meeting response: "
                                     (mapcar #'car choices) nil t))
             (response (cdr (assoc label choices)))
-            (comment (read-string (format "%s note to organizer: " label)))
+            (comment (read-string
+                      (if (equal response "accepted")
+                          "Accept note to organizer (empty: no response sent): "
+                        (format "%s note to organizer: " label))))
             (args (list "teams" "meeting" "respond"
                         "--eventId" event-id
                         "--response" response

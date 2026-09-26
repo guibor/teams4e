@@ -2924,6 +2924,31 @@
                          (teams4e--calendar-unavailable-label meeting))))
       (delete-file credentials))))
 
+(ert-deftest teams4e-meeting-columns-always-have-alignment-spacers ()
+  (with-temp-buffer
+    (teams4e-recent-mode)
+    (let ((teams4e--active-view 'upcoming)
+          (teams4e--active-query nil)
+          (inhibit-read-only t))
+      (teams4e--configure-recent-format)
+      (dolist (length '(4 28 80))
+        (let ((start (point))
+              (x tabulated-list-padding))
+          (funcall tabulated-list-printer (number-to-string length)
+                   (vector "" "Mon Sep 28 09:30-10:00"
+                           (propertize (make-string length ?X) 'face 'teams4e-unread)
+                           "Tentative" "Microsoft Teams Meeting" "" "Preview"))
+          (dotimes (index (1- (length tabulated-list-format)))
+            (let* ((format (aref tabulated-list-format index))
+                   (at (text-property-any start (1- (point))
+                                          'tabulated-list-column-name (car format)))
+                   (end (next-single-property-change
+                         at 'tabulated-list-column-name nil (1- (point)))))
+              (setq x (+ x (nth 1 format)
+                         (or (plist-get (nthcdr 3 format) :pad-right) 1)))
+              (should (equal `(space :align-to ,x)
+                             (get-text-property (1- end) 'display))))))))))
+
 (ert-deftest teams4e-calendar-error-retriable-p-recognizes-join-url-fallback ()
   (should (teams4e--calendar-error-retriable-p
            "The meeting chat has no linked calendar event ID"))
@@ -2933,6 +2958,11 @@
            "Microsoft Graph HTTP 404: item not found"))
   (should (teams4e--calendar-error-retriable-p
            "Calendar enrichment timed out; press g to retry"))
+  (should (teams4e--calendar-error-retriable-p
+           "Microsoft Graph HTTP 429: API calls quota exceeded! 50Per10Secs"))
+  (should (equal "Calendar throttled (g to retry)"
+                 (teams4e--calendar-unavailable-label
+                  '((meetingContext . ((eventError . "Microsoft Graph HTTP 429: quota")))))))
   (should-not (teams4e--calendar-error-retriable-p
                "Microsoft Graph HTTP 403: denied")))
 

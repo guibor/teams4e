@@ -184,10 +184,10 @@
   "Aligned columns used by message-oriented Teams views.")
 (defconst teams4e--meeting-recent-format
   [("Status" 6 nil)
-   ("When" 27 t)
-   ("Conversation" 28 t)
-   ("Response" 18 t)
-   ("Location" 20 t)
+   ("When" 27 t :pad-right 2)
+   ("Conversation" 28 t :pad-right 2)
+   ("Response" 18 t :pad-right 2)
+   ("Location" 20 t :pad-right 2)
    ("Star" 4 nil)
    ("Last message" 0 nil)]
   "Calendar-first aligned columns used by meeting-only Teams views.")
@@ -2088,8 +2088,31 @@ Return non-nil when a linked reader exists, even when it already matches."
   (list (teams4e--chat-id chat)
         (teams4e--recent-columns chat "")))
 
+(defun teams4e--print-recent-entry (id columns)
+  "Print ID and COLUMNS with an alignment spacer at every column boundary."
+  (let ((start (point))
+        (x (max tabulated-list-padding 0)))
+    (tabulated-list-print-entry id columns)
+    (let ((end (1- (point))))
+      (dotimes (index (1- (length tabulated-list-format)))
+        (let* ((format (aref tabulated-list-format index))
+               (padding (or (plist-get (nthcdr 3 format) :pad-right) 1))
+               (column-start (text-property-any
+                              start end 'tabulated-list-column-name (car format)))
+               (column-end (and column-start
+                                (next-single-property-change
+                                 column-start 'tabulated-list-column-name nil end))))
+          (setq x (+ x (nth 1 format) padding))
+          ;; Emacs emits no alignment span when a label exactly fills its width.
+          ;; Anchor the final separator even for full-width/truncated labels.
+          (when (and column-end (> padding 0)
+                     (eq (char-before column-end) ?\s))
+            (put-text-property (1- column-end) column-end
+                               'display `(space :align-to ,x))))))))
+
 (defun teams4e--configure-recent-format ()
   "Install the current Teams inbox columns, including after a live reload."
+  (setq-local tabulated-list-printer #'teams4e--print-recent-entry)
   (let ((format (teams4e--current-recent-format)))
     (unless (equal tabulated-list-format format)
       (setq tabulated-list-format (copy-sequence format))
@@ -3565,13 +3588,15 @@ When DATE-ONLY is non-nil, omit the time of day."
   "Return non-nil when linked-calendar enrichment should be retried for DETAIL."
   (and (stringp detail)
        (string-match-p
-        "\\(?:no linked calendar event\\|no calendar event matched\\|timed out\\|\\(?:^\\|[^0-9]\\)404\\|not found\\|stale\\)"
+        "\\(?:no linked calendar event\\|no calendar event matched\\|timed out\\|\\(?:^\\|[^0-9]\\)\\(?:404\\|429\\)\\|not found\\|stale\\)"
         (downcase detail))))
 
 (defun teams4e--calendar-unavailable-label (chat)
   "Return a concise, actionable calendar status label for CHAT."
   (let ((detail (teams4e--calendar-error-detail chat)))
     (cond
+     ((and (stringp detail) (string-match-p "HTTP 429" detail))
+      "Calendar throttled (g to retry)")
      ((and (not teams4e-mock-mode)
            (null teams4e-token-command)
            (stringp teams4e-credentials-file)

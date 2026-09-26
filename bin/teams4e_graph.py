@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import html
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -15,9 +16,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +58,59 @@ GET_SCHEDULE_BATCH_LIMIT = 20
 
 class BackendError(RuntimeError):
   """A user-facing backend failure."""
+
+
+class GraphRequestBudget:
+  """Shared rolling-window budget and server-directed cooldown for one process."""
+
+  def __init__(self, limit=40, window=10.0, *, clock=None, sleep=None):
+    self.limit = limit
+    self.window = window
+    self.clock = clock or time.monotonic
+    self.sleep = sleep or time.sleep
+    self.lock = threading.Lock()
+    self.requests = deque()
+    self.blocked_until = 0.0
+
+  def acquire(self, cost=1):
+    if not 1 <= cost <= self.limit:
+      raise ValueError("Graph request cost exceeds the budget")
+    while True:
+      with self.lock:
+        now = self.clock()
+        while self.requests and self.requests[0] <= now - self.window:
+          self.requests.popleft()
+        wait = self.blocked_until - now
+        if len(self.requests) + cost > self.limit:
+          wait = max(wait, self.requests[len(self.requests) + cost - self.limit - 1]
+                     + self.window - now)
+        if wait <= 0:
+          self.requests.extend([now] * cost)
+          return
+      self.sleep(wait)
+
+  def defer(self, seconds):
+    with self.lock:
+      self.blocked_until = max(self.blocked_until, self.clock() + seconds)
+
+
+GRAPH_REQUEST_BUDGET = GraphRequestBudget()
+
+
+def graph_retry_delay(headers, attempt, *, throttled=False):
+  """Honor Retry-After seconds or HTTP date without shortening server delays."""
+  fallback = min((10.0 if throttled else 1.0) * 2**attempt, GRAPH_MAX_RETRY_SECONDS)
+  value = next((str(value) for key, value in (headers or {}).items()
+                if key.lower() == "retry-after"), "")
+  try:
+    seconds = float(value)
+  except ValueError:
+    try:
+      when = parsedate_to_datetime(value)
+      seconds = (when - datetime.now(timezone.utc)).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+      return fallback
+  return max(0.0, seconds) if math.isfinite(seconds) else fallback
 
 
 def credentials_path() -> Path:
@@ -418,6 +474,8 @@ def graph_json(
   response_body = ""
   for attempt in range(GRAPH_RETRY_ATTEMPTS):
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
+    cost = len(payload["requests"]) if url == GRAPH_ROOT + "/$batch" and payload else 1
+    GRAPH_REQUEST_BUDGET.acquire(max(1, cost))
     try:
       with urllib.request.urlopen(request, timeout=60) as response:
         response_body = response.read().decode("utf-8")
@@ -425,13 +483,14 @@ def graph_json(
     except urllib.error.HTTPError as exception:
       detail = exception.read().decode("utf-8", errors="replace")
       retryable = exception.code in {429, 500, 502, 503, 504}
+      delay = graph_retry_delay(
+          exception.headers, attempt, throttled=exception.code == 429)
+      if exception.code == 429:
+        # Even the last failed attempt must slow other workers down.
+        GRAPH_REQUEST_BUDGET.defer(delay)
       if retryable and attempt + 1 < GRAPH_RETRY_ATTEMPTS:
-        retry_after = exception.headers.get("Retry-After")
-        try:
-          delay = float(retry_after) if retry_after else float(2**attempt)
-        except ValueError:
-          delay = float(2**attempt)
-        time.sleep(max(0.0, min(delay, GRAPH_MAX_RETRY_SECONDS)))
+        if exception.code != 429:
+          time.sleep(delay)
         continue
       try:
         error_payload = json.loads(detail)
@@ -482,19 +541,21 @@ def graph_text(
       method="GET",
   )
   for attempt in range(GRAPH_RETRY_ATTEMPTS):
+    GRAPH_REQUEST_BUDGET.acquire()
     try:
       with urllib.request.urlopen(request, timeout=60) as response:
         return response.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exception:
       detail = exception.read().decode("utf-8", errors="replace")
       retryable = exception.code in {429, 500, 502, 503, 504}
+      delay = graph_retry_delay(
+          exception.headers, attempt, throttled=exception.code == 429)
+      if exception.code == 429:
+        # Even the last failed attempt must slow other workers down.
+        GRAPH_REQUEST_BUDGET.defer(delay)
       if retryable and attempt + 1 < GRAPH_RETRY_ATTEMPTS:
-        retry_after = exception.headers.get("Retry-After")
-        try:
-          delay = float(retry_after) if retry_after else float(2**attempt)
-        except ValueError:
-          delay = float(2**attempt)
-        time.sleep(max(0.0, min(delay, GRAPH_MAX_RETRY_SECONDS)))
+        if exception.code != 429:
+          time.sleep(delay)
         continue
       try:
         error_payload = json.loads(detail)
@@ -796,6 +857,8 @@ def graph_batch_error(status: int, body: Any) -> str:
     error = body.get("error")
     if isinstance(error, dict) and isinstance(error.get("message"), str):
       detail = error["message"]
+  if not detail and isinstance(body, dict):
+    detail = body.get("message")
   if not detail:
     detail = "request failed"
   return f"Microsoft Graph HTTP {status}: {detail}"
@@ -831,42 +894,48 @@ def graph_get_json_batch(
       if request_headers:
         request["headers"] = request_headers
       requests.append(request)
-    payload = graph_json(
-        "/$batch",
-        access_token,
-        method="POST",
-        payload={"requests": requests},
-    )
-    responses = payload.get("responses")
-    if not isinstance(responses, list):
-      raise BackendError("Microsoft Graph batch response has no responses array")
-    batch_results: dict[
-        str, tuple[dict[str, Any] | None, str | None]
-    ] = {}
-    seen: set[str] = set()
-    for response in responses:
-      if not isinstance(response, dict):
-        continue
-      response_id = response.get("id")
-      if not isinstance(response_id, str) or response_id not in request_keys:
-        continue
-      key = request_keys[response_id]
-      seen.add(response_id)
-      status = response.get("status")
-      body = response.get("body")
-      if isinstance(status, int) and 200 <= status < 300 and isinstance(body, dict):
-        batch_results[key] = (body, None)
-      else:
-        batch_results[key] = (
-            None,
-            graph_batch_error(status if isinstance(status, int) else 500, body),
-        )
-    for request_id, key in request_keys.items():
-      if request_id not in seen:
-        batch_results[key] = (
-            None,
-            "Microsoft Graph batch returned no response for the requested resource",
-        )
+    batch_results: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
+    pending = requests
+    for attempt in range(GRAPH_RETRY_ATTEMPTS):
+      payload = graph_json(
+          "/$batch", access_token, method="POST", payload={"requests": pending})
+      responses = payload.get("responses")
+      if not isinstance(responses, list):
+        raise BackendError("Microsoft Graph batch response has no responses array")
+      pending_by_id = {request["id"]: request for request in pending}
+      seen: set[str] = set()
+      retry = []
+      cooldown = None
+      for response in responses:
+        if not isinstance(response, dict):
+          continue
+        response_id = response.get("id")
+        if not isinstance(response_id, str) or response_id not in pending_by_id:
+          continue
+        if response_id in seen:
+          continue
+        key = request_keys[response_id]
+        seen.add(response_id)
+        status = response.get("status")
+        body = response.get("body")
+        if isinstance(status, int) and 200 <= status < 300 and isinstance(body, dict):
+          batch_results[key] = (body, None)
+        else:
+          batch_results[key] = (
+              None, graph_batch_error(status if isinstance(status, int) else 500, body))
+          if status == 429:
+            delay = graph_retry_delay(response.get("headers"), attempt, throttled=True)
+            cooldown = max(cooldown or 0.0, delay)
+            if attempt + 1 < GRAPH_RETRY_ATTEMPTS:
+              retry.append(pending_by_id[response_id])
+      for request_id in pending_by_id.keys() - seen:
+        batch_results[request_keys[request_id]] = (
+            None, "Microsoft Graph batch returned no response for the requested resource")
+      if cooldown is not None:
+        GRAPH_REQUEST_BUDGET.defer(cooldown)
+      if not retry:
+        break
+      pending = retry
     return batch_results
 
   results: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
@@ -1770,7 +1839,7 @@ def respond_to_meeting(
     comment: str,
     access_token: str,
 ) -> dict[str, Any]:
-  """Accept, tentatively accept, or decline EVENT_ID and notify its organizer."""
+  """RSVP to EVENT_ID; an acceptance without a note sends no organizer response."""
   actions = {
       "accepted": "accept",
       "tentativelyAccepted": "tentativelyAccept",
@@ -1787,7 +1856,8 @@ def respond_to_meeting(
       f"/me/events/{quoted_id(event_id)}/{actions[response]}",
       access_token,
       method="POST",
-      payload={"comment": comment, "sendResponse": True},
+      payload={"comment": comment,
+               "sendResponse": response != "accepted" or bool(comment.strip())},
   )
   event["responseStatus"] = {
       "response": response,

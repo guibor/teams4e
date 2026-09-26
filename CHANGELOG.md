@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Anchor every inbox column boundary, including exactly full and truncated
+  cells, and widen meeting-column separators to keep unread bold rows aligned.
+
+- Pace persistent-backend Graph reads with a shared 40-operation/10-second
+  budget, counting individual JSON batch items. Share 429 cooldowns across
+  workers, honor Retry-After seconds and dates, and retry only throttled
+  batch items. Report exhausted calendar throttling as retriable.
+- Accept meetings without an organizer response when the note is blank,
+  including whitespace-only notes. Notes still send a response; tentative,
+  decline, and propose-new-time behavior is unchanged.
+
 - Raise default chat coverage to 300, opened-thread history to 100 messages,
   meeting batches to 64, and calendar lookahead to 60 days. Keep automatic
   previews at 50 and remove the default message date cutoff.

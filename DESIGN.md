@@ -268,6 +268,28 @@ targets. Backend request and transcript rendering timings are available through
 `M-x teams4e-performance-report`; offline tests verify ordering, not tenant
 latency.
 
+## Graph Request Budget
+
+Graph JSON/text reads in one backend process share a locked rolling budget:
+40 operations per 10 seconds, with each JSON batch item counted separately.
+Requests wait outside the lock. A 429 extends a shared cooldown even on the
+final failed attempt; workers cannot shorten an existing cooldown. Numeric
+and HTTP-date Retry-After values are honored without clipping. Missing or
+invalid headers use a 10-second exponential fallback, bounded at 60 seconds.
+
+Batch envelopes can succeed while individual items are throttled. The batch
+helper retains successes and permanent errors, retries only 429 items up to
+the existing attempt limit, and uses the longest returned Retry-After.
+No new persisted state or conversation cache is introduced. Separate backend
+processes and other applications do not share this budget, so it mitigates
+rather than guarantees avoidance of tenant-wide throttling.
+See [Microsoft's throttling guidance](https://learn.microsoft.com/en-us/graph/throttling).
+
+Blank acceptance notes map to `sendResponse: false` on the Graph accept
+action; the calendar acceptance itself is still performed. Nonempty notes,
+tentative responses, declines, and proposed times keep their previous behavior.
+See [the accept API](https://learn.microsoft.com/en-us/graph/api/event-accept?view=graph-rest-1.0).
+
 ## Meeting Metadata
 
 Graph chat data may include `onlineMeetingInfo.calendarEventId`. The adapter

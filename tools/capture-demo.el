@@ -37,6 +37,56 @@
     (write-region (x-export-frames nil 'png) nil
                   (expand-file-name name teams4e-capture-output) nil 'silent)))
 
+(defun teams4e-capture-check-meeting-alignment ()
+  "Check real pixel positions for short, full-width and truncated meeting rows."
+  (let ((buffer (generate-new-buffer " *Teams alignment check*")))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer buffer)
+          (delete-other-windows)
+          (teams4e-recent-mode)
+          (let ((teams4e--active-view 'upcoming)
+                (teams4e--active-query nil))
+            (teams4e--configure-recent-format)
+            (setq header-line-format "Teams meetings: synthetic alignment check"
+                  tabulated-list-entries
+                  (cl-loop for length in '(8 28 80 12)
+                           for index from 0
+                           collect
+                           (list (number-to-string index)
+                                 (apply #'vector
+                                        (mapcar
+                                         (lambda (text)
+                                           (propertize text 'face
+                                                       (and (cl-oddp index)
+                                                            'teams4e-unread)))
+                                         (list "" "Mon Sep 28 09:30-10:00"
+                                               (make-string length ?M)
+                                               "Tentative" "Microsoft Teams Meeting"
+                                               "" "Example: agenda ready"))))))
+            (tabulated-list-print)
+            (dolist (width '(180 130))
+              (set-frame-size nil width 38)
+              (teams4e-capture-settle)
+              (dolist (column '("When" "Conversation" "Response" "Location" "Last message"))
+                (let (positions)
+                  (save-excursion
+                    (goto-char (point-min))
+                    (while (not (eobp))
+                      (let* ((at (text-property-any
+                                  (point) (line-end-position)
+                                  'tabulated-list-column-name column))
+                             (position (and at (posn-at-point at (selected-window)))))
+                        (unless position (error "Invisible alignment column: %s" column))
+                        (push (car (posn-x-y position)) positions))
+                      (forward-line 1)))
+                  (unless (<= (- (apply #'max positions) (apply #'min positions)) 1)
+                    (error "Misaligned %s column at width %s: %s"
+                           column width positions))))
+              (teams4e-capture-frame (format "meetings-alignment-%s.png" width)))))
+      (set-frame-size nil 180 38)
+      (kill-buffer buffer))))
+
 (defun teams4e-capture-run ()
   "Exercise the real mock backend and photograph real UI states."
   (condition-case err
@@ -73,6 +123,7 @@
         (set-frame-size nil 180 38)
         (set-frame-position nil 0 0)
         (setq inhibit-startup-screen t)
+        (teams4e-capture-check-meeting-alignment)
         (teams4e-inbox)
         (teams4e-capture-wait
          (lambda () (and (teams4e--find-chat "mock-chat-atlas")

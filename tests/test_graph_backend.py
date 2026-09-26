@@ -1043,6 +1043,26 @@ class GraphBackendTests(unittest.TestCase):
         "tentativelyAccepted", result["event"]["responseStatus"]["response"]
     )
 
+  def test_blank_acceptance_suppresses_only_the_organizer_response(self) -> None:
+    for response, comment, notify in [
+        ("accepted", "", False),
+        ("accepted", " \t\n", False),
+        ("accepted", "See you there", True),
+        ("tentativelyAccepted", "", True),
+        ("declined", "", True),
+    ]:
+      with self.subTest(response=response, comment=comment):
+        event = {"id": "event-one", "isOrganizer": False, "isCancelled": False}
+        with (
+            mock.patch.object(backend, "get_calendar_event", return_value=event),
+            mock.patch.object(backend, "graph_json", return_value={}) as request,
+        ):
+          result = backend.respond_to_meeting("event-one", response, comment, "token")
+        self.assertEqual(notify, request.call_args.kwargs["payload"]["sendResponse"])
+        self.assertEqual(comment, request.call_args.kwargs["payload"]["comment"])
+        self.assertEqual(response, result["event"]["responseStatus"]["response"])
+        request.assert_called_once()
+
   def test_propose_new_meeting_time_posts_tentative_response(self) -> None:
     event = {
         "id": "event:id",

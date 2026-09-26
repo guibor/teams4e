@@ -163,6 +163,23 @@ when one already exists. This command requires your authenticated account to
 have permission to create chats; it does not send a message automatically.
 The usual `c` command chooses from loaded conversations instead.
 
+## Graph Throttling
+
+A 429 with `50Per10Secs` means the service's request quota was exceeded.
+The persistent backend now shares a budget of 40 Graph read operations per
+10 seconds. Each item in a JSON batch counts as an operation. Workers share
+server-directed cooldowns; without a Retry-After header, backoff starts at
+10 seconds and increases. Failed batch items are retried without repeating
+successful items.
+
+The budget is per backend process, not across other Emacs sessions, the TUI,
+or other applications. Shared tenant/application quotas can still throttle
+requests. Keep `teams4e-use-persistent-backend` enabled (the default), avoid
+repeatedly refreshing during throttling, and restart Emacs after updating.
+If retries are exhausted, the meeting row says `Calendar throttled`; refresh
+with `g` once the service has recovered. Larger loaded sets are retained,
+but their network requests may be paced over a longer interval.
+
 ## Meetings Without Living in the Calendar
 
 `M-x teams4e-meetings` or `b m` opens a calendar-light meeting view:
@@ -171,7 +188,9 @@ The usual `c` command chooses from loaded conversations instead.
    response state, location, overlap warnings, and invitations awaiting action.
 2. **Inspect** participants, organizer, join link, proposal state, and meeting
    chat in the singleton reader.
-3. **Act** with RSVP, join, and open-in-Outlook commands.
+3. **Act** with RSVP, join, and open-in-Outlook commands. Accepting with an
+   empty organizer note sends no response; a nonempty note sends a response.
+   Tentative, decline, and time proposals retain their notification behavior.
 4. **Negotiate** in a full-window availability buffer with ranked alternatives,
    per-participant status, working hours, and returned calendar blocks.
 5. **Capture** the meeting summary or complete thread into Org or Markdown.
