@@ -67,7 +67,10 @@
             (tabulated-list-print)
             (dolist (width '(180 130))
               (set-frame-size nil width 38)
-              (teams4e-capture-settle)
+              (switch-to-buffer buffer)
+              (goto-char (point-min))
+              (set-window-start (selected-window) (point-min))
+              (teams4e-capture-frame (format "meetings-alignment-%s.png" width))
               (dolist (column '("When" "Conversation" "Response" "Location" "Last message"))
                 (let (positions)
                   (save-excursion
@@ -77,7 +80,13 @@
                                   (point) (line-end-position)
                                   'tabulated-list-column-name column))
                              (position (and at (posn-at-point at (selected-window)))))
-                        (unless position (error "Invisible alignment column: %s" column))
+                        (unless position
+                          (error "Invisible %s at %S in %S; window %S, range %s-%s; row %S"
+                                 column at (buffer-name)
+                                 (buffer-name (window-buffer))
+                                 (window-start) (window-end nil t)
+                                 (buffer-substring-no-properties
+                                  (line-beginning-position) (line-end-position))))
                         (push (car (posn-x-y position)) positions))
                       (forward-line 1)))
                   (unless (<= (- (apply #'max positions) (apply #'min positions)) 1)
