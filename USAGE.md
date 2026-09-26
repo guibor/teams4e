@@ -151,6 +151,18 @@ Terms are ANDed, `|` creates simple OR clauses, and `-` negates a term.
 `teams4e-bookmarks` accepts built-in queries, text queries, or your own
 predicate functions.
 
+## Chats Outside Recents
+
+Use `M-x teams4e-create-chat` and enter a participant's email address or
+user ID. Leave the topic blank for a one-to-one conversation. The participant
+does not need to appear in your loaded recent chats. For a group, enter
+comma-separated participants and an optional topic.
+
+For one-to-one chats, [Microsoft Graph returns an existing conversation](https://learn.microsoft.com/en-us/graph/api/chat-post?view=graph-rest-1.0)
+when one already exists. This command requires your authenticated account to
+have permission to create chats; it does not send a message automatically.
+The usual `c` command chooses from loaded conversations instead.
+
 ## Meetings Without Living in the Calendar
 
 `M-x teams4e-meetings` or `b m` opens a calendar-light meeting view:
@@ -163,6 +175,27 @@ predicate functions.
 4. **Negotiate** in a full-window availability buffer with ranked alternatives,
    per-participant status, working hours, and returned calendar blocks.
 5. **Capture** the meeting summary or complete thread into Org or Markdown.
+
+Recurring chats show the current or nearest future occurrence in the next
+45 days, including rescheduled exceptions, rather than the series' original
+start date. Cancelled and declined occurrences are excluded. The view
+continues resolving loaded meeting chats in batches; it does not stop after
+the first 32.
+
+This remains a **chat-backed view, not a complete calendar listing**.
+Invitations without a loaded Teams chat, events beyond the lookup horizon,
+and calendar data unavailable to your account are not covered. If an older
+meeting chat is missing from the loaded set, increase the metadata limit and
+refresh:
+
+```elisp
+(setq teams4e-chat-metadata-limit 500) ; default 150; more rows cost more requests
+```
+
+Then run `M-x teams4e-recent-refresh` and open `b m` again. The option
+`teams4e-meeting-enrichment-limit` controls the batch size (default 32), not
+the total number processed in an explicit meeting view. Setting it to zero
+disables automatic calendar enrichment.
 
 In the availability buffer, `j`/`k` select an interval and `RET`
 proposes it. Use `s`/`b` for suggestions/calendar blocks, `r` to

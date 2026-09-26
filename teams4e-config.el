@@ -310,12 +310,12 @@ Emacs starts that single batch asynchronously after rendering chat metadata."
   :group 'teams4e)
 
 (defcustom teams4e-meeting-enrichment-limit 32
-  "Maximum meeting chats whose linked calendar events are resolved per inbox load.
+  "Maximum meeting chats resolved in one calendar-enrichment batch.
 
-The enrichment attaches event metadata directly to the existing chat objects;
-it does not create a second inbox or calendar cache.  Set this to zero to keep
-meeting details reader-only.  Explicit meeting views spend this bound on
-recent message-less meeting stubs first, then other meeting chats."
+Ordinary inbox loads request one batch.  Explicit meeting views continue
+through the loaded chats in bounded batches, prioritizing recent message-less
+stubs first.  Results attach to the existing chat objects, not a second
+calendar cache.  Set this to zero to keep meeting details reader-only."
   :type 'integer
   :group 'teams4e)
 

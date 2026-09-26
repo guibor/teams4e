@@ -2276,7 +2276,8 @@ wins without affecting visible message or meeting ordering."
 Results are merged into the existing chat alists.  The inbox therefore has
 one conversation representation even while meeting metadata arrives later.
 When RESOLVE-MISSING is non-nil, the backend may first resolve an event ID
-omitted by the chat-list response; explicit meeting views use this path."
+omitted by the chat-list response.  Explicit meeting views continue through
+CHATS in bounded batches, without retrying the same row in one pass."
   (let* ((base-limit (max 0 teams4e-meeting-enrichment-limit))
          (candidates
           (seq-filter
@@ -2288,7 +2289,14 @@ omitted by the chat-list response; explicit meeting views use this path."
                     (teams4e--meeting-chat-p chat)
                     (or resolve-missing
                         (teams4e--meeting-event-id chat))
-                    (not (teams4e--get context 'event))
+                    (let* ((event (teams4e--get context 'event))
+                           (boundary (or (teams4e--meeting-end-time chat)
+                                         (teams4e--meeting-start-time chat))))
+                      (or (not event)
+                          (equal (teams4e--get event 'type) "seriesMaster")
+                          (and (teams4e--get event 'seriesMasterId)
+                               boundary
+                               (not (time-less-p (current-time) boundary)))))
                     (or (not error)
                         (teams4e--calendar-error-retriable-p error))
                     (not (gethash id teams4e--meeting-inflight)))))
@@ -2319,7 +2327,13 @@ omitted by the chat-list response; explicit meeting views use this path."
                (remhash id teams4e--meeting-inflight)
                (teams4e--apply-meeting-context chat record)))
            (dolist (id ids) (remhash id teams4e--meeting-inflight))
-           (teams4e--schedule-visible-recent-refresh))
+           (teams4e--schedule-visible-recent-refresh)
+           (when (and resolve-missing
+                      (fboundp 'teams4e--meeting-view-p)
+                      (teams4e--meeting-view-p))
+             ;; Consume this pass's remaining rows, never retry its failures.
+             (teams4e--enrich-meetings
+              (seq-difference chats selected #'eq) t)))
          (lambda (status detail)
            ;; Calendar permission is optional; chat and member data stay useful,
            ;; but meeting views must explain why their calendar fields are empty.

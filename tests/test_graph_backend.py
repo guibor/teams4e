@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.parse
@@ -582,7 +583,7 @@ class GraphBackendTests(unittest.TestCase):
 
     lookup.assert_called_once()
     self.assertEqual("event-context", result["event"]["id"])
-    self.assertNotIn("eventError", result)
+    self.assertIsNone(result.get("eventError"))
 
   def test_calendar_events_by_join_url_exits_early_when_join_url_matches(self) -> None:
     join_url = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_test%40thread.v2/0"
@@ -605,6 +606,128 @@ class GraphBackendTests(unittest.TestCase):
     self.assertLessEqual(
         iterator.call_count, backend.CALENDAR_LOOKUP_CHUNK_PARALLEL)
     self.assertEqual("event-1", result[join_url.casefold()]["id"])
+
+  def meeting_row(self, event_id, hours, **extra):
+    start = backend.datetime.now(backend.timezone.utc) + backend.timedelta(hours=hours)
+    return {
+        "id": event_id,
+        "start": {"dateTime": start.isoformat(), "timeZone": "UTC"},
+        "end": {"dateTime": (start + backend.timedelta(hours=1)).isoformat(), "timeZone": "UTC"},
+        **extra,
+    }
+
+  def test_recurring_master_uses_paginated_instances_and_exceptions(self) -> None:
+    moved = self.meeting_row("moved", 3, type="exception", location={"displayName": "New room"})
+    with mock.patch.object(backend, "graph_json", side_effect=[
+        {"value": [
+            self.meeting_row("later", 48),
+            self.meeting_row("cancelled", 1, isCancelled=True),
+            self.meeting_row("declined", 2, responseStatus={"response": "declined"}),
+        ], "@odata.nextLink": "/instances-page-2"},
+        {"value": [moved, self.meeting_row("expired", -3)]},
+    ]) as request:
+      event, error = backend.next_recurring_event(
+          {"id": "master/id", "type": "seriesMaster"}, "token")
+    self.assertIsNone(error)
+    self.assertEqual("moved", event["id"])
+    self.assertEqual("master/id", event["seriesMasterId"])
+    self.assertEqual("New room", event["location"]["displayName"])
+    self.assertIn("/master%2Fid/instances?", request.call_args_list[0].args[0])
+    self.assertEqual(2, request.call_count)
+
+  def test_old_occurrence_resolves_series_and_prefers_ongoing(self) -> None:
+    with mock.patch.object(backend, "graph_collection", return_value=[
+        self.meeting_row("tomorrow", 24), self.meeting_row("ongoing", -0.5),
+    ]) as request:
+      event, error = backend.next_recurring_event(
+          self.meeting_row("old", -48, seriesMasterId="master"), "token")
+    self.assertIsNone(error)
+    self.assertEqual("ongoing", event["id"])
+    self.assertIn("/master/instances?", request.call_args.args[0])
+
+  def test_ended_series_has_no_upcoming_occurrence(self) -> None:
+    with mock.patch.object(backend, "graph_collection", return_value=[]):
+      event, error = backend.next_recurring_event(
+          {"id": "master", "type": "seriesMaster"}, "token")
+    self.assertIsNone(event)
+    self.assertIn("45 days", error)
+
+  def test_series_permission_failure_does_not_return_master(self) -> None:
+    with mock.patch.object(backend, "graph_collection",
+                           side_effect=backend.BackendError("HTTP 403")):
+      event, error = backend.next_recurring_event(
+          {"id": "master", "type": "seriesMaster"}, "token")
+    self.assertIsNone(event)
+    self.assertIn("403", error)
+
+  def test_single_event_needs_no_instances_request(self) -> None:
+    single = self.meeting_row("single", 24, type="singleInstance")
+    with mock.patch.object(backend, "graph_collection") as request:
+      self.assertEqual((single, None), backend.next_recurring_event(single, "token"))
+    request.assert_not_called()
+
+  def test_recurring_batch_shares_one_instances_request_per_series(self) -> None:
+    with (
+        mock.patch.object(backend, "get_calendar_events_batch", return_value={
+            "master": ({"id": "master", "type": "seriesMaster"}, None),
+        }),
+        mock.patch.object(backend, "graph_collection",
+                          return_value=[self.meeting_row("next", 24)]) as request,
+    ):
+      rows = backend.list_meeting_events_batch([
+          {"chatId": "one", "eventId": "master"},
+          {"chatId": "two", "eventId": "master"},
+      ], "token")
+    request.assert_called_once()
+    self.assertEqual(["next", "next"], [row["event"]["id"] for row in rows])
+
+  def test_recurring_batch_clears_stale_event_when_series_ends(self) -> None:
+    with (
+        mock.patch.object(backend, "get_calendar_events_batch", return_value={
+            "master": ({"id": "master", "type": "seriesMaster"}, None),
+        }),
+        mock.patch.object(backend, "graph_collection", return_value=[]),
+    ):
+      rows = backend.list_meeting_events_batch([
+          {"chatId": "one", "eventId": "master"},
+      ], "token")
+    self.assertIn("event", rows[0])
+    self.assertIsNone(rows[0]["event"])
+    self.assertIn("No upcoming occurrence", rows[0]["eventError"])
+
+  def test_calendar_lookup_chooses_nearest_despite_response_and_page_order(self) -> None:
+    url = "https://teams.microsoft.com/l/meetup-join/demo"
+    now = backend.datetime.now(backend.timezone.utc)
+    late_seen = threading.Event()
+
+    def events(_token, **kwargs):
+      self.assertIsNone(kwargs["max_pages"])
+      if kwargs["start"] < now + backend.timedelta(days=1):
+        self.assertTrue(late_seen.wait(2))
+        yield self.meeting_row("cancelled", 1, isCancelled=True, onlineMeeting={"joinUrl": url})
+        yield self.meeting_row("later-on-page", 48, onlineMeeting={"joinUrl": url})
+        yield self.meeting_row("nearest", 3, onlineMeeting={"joinUrl": url})
+      else:
+        yield self.meeting_row("later-response", 24 * 8, onlineMeeting={"joinUrl": url})
+        late_seen.set()
+
+    with mock.patch.object(backend, "iterate_calendar_view_events", side_effect=events):
+      rows = backend.calendar_events_by_join_url("token", needed_join_urls={url})
+    self.assertEqual("nearest", rows[url]["id"])
+
+  def test_calendar_lookup_reaches_full_future_horizon(self) -> None:
+    url = "https://teams.microsoft.com/l/meetup-join/demo"
+    now = backend.datetime.now(backend.timezone.utc)
+
+    def events(_token, **kwargs):
+      self.assertIsNone(kwargs["max_pages"])
+      if kwargs["start"] > now + backend.timedelta(days=34):
+        yield self.meeting_row("distant", 24 * 40, onlineMeeting={"joinUrl": url})
+
+    with mock.patch.object(backend, "iterate_calendar_view_events", side_effect=events) as request:
+      rows = backend.calendar_events_by_join_url("token", needed_join_urls={url})
+    self.assertEqual("distant", rows[url]["id"])
+    self.assertGreater(request.call_count, 4)
 
   def test_meeting_suggestions_preserve_duration_and_rank_attendees(self) -> None:
     event = {

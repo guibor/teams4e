@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Resolve recurring calendar links to the current or nearest future occurrence,
+  including rescheduled exceptions; skip cancelled and declined occurrences.
+- Choose the nearest calendar match independently of parallel response order,
+  follow future calendar pages, and search the full 45-day lookup window.
+- Continue explicit meeting enrichment through all loaded chats in bounded
+  batches; clear stale occurrences when a series has no upcoming instance.
+- Document opening chats outside recents and the meeting view's coverage limits.
+
 - Make Org the default compose editor, with Markdown and legacy text options;
   send rendered HTML while preserving source-format drafts and native mentions.
 - Keep the transcript visible above replies and preserve the reader's end

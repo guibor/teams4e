@@ -39,7 +39,7 @@ TOKEN_COMMAND_CACHE: tuple[str, int] | None = None
 MEETING_EVENT_SELECT = (
     "id,subject,start,end,isAllDay,isCancelled,showAs,responseStatus,"
     "location,locations,organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink,"
-    "allowNewTimeProposals,isOrganizer,responseRequested,type"
+    "allowNewTimeProposals,isOrganizer,responseRequested,type,seriesMasterId"
 )
 CALENDAR_LOOKUP_PAST_DAYS = 30
 CALENDAR_LOOKUP_PAST_FALLBACK_DAYS = 21
@@ -48,7 +48,6 @@ CALENDAR_LOOKUP_PAGE_SIZE = 50
 CALENDAR_LOOKUP_CHUNK_DAYS = 7
 CALENDAR_LOOKUP_MAX_PAGES_PER_CHUNK = 2
 CALENDAR_LOOKUP_MAX_PAST_CHUNKS = 3
-CALENDAR_LOOKUP_MAX_FUTURE_SCAN_PAGES = 8
 CALENDAR_LOOKUP_MAX_PAST_SCAN_PAGES = 6
 CALENDAR_LOOKUP_CHUNK_PARALLEL = 4
 GET_SCHEDULE_BATCH_LIMIT = 20
@@ -1015,10 +1014,10 @@ def iterate_calendar_view_events(
 
 
 def calendar_event_start(
-    event: dict[str, Any],
+    event: dict[str, Any], field: str = "start",
 ) -> datetime | None:
-  """Return EVENT's UTC start time when available."""
-  start = event.get("start")
+  """Return EVENT's UTC date-time FIELD when available."""
+  start = event.get(field)
   start = start if isinstance(start, dict) else {}
   value = start.get("dateTime")
   if not isinstance(value, str) or not value:
@@ -1051,8 +1050,8 @@ def prefer_calendar_event(
     return candidate
   if candidate_start is None:
     return current
-  current_future = current_start >= now
-  candidate_future = candidate_start >= now
+  current_future = (calendar_event_start(current, "end") or current_start) > now
+  candidate_future = (calendar_event_start(candidate, "end") or candidate_start) > now
   if current_future and not candidate_future:
     return current
   if candidate_future and not current_future:
@@ -1060,6 +1059,57 @@ def prefer_calendar_event(
   if candidate_future:
     return candidate if candidate_start < current_start else current
   return candidate if candidate_start > current_start else current
+
+
+def recurring_series_id(event: dict[str, Any]) -> str | None:
+  """Return the series identity, not an occurrence's mutable event ID."""
+  value = (event.get("id") if event.get("type") == "seriesMaster"
+           else event.get("seriesMasterId"))
+  return value if isinstance(value, str) and value else None
+
+
+def calendar_event_excluded(event: dict[str, Any]) -> bool:
+  """Exclude cancelled and declined occurrences from the upcoming projection."""
+  response = event.get("responseStatus")
+  return bool(event.get("isCancelled")) or (
+      isinstance(response, dict) and response.get("response") == "declined"
+  )
+
+
+def next_recurring_event(
+    event: dict[str, Any], access_token: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+  """Resolve a series to its current/next occurrence, including exceptions."""
+  series_id = recurring_series_id(event)
+  if not series_id or (
+      event.get("type") == "seriesMaster" and event.get("isCancelled")
+  ):
+    return event, None
+  now = datetime.now(timezone.utc)
+  path = collection_path(
+      f"/me/events/{quoted_id(series_id)}/instances",
+      [
+          ("startDateTime", (now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+          ("endDateTime", (now + timedelta(days=CALENDAR_LOOKUP_FUTURE_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+          ("$select", MEETING_EVENT_SELECT),
+          ("$top", str(CALENDAR_LOOKUP_PAGE_SIZE)),
+      ],
+  )
+  try:
+    instances = graph_collection(
+        path, access_token, request_headers={"Prefer": 'outlook.timezone="UTC"'},
+    )
+  except BackendError as error:
+    return None, str(error)
+  selected = None
+  for instance in instances:
+    boundary = calendar_event_start(instance, "end") or calendar_event_start(instance)
+    if calendar_event_excluded(instance) or boundary is None or boundary <= now:
+      continue
+    selected = prefer_calendar_event(selected, instance, now=now)
+  if selected is not None:
+    return {**selected, "seriesMasterId": series_id}, None
+  return None, f"No upcoming occurrence in the next {CALENDAR_LOOKUP_FUTURE_DAYS} days"
 
 
 class _CalendarPageBudget:
@@ -1091,9 +1141,9 @@ def calendar_events_by_join_url(
 ) -> dict[str, dict[str, Any]]:
   """Index calendar events by normalized onlineMeeting.joinUrl.
 
-  Lookup uses short calendar windows, parallel chunk scans, and page caps so
-  dense calendars do not require scanning hundreds of unrelated rows in one
-  request.
+  Scan short chronological windows in parallel. Finish each batch before
+  choosing its nearest occurrences; response order is not calendar order.
+  Future windows follow all pages. Only historical fallback is page-capped.
   """
   if not needed_join_urls:
     return {}
@@ -1120,14 +1170,12 @@ def calendar_events_by_join_url(
   def scan_chunk(
       chunk_start: datetime,
       chunk_end: datetime,
-      budget: _CalendarPageBudget,
+      budget: _CalendarPageBudget | None,
       *,
       past: bool,
   ) -> None:
-    if budget.exhausted():
-      return
-    max_pages = budget.reserve(CALENDAR_LOOKUP_MAX_PAGES_PER_CHUNK)
-    if max_pages <= 0:
+    max_pages = budget.reserve(CALENDAR_LOOKUP_MAX_PAGES_PER_CHUNK) if budget else None
+    if max_pages is not None and max_pages <= 0:
       return
     for event in iterate_calendar_view_events(
         access_token,
@@ -1136,8 +1184,11 @@ def calendar_events_by_join_url(
         max_pages=max_pages,
     ):
       with state_lock:
-        if not remaining:
-          break
+        boundary = calendar_event_start(event, "end") or calendar_event_start(event)
+        if calendar_event_excluded(event) or (
+            not past and boundary is not None and boundary <= now
+        ):
+          continue
         event_thread = calendar_event_thread_key(event)
         if thread_keys and event_thread is not None and event_thread not in thread_keys:
           continue
@@ -1146,23 +1197,19 @@ def calendar_events_by_join_url(
         join_url = normalize_meeting_join_url(meeting.get("joinUrl"))
         if not join_url or join_url not in remaining:
           continue
-        if past:
-          indexed[join_url] = prefer_calendar_event(
-              indexed.get(join_url), event, now=now
-          )
-        else:
-          indexed[join_url] = event
-          remaining.remove(join_url)
+        indexed[join_url] = prefer_calendar_event(
+            indexed.get(join_url), event, now=now
+        )
 
   def run_chunk_specs(
       chunk_specs: list[tuple[datetime, datetime, bool]],
-      budget: _CalendarPageBudget,
+      budget: _CalendarPageBudget | None,
   ) -> None:
     if not chunk_specs or not remaining:
       return
     parallel = min(CALENDAR_LOOKUP_CHUNK_PARALLEL, len(chunk_specs))
     for batch_start in range(0, len(chunk_specs), parallel):
-      if not remaining or budget.exhausted():
+      if not remaining or (budget and budget.exhausted()):
         break
       batch = chunk_specs[batch_start:batch_start + parallel]
       with ThreadPoolExecutor(max_workers=len(batch)) as executor:
@@ -1172,6 +1219,8 @@ def calendar_events_by_join_url(
         ]
         for future in as_completed(futures):
           future.result()
+      # Later chunks may respond first: retire matches only after the batch.
+      remaining.difference_update(indexed)
 
   future_specs: list[tuple[datetime, datetime, bool]] = []
   offset = 0
@@ -1184,7 +1233,7 @@ def calendar_events_by_join_url(
     future_specs.append((chunk_start, chunk_end, False))
     offset += CALENDAR_LOOKUP_CHUNK_DAYS
 
-  run_chunk_specs(future_specs, _CalendarPageBudget(CALENDAR_LOOKUP_MAX_FUTURE_SCAN_PAGES))
+  run_chunk_specs(future_specs, None)
 
   if remaining:
     past_specs: list[tuple[datetime, datetime, bool]] = []
@@ -1245,7 +1294,7 @@ def resolve_meeting_calendar_event(
 
   if isinstance(event_id, str) and event_id:
     try:
-      return get_calendar_event(event_id, access_token), None
+      return next_recurring_event(get_calendar_event(event_id, access_token), access_token)
     except BackendError as exception:
       calendar_error = str(exception)
       is_not_found = (
@@ -1804,6 +1853,8 @@ def get_meeting_context(chat_id: str, access_token: str) -> dict[str, Any]:
       "members": members,
       "membersLoaded": True,
       "onlineMeetingInfo": meeting_info,
+      "event": None,
+      "eventError": None,
   }
   if not isinstance(event_id, str) or not event_id:
     event_id = None
@@ -1986,14 +2037,36 @@ def list_meeting_events_batch(
       if unresolved
       else {}
   )
+  series = {
+      series_id: event
+      for event in resolved.values()
+      for series_id in [recurring_series_id(event)]
+      if series_id
+  }
+  occurrences: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
+  if series:
+    parallel = max(1, min(meeting_concurrency, len(series)))
+    with ThreadPoolExecutor(max_workers=parallel) as executor:
+      futures = {
+          executor.submit(next_recurring_event, event, access_token): series_id
+          for series_id, event in series.items()
+      }
+      for future in as_completed(futures):
+        occurrences[futures[future]] = future.result()
   records: list[dict[str, Any]] = []
   for chat_id in unique:
-    record: dict[str, Any] = {"chatId": chat_id}
+    record: dict[str, Any] = {"chatId": chat_id, "event": None, "eventError": None}
     metadata = chat_metadata.get(chat_id)
     meeting_info = metadata.get("onlineMeetingInfo") if metadata else None
     if isinstance(meeting_info, dict):
       record["onlineMeetingInfo"] = meeting_info
     event = resolved.get(chat_id)
+    if event is not None and (series_id := recurring_series_id(event)):
+      event, error = occurrences[series_id]
+      if event is None:
+        record["eventError"] = error
+        records.append(record)
+        continue
     join_url = (
         meeting_info.get("joinWebUrl")
         if isinstance(meeting_info, dict)
