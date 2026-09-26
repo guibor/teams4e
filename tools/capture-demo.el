@@ -16,7 +16,14 @@
   (let ((deadline (+ (float-time) 30)))
     (while (and (not (funcall predicate)) (< (float-time) deadline))
       (accept-process-output nil 0.05))
-    (unless (funcall predicate) (error "Capture timed out waiting for Teams"))))
+    (unless (funcall predicate)
+      (error "Capture timed out: view=%S query=%S rows=%S reader=%S"
+             teams4e--active-view teams4e--active-query
+             (with-current-buffer (teams4e--recent-buffer)
+               (mapcar #'car tabulated-list-entries))
+             (when (get-buffer teams4e--read-buffer-name)
+               (with-current-buffer teams4e--read-buffer-name
+                 (buffer-substring-no-properties (point-min) (point-max))))))))
 
 (defun teams4e-capture-settle ()
   "Let backend callbacks, window hooks, and fontification finish."
