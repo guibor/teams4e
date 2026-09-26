@@ -10,7 +10,7 @@
      (setenv "TZ" "UTC")
      (with-temp-buffer
        (teams4e-availability-mode)
-       (let ((context (teams4e-test-availability-context)))
+       (let ((context (copy-tree (teams4e-test-availability-context))))
          (setq teams4e-availability--chat (teams4e--get context 'chat)
                teams4e-availability--event-id "event-availability"
                teams4e-availability--payload (teams4e--get context 'payload)
