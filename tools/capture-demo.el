@@ -71,7 +71,9 @@
               (goto-char (point-min))
               (set-window-start (selected-window) (point-min))
               (teams4e-capture-frame (format "meetings-alignment-%s.png" width))
-              (dolist (column '("When" "Conversation" "Response" "Location" "Last message"))
+              (dolist (column (mapcar (lambda (index)
+                                        (car (aref tabulated-list-format index)))
+                                      '(1 2 3 4 6)))
                 (let (positions)
                   (save-excursion
                     (goto-char (point-min))
