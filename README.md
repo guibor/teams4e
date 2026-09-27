@@ -196,6 +196,20 @@ Start with `M-x teams4e`. Use `M-x customize-group RET teams4e RET` for user
 options, `C-h f` for a command's documentation, and `C-h m` for the active
 mode's bindings. `M-x teams4e-dispatch` provides command help.
 
+Use `M-x teams4e-switch-to-buffer` to resume Teams without reloading. An open
+draft takes precedence; otherwise it returns to the last Teams view and
+restores its reading layout where possible. First use opens the inbox normally.
+A prefix argument refreshes the resumed view; in a draft it refreshes the
+inbox without replacing the draft. For example, choose a global binding:
+
+```elisp
+(global-set-key (kbd "M-s c") #'teams4e-switch-to-buffer)
+```
+
+The package does not install a global binding. Explicit inbox and refresh
+commands retain their existing behavior. Background sync, when enabled,
+remains independent of this navigation command.
+
 The following are selected **default local bindings**, primarily in the
 headers buffer. The chat reader delegates conversation actions to the linked
 headers buffer. They can be changed independently of the commands.

@@ -42,6 +42,8 @@
           "Choose a Teams conversation snooze wake time." t)
 (defalias 'teams-unread-filter #'teams4e-toggle-unread-filter)
 (declare-function teams4e--refresh-current-view "advanced")
+(declare-function teams4e-search-refresh "teams4e-advanced" ())
+(declare-function teams4e-availability-refresh "teams4e-meetings" ())
 (declare-function teams4e--meeting-view-p "advanced")
 (declare-function teams4e--snoozed-view-p "advanced")
 (declare-function teams4e--render-channel-thread "advanced")
@@ -2031,7 +2033,8 @@ Return non-nil when a linked reader exists, even when it already matches."
 
 (defun teams4e--follow-selected-chat ()
   "Keep a visible reader synchronized, or schedule an opt-in first preview."
-  (unless teams4e--inhibit-reader-follow
+  (unless (or teams4e--inhibit-reader-follow
+              (eq this-command 'teams4e-switch-to-buffer))
     (if (teams4e--sync-visible-chat-reader)
         (teams4e--cancel-preview-timer)
       (teams4e--schedule-preview))))
@@ -2555,6 +2558,98 @@ Upcoming views instead match all candidates in one near-term calendar lookup."
       (teams4e--start-cache-first-inbox-load buffer))
      (t
       (teams4e--start-live-inbox-refresh buffer nil)))))
+
+(defvar teams4e--resume-layouts (make-hash-table :test #'eq :weakness 'key)
+  "Last Teams window layout in each live frame, without another data cache.")
+
+(defun teams4e--workspace-buffer-p (buffer)
+  "Return non-nil for a live Teams UI BUFFER, including Org/Markdown drafts."
+  (and (buffer-live-p buffer)
+       (with-current-buffer buffer
+         (or (bound-and-true-p teams4e-compose-edit-mode)
+             (derived-mode-p
+              'teams4e-recent-mode 'teams4e-read-mode 'teams4e-compose-mode
+              'teams4e-search-mode 'teams4e-channel-index-mode
+              'teams4e-channel-thread-mode 'teams4e-availability-mode)))))
+
+(defun teams4e--draft-buffer-p (buffer)
+  "Return non-nil for a live Teams composer BUFFER."
+  (and (buffer-live-p buffer)
+       (with-current-buffer buffer
+         (or (bound-and-true-p teams4e-compose-edit-mode)
+             (derived-mode-p 'teams4e-compose-mode)))))
+
+(defun teams4e--remember-workspace ()
+  "Remember the selected Teams layout before a command can leave it."
+  (when (and (eq (current-buffer) (window-buffer (selected-window)))
+             (teams4e--workspace-buffer-p (current-buffer)))
+    (puthash (selected-frame)
+             (list (current-window-configuration)
+                   (mapcar #'window-buffer (window-list nil 'no-minibuf)))
+             teams4e--resume-layouts)))
+
+(defun teams4e--track-workspace ()
+  "Install inexpensive, buffer-local Teams layout tracking."
+  (add-hook 'pre-command-hook #'teams4e--remember-workspace nil t)
+  (add-hook 'window-configuration-change-hook
+            #'teams4e--remember-workspace nil t))
+
+(dolist (hook '(teams4e-recent-mode-hook teams4e-chat-mode-hook
+                teams4e-compose-mode-hook teams4e-search-mode-hook
+                teams4e-channel-index-mode-hook teams4e-channel-thread-mode-hook
+                teams4e-availability-mode-hook))
+  (add-hook hook #'teams4e--track-workspace))
+
+(defun teams4e--refresh-resumed-buffer ()
+  "Explicitly refresh the resumed view without replacing a draft."
+  (cond
+   ((teams4e--draft-buffer-p (current-buffer))
+    (save-window-excursion
+      (if-let ((headers (get-buffer teams4e--recent-buffer-name)))
+          (with-current-buffer headers (teams4e-recent-refresh))
+        (teams4e-recent))))
+   ((derived-mode-p 'teams4e-availability-mode)
+    (call-interactively #'teams4e-availability-refresh))
+   ((derived-mode-p 'teams4e-search-mode)
+    (call-interactively #'teams4e-search-refresh))
+   (t
+    (require 'teams4e-advanced)
+    (teams4e--refresh-current-view))))
+
+;;;###autoload
+(defun teams4e-switch-to-buffer (&optional refresh)
+  "Resume Teams without fetching data; with prefix REFRESH, refresh the view.
+An unfinished composer takes precedence; otherwise return to the most recently
+used Teams UI buffer.  Restore its saved reading layout when still valid.
+With no surviving Teams buffers, open the inbox normally.  A prefix in a
+composer refreshes the inbox without replacing or sending the draft."
+  (interactive "P")
+  (let* ((buffers (buffer-list (selected-frame)))
+         (buffer (or (seq-find #'teams4e--draft-buffer-p buffers)
+                     (seq-find #'teams4e--workspace-buffer-p buffers)))
+         (frame (selected-frame))
+         (layout (gethash frame teams4e--resume-layouts))
+         (teams4e--inhibit-reader-follow t))
+    (if (not buffer)
+        (teams4e-inbox)
+      (unless (teams4e--workspace-buffer-p (current-buffer))
+        (puthash frame (current-window-configuration)
+                 teams4e--window-configurations))
+      (let ((window (get-buffer-window buffer frame)))
+        (cond
+         ((window-live-p window) (select-window window))
+         ((and (window-configuration-p (car layout))
+               (eq frame (window-configuration-frame (car layout)))
+               (memq buffer (cadr layout))
+               (seq-every-p #'buffer-live-p (cadr layout)))
+          (set-window-configuration (car layout))
+          (when-let ((restored (get-buffer-window buffer frame)))
+            (select-window restored)))
+         (t (pop-to-buffer buffer))))
+      (when (derived-mode-p 'teams4e-recent-mode)
+        (teams4e--cancel-preview-timer))
+      (when refresh (teams4e--refresh-resumed-buffer))
+      (teams4e--remember-workspace))))
 
 ;;;###autoload
 (defun teams4e-inbox ()

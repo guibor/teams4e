@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add `teams4e-switch-to-buffer` to resume existing Teams buffers without
+  fetching data, preserving filters, positions and a saved reading layout.
+  Prefer unfinished drafts; prefix refresh keeps draft text intact. First
+  use opens the inbox normally, and navigation does not trigger auto-preview.
+
 - Load upcoming meetings from one next-14-days calendarView projection matched
   to loaded chats, avoiding per-chat metadata and historical scans. Keep nearest
   recurring occurrences, briefly remember empty matches, and preserve partial
