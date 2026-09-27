@@ -78,6 +78,9 @@ def build_state():
                        responseStatus={"response": "notResponded" if i == 1 else "accepted"})
         meeting["locations"] = [meeting["location"]]
         chat.update(id=chat_id, topic=title, createdDateTime=stamp(-90), lastUpdatedDateTime=stamp(-30))
+        join_url = f"https://teams.microsoft.com/mock/meeting/demo-{i}"
+        meeting["onlineMeeting"]["joinUrl"] = join_url
+        chat["onlineMeetingInfo"]["joinWebUrl"] = join_url
         chat["onlineMeetingInfo"]["calendarEventId"] = meeting["id"]
         if i == 0:
             state["chats"][2] = chat
