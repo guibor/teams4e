@@ -219,6 +219,7 @@
             (teams4e-capture-frame
              (format "availability-%s-%s.png" view width))))
         (delete-other-windows)
+        (when (require 'window-purpose nil t) (purpose-mode 1))
         (teams4e-calendar t)
         (teams4e-capture-wait
          (lambda ()
@@ -239,6 +240,14 @@
            (with-current-buffer teams4e-calendar--detail-name
              (string-match-p "synthetic calendar event" (buffer-string)))))
         (teams4e-capture-frame "calendar-detail.png")
+        (switch-to-buffer teams4e-calendar--buffer-name)
+        (delete-other-windows)
+        (goto-char (point-min))
+        (search-forward "Planning")
+        (teams4e-calendar-open-event)
+        (unless (string-match-p "Overlapping events" (buffer-string))
+          (error "Calendar conflict detail is missing"))
+        (teams4e-capture-frame "calendar-conflicts.png")
         (with-temp-file (expand-file-name "capture.json" teams4e-capture-output)
           (insert (json-serialize
                    `((emacs . ,emacs-version)

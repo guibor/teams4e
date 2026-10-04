@@ -48,10 +48,17 @@ jobs:
         run: |
           emacs -Q --batch -L . -L .tmp/expand-region -L .tmp/evil \
             -l tests/teams4e-selection-tests.el -f ert-run-tests-batch-and-exit
-      - name: Test calendar with Evil
+      - name: Check out window-purpose test dependency
+        uses: actions/checkout@v4
+        with:
+          repository: bmag/emacs-purpose
+          ref: c827f45cd9b278b3eb9c2f4bcb55ef2fca5d3048
+          path: .tmp/window-purpose
+      - name: Test calendar with Evil and window-purpose
         run: |
-          emacs -Q --batch -L . -L .tmp/evil \
-            -l evil -l tests/teams4e-calendar-tests.el -f ert-run-tests-batch-and-exit
+          emacs -Q --batch -L . -L .tmp/evil -L .tmp/window-purpose \
+            -l evil -l window-purpose -l tests/teams4e-calendar-tests.el \
+            -f ert-run-tests-batch-and-exit
       - name: Check out Markdown test dependency
         uses: actions/checkout@v4
         with:

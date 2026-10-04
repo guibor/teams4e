@@ -353,7 +353,9 @@ The day-grouped agenda centers on the current or nearest time on first load.
 Availability, not RSVP, drives the colors: busy, tentative, out of office,
 working elsewhere, and subdued free events. Free gaps within configurable
 working hours use the full snapshot, even when a text filter hides events;
-incomplete loads never imply that time is free.
+incomplete loads never imply that time is free. Exact overlap intervals share
+labels with the affected events; the invite reader links to conflicting events,
+even when a text filter hides them from the agenda.
 
 `j/k` (or `J/K`) move between events; `h/l` (or `H/L`) move between
 days. `t` centers on now, `.` or `G` chooses a date with Org's date reader,

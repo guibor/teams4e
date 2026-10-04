@@ -453,5 +453,148 @@
                          '("teams" "meeting" "propose" "send"))))
         (should (eq (not (null (member "--comment" args))) (not organizer)))))))
 
+(ert-deftest teams4e-calendar-purpose-opens-and-reuses-reader ()
+  (skip-unless (featurep 'window-purpose))
+  (let ((enabled purpose-mode)
+        (teams4e-calendar--detail-name " *calendar purpose reader*")
+        (teams4e-offline-mode t))
+    (unwind-protect
+        (save-window-excursion
+          (purpose-mode 1)
+          (teams4e-calendar-test
+            (switch-to-buffer (current-buffer))
+            (delete-other-windows)
+            (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+                  teams4e-calendar--events
+                  (list (teams4e-calendar-test-event "one" "2026-10-04T09:00:00Z" "2026-10-04T10:00:00Z")))
+            (teams4e-calendar--render)
+            (goto-char (point-min))
+            (teams4e-calendar-next-event)
+            (let ((agenda (selected-window)))
+              (teams4e-calendar-open-event)
+              (should (derived-mode-p 'teams4e-calendar-event-mode))
+              (should (window-live-p agenda))
+              (should-not (eq agenda (selected-window)))
+              (let ((reader (selected-window)))
+                (select-window agenda)
+                (teams4e-calendar-open-event)
+                (should (eq reader (selected-window)))
+                (should (= 2 (length (window-list))))))))
+      (unless enabled (purpose-mode -1))
+      (when-let ((buffer (get-buffer teams4e-calendar--detail-name))) (kill-buffer buffer)))))
+
+(ert-deftest teams4e-calendar-visible-evil-day-keys-round-trip ()
+  (skip-unless (featurep 'evil))
+  (let ((enabled evil-mode)
+        (purpose-enabled (and (boundp 'purpose-mode) purpose-mode)))
+    (unwind-protect
+        (save-window-excursion
+          (evil-mode 1)
+          (when (fboundp 'purpose-mode) (purpose-mode 1))
+          (teams4e-calendar-test
+            (switch-to-buffer (current-buffer))
+            (let ((calendar-week-start-day 0))
+              (setq teams4e-calendar--loaded-key (teams4e-calendar--key))
+              (teams4e-calendar--render)
+              (teams4e-calendar--focus-time teams4e-calendar--date)
+              (evil-local-mode 1)
+              (dolist (state '(motion normal))
+                (evil-change-state state)
+                (execute-kbd-macro (kbd "L"))
+                (should (equal "2026-10-05" (get-text-property (point) 'teams4e-calendar-day)))
+                (should (looking-at "Monday,"))
+                (should hl-line-mode)
+                (execute-kbd-macro (kbd "H"))
+                (should (equal "2026-10-04" (get-text-property (point) 'teams4e-calendar-day)))))))
+      (unless enabled (evil-mode -1))
+      (when (and (fboundp 'purpose-mode) (not purpose-enabled)) (purpose-mode -1)))))
+
+(ert-deftest teams4e-calendar-conflicts-are-exact-not-transitive ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "A" "2026-10-04T09:00:00Z" "2026-10-04T11:00:00Z" '(showAs . "busy"))
+                (teams4e-calendar-test-event "B" "2026-10-04T10:00:00Z" "2026-10-04T12:00:00Z" '(showAs . "busy"))
+                (teams4e-calendar-test-event "C" "2026-10-04T11:00:00Z" "2026-10-04T13:00:00Z" '(showAs . "tentative"))))
+    (let ((conflicts (teams4e-calendar--conflicts (teams4e-calendar--midnight teams4e-calendar--date))))
+      (should (equal (mapcar (lambda (row) (mapcar (lambda (event) (teams4e--get event 'id)) (nth 2 row))) conflicts)
+                     '(("A" "B") ("B" "C"))))
+      (should (equal (teams4e-calendar--conflict-labels (cadr teams4e-calendar--events) conflicts) '("C1" "C2")))
+      (should (equal (mapcar (lambda (row) (format-time-string "%H:%M" (car row))) conflicts) '("10:00" "11:00"))))))
+
+(ert-deftest teams4e-calendar-conflicts-ignore-free-cancelled-declined-and-zero-duration ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "A" "2026-10-04T09:00:00Z" "2026-10-04T10:00:00Z" '(showAs . "busy"))
+                (teams4e-calendar-test-event "touching" "2026-10-04T10:00:00Z" "2026-10-04T11:00:00Z" '(showAs . "busy"))
+                (teams4e-calendar-test-event "free" "2026-10-04T09:00:00Z" "2026-10-04T11:00:00Z" '(showAs . "free"))
+                (teams4e-calendar-test-event "declined" "2026-10-04T09:00:00Z" "2026-10-04T11:00:00Z" '(responseStatus (response . "declined")))
+                (teams4e-calendar-test-event "cancelled" "2026-10-04T09:00:00Z" "2026-10-04T11:00:00Z" '(isCancelled . t))
+                (teams4e-calendar-test-event "zero" "2026-10-04T09:30:00Z" "2026-10-04T09:30:00Z")))
+    (should-not (teams4e-calendar--conflicts (teams4e-calendar--midnight teams4e-calendar--date)))))
+
+(ert-deftest teams4e-calendar-conflicts-survive-filter-and-clip-multi-day-events ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "OOF" "2026-10-03T00:00:00Z" "2026-10-05T00:00:00Z" '(showAs . "oof") '(isAllDay . t))
+                (teams4e-calendar-test-event "visible" "2026-10-03T23:00:00Z" "2026-10-04T01:00:00Z" '(showAs . "busy"))))
+    (teams4e-calendar-filter "visible")
+    (should (string-match-p "2 overlapping events (1 filtered out)" (buffer-string)))
+    (should (string-match-p "00:00 - 01:00" (buffer-string)))
+    (should (string-match-p (regexp-quote "[C1]") (buffer-string)))))
+
+(ert-deftest teams4e-calendar-conflict-detail-button-opens-real-partner ()
+  (save-window-excursion
+    (let ((teams4e-calendar--detail-name " *calendar overlap reader*") (teams4e-offline-mode t))
+      (unwind-protect
+          (teams4e-calendar-test
+            (switch-to-buffer (current-buffer))
+            (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+                  teams4e-calendar--events
+                  (list (teams4e-calendar-test-event "A" "2026-10-04T09:00:00Z" "2026-10-04T11:00:00Z")
+                        (teams4e-calendar-test-event "B" "2026-10-04T10:00:00Z" "2026-10-04T12:00:00Z")))
+            (teams4e-calendar--render)
+            (goto-char (point-min))
+            (teams4e-calendar-next-event)
+            (teams4e-calendar-open-event)
+            (goto-char (point-min))
+            (search-forward "Overlapping events")
+            (search-forward "B [Availability")
+            (search-backward "B [Availability")
+            (let ((reader (selected-window))
+                  (count (length (window-list))))
+              (button-activate (button-at (point)))
+              (should (eq reader (selected-window)))
+              (should (= count (length (window-list)))))
+            (should (equal "B" teams4e-calendar--event-id))
+            (should (equal "B" (teams4e--get (cadr (teams4e-calendar--context)) 'id))))
+        (when-let ((buffer (get-buffer teams4e-calendar--detail-name))) (kill-buffer buffer))))))
+
+(ert-deftest teams4e-calendar-conflicts-count-simultaneous-events ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "A" "2026-10-04T09:00:00Z" "2026-10-04T12:00:00Z")
+                (teams4e-calendar-test-event "B" "2026-10-04T10:00:00Z" "2026-10-04T11:00:00Z")
+                (teams4e-calendar-test-event "C" "2026-10-04T10:30:00Z" "2026-10-04T11:30:00Z")))
+    (should (equal (mapcar (lambda (row) (length (nth 2 row)))
+                           (teams4e-calendar--conflicts
+                            (teams4e-calendar--midnight teams4e-calendar--date)))
+                   '(2 3 2)))))
+
+(ert-deftest teams4e-calendar-day-navigation-does-not-invoke-org-date-reader ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--loaded-key (teams4e-calendar--key))
+    (teams4e-calendar--render)
+    (teams4e-calendar--focus-time teams4e-calendar--date)
+    (cl-letf (((symbol-function 'org-read-date)
+               (lambda (&rest _) (ert-fail "Navigation must not depend on date-reader advice"))))
+      (teams4e-calendar-next-day)
+      (should (looking-at "Monday,"))
+      (teams4e-calendar-previous-day)
+      (should (looking-at "Sunday,")))))
+
 (provide 'teams4e-calendar-tests)
 ;;; teams4e-calendar-tests.el ends here

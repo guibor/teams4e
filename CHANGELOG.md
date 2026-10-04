@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix calendar invite display with Spacemacs/window-purpose by passing a correctly
+  structured display action; test opening and reusing the reader with Purpose.
+  Make H/L navigation explicit in Evil normal/motion states, center on highlighted
+  day headings, and use stored calendar dates rather than Org date-reader calls.
+- Show exact calendar overlap intervals and matching event labels, including
+  filtered-out conflicts. Exclude free/declined/cancelled time and touching
+  endpoints; link directly between overlapping invites in the reusable reader.
+
 - Center the independent agenda on now; add event/day navigation and Org date
   selection (`j/k`, `h/l`, uppercase aliases, `t`, `.`). Color availability
   independently of RSVP, subdue free events, and derive conservative working-hour

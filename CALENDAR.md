@@ -16,7 +16,7 @@ so moving by a day across DST does not assume every day has 24 hours.
 | Default key | Action |
 | --- | --- |
 | `j / k`, `J / K`, `n / p` | Next / previous event, skipping gaps |
-| `h / l`, `H / L` | Previous / next day, without fetching inside the loaded range |
+| `h / l`, `H / L` | Center on the previous / next highlighted day heading; no fetch inside the loaded range |
 | `[ / ]` | Previous / next day, week, or month |
 | `d / w / m` | Day / week / month agenda |
 | `t` | Center on now, or the closest time on today's agenda |
@@ -49,6 +49,19 @@ tentative, out-of-office, and unknown availability block time; free,
 working-elsewhere, declined, and cancelled events do not. Overlapping blocks
 are merged before gaps are calculated, using the complete unfiltered snapshot.
 No gaps are inferred during loading or after an incomplete response.
+
+Overlap summaries appear just below the day heading, with exact intervals and
+labels such as `C1`. The affected event titles carry matching labels. This
+does not replace their busy/free colors. Back-to-back events do not conflict;
+free, working-elsewhere, declined, and cancelled entries are excluded. Tentative
+and unknown availability conservatively count as blocking time.
+
+Three-way overlaps show the actual simultaneous count, not misleading pair
+counts or transitive groups. Filtering cannot hide the existence of a clash:
+summaries say how many affected events are filtered out. Hover a summary for its
+titles, or open an event to see clickable overlap partners and their exact shared
+intervals. Those links reuse the same invite pane, where `r` opens availability.
+As with free gaps, overlap detection covers only the loaded selected calendar.
 
 These are ordinary, customizable Emacs keymaps:
 `teams4e-calendar-mode-map` and `teams4e-calendar-event-mode-map`.
@@ -90,6 +103,16 @@ Update **both** the Lisp package and your installed Python backend. A deployment
 that copies `teams4e-graph` and its Python modules outside the checkout must
 reinstall those files too. Restart the persistent backend or Emacs afterward.
 An older backend will reject the new `teams calendar` commands.
+
+For Lisp-only calendar updates in an existing session, evaluate with `M-:`:
+
+```elisp
+(progn (load "teams4e-calendar.el") (teams4e-calendar))
+```
+
+This reinstalls the agenda's buffer-local Evil navigation bindings and redraws
+from the current snapshot without fetching. The invite pane uses a standard
+Emacs display action that is also tested with Spacemacs' window-purpose enabled.
 
 Example optional configuration:
 

@@ -26,6 +26,11 @@ jobs:
           repository: xenodium/agent-shell
           ref: 19e9d0175a5392af9999447f6be99f65e43f37bb
           path: .tmp/agent-shell
+      - uses: actions/checkout@v4
+        with:
+          repository: bmag/emacs-purpose
+          ref: c827f45cd9b278b3eb9c2f4bcb55ef2fca5d3048
+          path: .tmp/window-purpose
       - name: Install Iosevka
         run: |
           curl -fL --retry 3 -o /tmp/iosevka.zip https://github.com/be5invis/Iosevka/releases/download/v34.8.1/PkgTTF-Iosevka-34.8.1.zip
@@ -36,7 +41,7 @@ jobs:
         run: |
           mkdir -p .tmp/capture
           timeout 150s xvfb-run -a -s "-screen 0 1600x1200x24" emacs -Q \
-            -L . -L .tmp/moe-theme -L .tmp/agent-shell \
+            -L . -L .tmp/moe-theme -L .tmp/agent-shell -L .tmp/window-purpose \
             --load tools/capture-demo.el
       - name: Assemble captured frames
         run: python3 tools/assemble-demo.py .tmp/capture
