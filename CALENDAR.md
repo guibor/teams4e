@@ -63,6 +63,9 @@ titles, or open an event to see clickable overlap partners and their exact share
 intervals. Those links reuse the same invite pane, where `r` opens availability.
 As with free gaps, overlap detection covers only the loaded selected calendar.
 
+[Conflict detail in real Emacs with Moe and window-purpose](assets/calendar-conflicts.png)
+uses synthetic appointments, not account data.
+
 These are ordinary, customizable Emacs keymaps:
 `teams4e-calendar-mode-map` and `teams4e-calendar-event-mode-map`.
 Evil uses motion state with the local calendar map taking precedence.
