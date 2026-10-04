@@ -1077,6 +1077,8 @@ def iterate_calendar_view_events(
     end: datetime | None = None,
     max_pages: int | None = None,
     page_size: int | None = None,
+    calendar_id: str | None = None,
+    select: str = MEETING_EVENT_SELECT,
 ) -> Iterator[dict[str, Any]]:
   """Yield calendar rows in UTC between START and END."""
   now = datetime.now(timezone.utc)
@@ -1084,11 +1086,11 @@ def iterate_calendar_view_events(
   end_time = end or (now + timedelta(days=CALENDAR_LOOKUP_FUTURE_DAYS))
   top = page_size or CALENDAR_LOOKUP_PAGE_SIZE
   path = collection_path(
-      "/me/calendarView",
+      f"/me/calendars/{quoted_id(calendar_id)}/calendarView" if calendar_id else "/me/calendarView",
       [
           ("startDateTime", start_time.strftime("%Y-%m-%dT%H:%M:%SZ")),
           ("endDateTime", end_time.strftime("%Y-%m-%dT%H:%M:%SZ")),
-          ("$select", MEETING_EVENT_SELECT),
+          ("$select", select),
           ("$top", str(top)),
       ],
   )
@@ -1116,6 +1118,64 @@ def iterate_calendar_view_events(
         yield item
     candidate = page.get("@odata.nextLink")
     next_url = candidate if isinstance(candidate, str) and candidate else None
+
+
+def list_calendars(access_token: str) -> list[dict[str, Any]]:
+  """List calendars visible to the signed-in user, without enumerating events."""
+  return graph_collection(collection_path("/me/calendars", [
+      ("$select", "id,name,color,isDefaultCalendar,canEdit,owner"),
+  ]), access_token)
+
+
+def calendar_range(start: str, end: str) -> tuple[datetime, datetime]:
+  """Validate an explicit, bounded, offset-aware calendar viewport."""
+  try:
+    boundaries = [datetime.fromisoformat(value.replace("Z", "+00:00"))
+                  for value in (start, end)]
+  except (ValueError, TypeError) as exc:
+    raise BackendError("Calendar dates must be ISO 8601 date-times with offsets") from exc
+  if any(value.tzinfo is None for value in boundaries):
+    raise BackendError("Calendar dates require a timezone offset")
+  first, last = [value.astimezone(timezone.utc) for value in boundaries]
+  if not first < last or last - first > timedelta(days=62):
+    raise BackendError("Calendar range must be positive and at most 62 days")
+  return first, last
+
+
+def list_calendar_view(
+    start: str, end: str, access_token: str, calendar_id: str | None = None,
+) -> dict[str, Any]:
+  """Return all event occurrences in one viewport, not just chat-linked meetings.
+  Keep partial pages on errors and mark them explicitly; never mistake a failed
+  or truncated request for an empty, complete calendar.
+  """
+  first, last = calendar_range(start, end)
+  events: dict[str, dict[str, Any]] = {}
+  error = None
+  try:
+    for event in iterate_calendar_view_events(
+        access_token, start=first, end=last, page_size=100,
+        calendar_id=calendar_id,
+        select=MEETING_EVENT_SELECT + ",categories,sensitivity,bodyPreview",
+    ):
+      if isinstance(event.get("id"), str):
+        events[event["id"]] = event
+  except BackendError as exc:
+    error = str(exc)
+  return {
+      "events": sorted(events.values(), key=lambda event: (
+          calendar_event_start(event) or first, str(event.get("id", "")))),
+      "complete": error is None, "error": error,
+      "start": first.isoformat(), "end": last.isoformat(),
+      "calendarId": calendar_id,
+  }
+
+
+def get_calendar_detail(event_id: str, access_token: str) -> dict[str, Any]:
+  """Fetch a full event only when explicitly opened."""
+  return graph_json(collection_path(f"/me/events/{quoted_id(event_id)}", [
+      ("$select", MEETING_EVENT_SELECT + ",body,bodyPreview,categories,sensitivity"),
+  ]), access_token, request_headers={"Prefer": 'outlook.timezone="UTC"'})
 
 
 def calendar_event_start(
@@ -3379,6 +3439,15 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
               record.get("members") or [],
               parent_id=str(record.get("chatId") or ""),
           )
+  elif args[:3] == ["teams", "calendar", "list"]:
+    result = list_calendars(access_token)
+  elif args[:3] == ["teams", "calendar", "view"]:
+    result = list_calendar_view(
+        str(option(args, "--start")), str(option(args, "--end")), access_token,
+        calendar_id=option(args, "--calendarId", required=False),
+    )
+  elif args[:4] == ["teams", "calendar", "event", "get"]:
+    result = get_calendar_detail(str(option(args, "--eventId")), access_token)
   elif args[:4] == ["teams", "meeting", "event", "batch"]:
     result = list_meeting_events_batch(
         json_object_list_option(args, "--meetings"),

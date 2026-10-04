@@ -21,6 +21,7 @@
 (require 'teams4e-advanced)
 (require 'teams4e-compose)
 (require 'teams4e-meetings)
+(require 'teams4e-calendar)
 (require 'teams4e-evil)
 
 ;;;###autoload

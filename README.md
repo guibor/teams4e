@@ -343,6 +343,26 @@ sharing policy determine what is visible; unavailable data is not "free."
 This is a useful calendar companion, not a complete replacement for Outlook.
 [Meeting workflow](USAGE.md#meetings-without-living-in-the-calendar).
 
+## Independent Calendar
+
+`M-x teams4e-calendar` opens an event-first Outlook calendar, separate from the
+Teams meeting-chat view. Ordinary appointments, focus blocks, all-day events,
+and recurring occurrences appear even when there is no associated Teams chat.
+
+The first UI is a day-grouped agenda: `d/w/m` select day/week/month,
+`[/]` move between ranges, `t` returns to today, and `G` chooses a date.
+`RET` opens a reusable event reader; `/` filters locally and `c` selects
+another calendar. RSVP (`a`), availability and time proposals (`A`), Org
+capture (`C`), join (`J`), and Outlook (`o`) act on the selected event.
+All bindings and defaults are customizable.
+
+It reuses your existing token provider and rate-limited backend, fetching only
+the displayed range. Reopening does not reload; `g` or a prefix argument does.
+No event-to-chat conversion or calendar-to-Org synchronization is involved.
+Update the installed backend as well as the Lisp package for this feature.
+
+See [Calendar setup, defaults, and boundaries](CALENDAR.md).
+
 ## Optional Agent Workflows
 
 - `teams4e-analyze-current-thread` exports the full available conversation,

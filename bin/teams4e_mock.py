@@ -150,6 +150,37 @@ def _message_reference(source: dict[str, Any]) -> dict[str, Any]:
   }
 
 
+def standalone_calendar_events() -> list[dict[str, Any]]:
+  """Seed ordinary appointments with no Teams chat; recurrence is expanded."""
+  today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+  rows = []
+  for index, (title, day, hour, length, all_day) in enumerate([
+      ("Focus: design review", 0, 10, 1, False),
+      ("Dentist", 1, 14, 1, False),
+      ("Out of office", 2, 0, 24, True),
+      ("Planning", 1, 9, 1, False),
+      ("Planning", 8, 9, 1, False),
+      ("Conference", 3, 0, 48, True),
+  ]):
+    start = today + timedelta(days=day, hours=hour)
+    event = {
+        "id": f"mock-calendar-{index}", "subject": title,
+        "start": {"dateTime": start.isoformat(), "timeZone": "UTC"},
+        "end": {"dateTime": (start + timedelta(hours=length)).isoformat(), "timeZone": "UTC"},
+        "isAllDay": all_day, "isOrganizer": True, "showAs": "busy",
+        "responseStatus": {"response": "organizer"},
+        "location": {"displayName": "Studio" if index == 0 else ""},
+        "organizer": {"emailAddress": {"name": "Example User", "address": "user@example.test"}},
+        "attendees": [], "type": "occurrence" if title == "Planning" else "singleInstance",
+        "body": {"contentType": "html", "content": "<p>A synthetic calendar event, not a Teams chat.</p>"},
+        "webLink": f"https://outlook.office.com/calendar/item/mock-calendar-{index}",
+    }
+    if title == "Planning":
+      event["seriesMasterId"] = "mock-calendar-planning-series"
+    rows.append(event)
+  return rows
+
+
 def seed_state() -> dict[str, Any]:
   me = {
       "id": "mock-user-current",
@@ -310,6 +341,7 @@ def seed_state() -> dict[str, Any]:
           "mock-chat-atlas": atlas_messages,
           "mock-chat-future-meeting": [],
       },
+      "calendarEvents": standalone_calendar_events(),
       "meetingEvents": {
           "mock-chat-future-meeting": {
               "id": "mock-event-architecture-review",
@@ -555,7 +587,7 @@ class MockTenant:
     raise ValueError(f"Unknown mock chat: {chat_id}")
 
   def _meeting_event(self, event_id: str) -> dict[str, Any]:
-    for event in self.state.get("meetingEvents", {}).values():
+    for event in list(self.state.get("meetingEvents", {}).values()) + self.state.get("calendarEvents", []):
       if isinstance(event, dict) and event.get("id") == event_id:
         return event
     raise ValueError(f"Unknown mock meeting event: {event_id}")
@@ -1177,6 +1209,28 @@ class MockTenant:
       return self.reset()
     if args == ["mock", "info"]:
       return self.info()
+    if args[:3] == ["teams", "calendar", "list"]:
+      return [{"id": "mock-primary", "name": "Calendar", "isDefaultCalendar": True,
+               "canEdit": True, "owner": {"address": "user@example.test"}}]
+    if args[:3] == ["teams", "calendar", "view"]:
+      if option(args, "--calendarId", required=False) not in (None, "mock-primary"):
+        raise ValueError("Unknown mock calendar")
+      first = self._meeting_datetime(str(option(args, "--start")))
+      last = self._meeting_datetime(str(option(args, "--end")))
+      if not first < last or last - first > timedelta(days=62):
+        raise ValueError("Calendar range must be positive and at most 62 days")
+      events = list(self.state.get("meetingEvents", {}).values()) + self.state.get("calendarEvents", [])
+      events = [copy.deepcopy(event) for event in events
+                if self._meeting_datetime(event["start"]["dateTime"]) < last
+                and self._meeting_datetime(event["end"]["dateTime"]) > first]
+      events.sort(key=lambda event: event["start"]["dateTime"])
+      for event in events:
+        event.pop("body", None)
+      return {"events": events, "complete": True, "error": None,
+              "start": first.isoformat(), "end": last.isoformat(),
+              "calendarId": option(args, "--calendarId", required=False)}
+    if args[:4] == ["teams", "calendar", "event", "get"]:
+      return copy.deepcopy(self._meeting_event(str(option(args, "--eventId"))))
     if args[:3] == ["teams", "chat", "list"]:
       metadata_limit = int(option(args, "--metadataLimit", required=False) or 150)
       return copy.deepcopy(self.state["chats"][:metadata_limit])

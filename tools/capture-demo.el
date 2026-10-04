@@ -211,6 +211,27 @@
               (error "Availability matrix has no continuous slots"))
             (teams4e-capture-frame
              (format "availability-%s-%s.png" view width))))
+        (delete-other-windows)
+        (teams4e-calendar t)
+        (teams4e-capture-wait
+         (lambda ()
+           (with-current-buffer teams4e-calendar--buffer-name
+             (and (not teams4e-calendar--loading)
+                  (not teams4e-calendar--error)
+                  (seq-find (lambda (event)
+                              (equal (teams4e--get event 'subject) "Focus: design review"))
+                            teams4e-calendar--events)))))
+        (switch-to-buffer teams4e-calendar--buffer-name)
+        (delete-other-windows)
+        (teams4e-capture-frame "calendar.png")
+        (goto-char (point-min))
+        (search-forward "Focus: design review")
+        (teams4e-calendar-open-event)
+        (teams4e-capture-wait
+         (lambda ()
+           (with-current-buffer teams4e-calendar--detail-name
+             (string-match-p "synthetic calendar event" (buffer-string)))))
+        (teams4e-capture-frame "calendar-detail.png")
         (with-temp-file (expand-file-name "capture.json" teams4e-capture-output)
           (insert (json-serialize
                    `((emacs . ,emacs-version)

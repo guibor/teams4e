@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an independent calendar workspace with day/week/month agendas, calendar
+  selection, on-demand event details, RSVP, availability/time proposals, and Org
+  capture. Load calendarView occurrences directly with the existing credentials
+  and Outlook request guard, without enumerating or synthesizing Teams chats.
+  Add synthetic appointments and all-day/recurring events for offline testing.
+
 - Add `teams4e-switch-to-buffer` to resume existing Teams buffers without
   fetching data, preserving filters, positions and a saved reading layout.
   Prefer unfinished drafts; prefix refresh keeps draft text intact. First

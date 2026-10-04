@@ -9,7 +9,7 @@ test-elisp:
 	$(EMACS) -Q --batch -L . -L tests \
 		-l tests/teams4e-tests.el -l tests/teams4e-companion-tests.el \
 		-l tests/teams4e-compose-tests.el -l tests/teams4e-availability-tests.el \
-		-l tests/teams4e-navigation-tests.el \
+		-l tests/teams4e-navigation-tests.el -l tests/teams4e-calendar-tests.el \
 		-f ert-run-tests-batch-and-exit
 
 test-python:
@@ -18,7 +18,7 @@ test-python:
 compile:
 	$(EMACS) -Q --batch -L . -f batch-byte-compile \
 		teams4e-config.el teams4e-ui.el teams4e-advanced.el teams4e-compose.el \
-		teams4e-meetings.el teams4e-evil.el teams4e-companion.el teams4e.el
+		teams4e-meetings.el teams4e-calendar.el teams4e-evil.el teams4e-companion.el teams4e.el
 
 clean:
 	find . -name '*.elc' -delete

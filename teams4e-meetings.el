@@ -25,6 +25,9 @@
 (defconst teams4e--availability-buffer-name "*Teams Availability*")
 
 (defvar-local teams4e-availability--chat nil)
+(defvar-local teams4e-availability--source-event nil)
+(defvar-local teams4e-availability--proposal-function nil
+  "Optional event-only proposal handler, called with a slot or nil for manual.")
 (defvar-local teams4e-availability--event-id nil)
 (defvar-local teams4e-availability--payload nil)
 (defvar-local teams4e-availability--window nil)
@@ -68,6 +71,17 @@
   "Face for the selected availability row."
   :group 'teams4e)
 
+(defun teams4e-availability--event ()
+  "Return the loaded event without requiring a Teams chat."
+  (or (teams4e--get teams4e-availability--payload 'event)
+      teams4e-availability--source-event
+      (teams4e--meeting-event teams4e-availability--chat)))
+
+(defun teams4e-availability--title ()
+  "Return the calendar subject, or the associated chat label."
+  (or (teams4e--get (teams4e-availability--event) 'subject)
+      (teams4e--chat-label teams4e-availability--chat)))
+
 (defun teams4e-availability--participants ()
   "Return normalized participants from the current availability payload."
   (teams4e--get teams4e-availability--payload 'participants))
@@ -87,7 +101,7 @@
   (or (teams4e-availability--time
        (teams4e--get teams4e-availability--payload 'event) 'start)
       (teams4e-availability--time
-       (teams4e--meeting-event teams4e-availability--chat) 'start)
+       (teams4e-availability--event) 'start)
       (car teams4e-availability--window)
       (current-time)))
 
@@ -402,19 +416,20 @@
 
 (defun teams4e-availability--insert-heading ()
   "Insert meeting and search context for the availability workspace."
-  (let* ((event (teams4e--get teams4e-availability--payload 'event))
-         (where (teams4e--meeting-location-label teams4e-availability--chat))
-         (response (teams4e--meeting-status-label teams4e-availability--chat))
+  (let* ((event (teams4e-availability--event))
+         (where (teams4e--dig event 'location 'displayName))
+         (response (if teams4e-availability--chat
+                       (teams4e--meeting-status-label teams4e-availability--chat)
+                     (teams4e--dig event 'responseStatus 'response)))
          (participants (teams4e-availability--participants))
          (proposal-reason
           (teams4e--get teams4e-availability--payload
                          'proposalUnavailableReason)))
-    (insert (propertize (teams4e--chat-label teams4e-availability--chat)
+    (insert (propertize (teams4e-availability--title)
                         'face '(:weight bold :height 1.15)))
     (insert "\n")
     (insert (format "Current: %s"
-                    (or (teams4e--meeting-time-label
-                         teams4e-availability--chat)
+                    (or (teams4e--meeting-slot-time-label event)
                         "calendar time unavailable")))
     (when response (insert (format "  |  %s" response)))
     (when where (insert (format "  |  %s" where)))
@@ -801,7 +816,7 @@
                        (or teams4e-availability--day
                            (teams4e-availability--original-time)))
                     "")
-                  (teams4e--chat-label teams4e-availability--chat)))))
+                  (teams4e-availability--title)))))
 
 (defun teams4e-availability-next (&optional count)
   "Select the next availability row by COUNT."
@@ -927,28 +942,33 @@
   (let ((suggestion (or (teams4e-availability--selected-suggestion)
                         (user-error "No ranked meeting time is selected")))
         (workspace (current-buffer)))
-    (teams4e--proposal-send
-     teams4e-availability--chat
-     teams4e-availability--event-id
-     (teams4e--get suggestion 'meetingTimeSlot)
-     (lambda (_payload)
-       (when (buffer-live-p workspace)
-         (with-current-buffer workspace
-           (teams4e-availability-quit)))))))
+    (if teams4e-availability--proposal-function
+        (funcall teams4e-availability--proposal-function
+                 (teams4e--get suggestion 'meetingTimeSlot))
+      (teams4e--proposal-send
+       teams4e-availability--chat
+       teams4e-availability--event-id
+       (teams4e--get suggestion 'meetingTimeSlot)
+       (lambda (_payload)
+         (when (buffer-live-p workspace)
+           (with-current-buffer workspace
+             (teams4e-availability-quit))))))))
 
 (defun teams4e-availability-manual ()
   "Enter and propose an exact start while preserving the meeting duration."
   (interactive)
   (teams4e-availability--require-proposal)
   (let ((workspace (current-buffer)))
-    (teams4e--proposal-send
-     teams4e-availability--chat
-     teams4e-availability--event-id
-     (teams4e--proposal-manual-slot teams4e-availability--chat)
-     (lambda (_payload)
-       (when (buffer-live-p workspace)
-         (with-current-buffer workspace
-           (teams4e-availability-quit)))))))
+    (if teams4e-availability--proposal-function
+        (funcall teams4e-availability--proposal-function nil)
+      (teams4e--proposal-send
+       teams4e-availability--chat
+       teams4e-availability--event-id
+       (teams4e--proposal-manual-slot teams4e-availability--chat)
+       (lambda (_payload)
+         (when (buffer-live-p workspace)
+           (with-current-buffer workspace
+             (teams4e-availability-quit))))))))
 
 (defun teams4e-availability--request ()
   "Request and render availability for the current workspace state."
@@ -988,8 +1008,9 @@
             (setq teams4e-availability--request nil
                   teams4e-availability--payload payload)
             (when-let ((event (teams4e--get payload 'event)))
-              (teams4e--apply-meeting-context
-               teams4e-availability--chat `((event . ,event))))
+              (when teams4e-availability--chat
+                (teams4e--apply-meeting-context
+                 teams4e-availability--chat `((event . ,event)))))
             (teams4e-availability--render))))
       (lambda (status detail)
         (teams4e--report-error args status detail)
