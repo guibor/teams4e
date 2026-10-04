@@ -12,6 +12,7 @@
 (require 'shr)
 
 (declare-function evil-set-initial-state "evil-core" (mode state))
+(declare-function evil-local-set-key "evil-core" (state key def))
 (declare-function evil-make-overriding-map "evil-core" (keymap &optional state copy))
 
 (defgroup teams4e-calendar nil
@@ -402,6 +403,16 @@
         (insert (or body (teams4e--get event 'bodyPreview) ""))))
     (goto-char (point-min))))
 
+(defun teams4e-calendar--refresh-reader (owner)
+  "Redraw the singleton reader when it refers to OWNER's current snapshot."
+  (when-let ((reader (get-buffer teams4e-calendar--detail-name)))
+    (with-current-buffer reader
+      (when (and (eq teams4e-calendar--owner owner)
+                 (ignore-errors (teams4e-calendar--context)))
+        (let ((position (point)))
+          (teams4e-calendar--render-detail)
+          (goto-char (min position (point-max))))))))
+
 (defun teams4e-calendar-open-event ()
   "Open the singleton event reader; fetch its full body only on demand."
   (interactive)
@@ -464,7 +475,8 @@
                     (= generation (buffer-local-value 'teams4e-calendar--generation owner)))
            (with-current-buffer owner
              (teams4e-calendar--replace-event (teams4e--get payload 'event))
-             (teams4e-calendar--render)))
+             (teams4e-calendar--render))
+           (teams4e-calendar--refresh-reader owner))
          (message "Calendar response saved: %s" response))))))
 
 (defun teams4e-calendar-capture ()
@@ -511,7 +523,12 @@
       (use-local-map (copy-keymap teams4e-availability-mode-map))
       (local-set-key (kbd "v") #'teams4e-calendar-respond)
       (local-set-key (kbd "J") #'teams4e-calendar-join)
-      (local-set-key (kbd "o") #'teams4e-calendar-open-outlook))
+      (local-set-key (kbd "o") #'teams4e-calendar-open-outlook)
+      (when (fboundp 'evil-local-set-key)
+        (dolist (state '(normal motion))
+          (evil-local-set-key state (kbd "v") #'teams4e-calendar-respond)
+          (evil-local-set-key state (kbd "J") #'teams4e-calendar-join)
+          (evil-local-set-key state (kbd "o") #'teams4e-calendar-open-outlook))))
     (pop-to-buffer buffer)
     (teams4e-availability--request)))
 

@@ -219,5 +219,20 @@
       (should (string-match-p ":CALENDAR_EVENT_ID: event" text))
       (should-not (string-match-p "Do not copy" text)))))
 
+(ert-deftest teams4e-calendar-evil-keys-take-precedence ()
+  (skip-unless (featurep 'evil))
+  (let ((was-enabled evil-mode))
+    (unwind-protect
+        (progn
+          (evil-mode 1)
+          (teams4e-calendar-test
+            (evil-local-mode 1)
+            (evil-motion-state)
+            (should (eq (key-binding (kbd "d")) #'teams4e-calendar-day))
+            (should (eq (key-binding (kbd "m")) #'teams4e-calendar-month))
+            (should (eq (key-binding (kbd "j")) #'teams4e-calendar-next-event))
+            (should (eq (key-binding (kbd "a")) #'teams4e-calendar-respond))))
+      (unless was-enabled (evil-mode -1)))))
+
 (provide 'teams4e-calendar-tests)
 ;;; teams4e-calendar-tests.el ends here

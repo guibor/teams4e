@@ -173,6 +173,10 @@
            (and (eq teams4e--active-view 'upcoming)
                 (with-current-buffer (teams4e--recent-buffer)
                   (>= (length tabulated-list-entries) 3)))))
+        ;; Select the row as a real RET command would, so headers-follow does
+        ;; not replace this programmatically opened reader during async redraws.
+        (switch-to-buffer (teams4e--recent-buffer))
+        (teams4e--recent-goto-chat-id "mock-chat-future-meeting")
         (teams4e-open-chat (teams4e--find-chat "mock-chat-future-meeting"))
         (teams4e-capture-wait
          (lambda ()
