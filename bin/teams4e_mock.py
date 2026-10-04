@@ -167,7 +167,9 @@ def standalone_calendar_events() -> list[dict[str, Any]]:
         "id": f"mock-calendar-{index}", "subject": title,
         "start": {"dateTime": start.isoformat(), "timeZone": "UTC"},
         "end": {"dateTime": (start + timedelta(hours=length)).isoformat(), "timeZone": "UTC"},
-        "isAllDay": all_day, "isOrganizer": True, "showAs": "busy",
+        "isAllDay": all_day, "isOrganizer": True,
+        "showAs": {"Out of office": "oof", "Planning": "tentative",
+                   "Conference": "free"}.get(title, "busy"),
         "responseStatus": {"response": "organizer"},
         "location": {"displayName": "Studio" if index == 0 else ""},
         "organizer": {"emailAddress": {"name": "Example User", "address": "user@example.test"}},
@@ -785,6 +787,8 @@ class MockTenant:
         "schedules": schedules,
         "scheduleError": None,
         "proposalAllowed": reason is None,
+        "rescheduleAllowed": bool(event.get("isOrganizer") and not event.get("isCancelled")
+                                  and not event.get("isAllDay") and event.get("type") != "seriesMaster"),
         "proposalUnavailableReason": reason,
     }
 
@@ -1229,6 +1233,19 @@ class MockTenant:
       return {"events": events, "complete": True, "error": None,
               "start": first.isoformat(), "end": last.isoformat(),
               "calendarId": option(args, "--calendarId", required=False)}
+    if args[:4] == ["teams", "calendar", "event", "reschedule"]:
+      event = self._meeting_event(str(option(args, "--eventId")))
+      if not (event.get("isOrganizer") and not event.get("isCancelled")
+              and not event.get("isAllDay") and event.get("type") != "seriesMaster"):
+        raise ValueError("This mock event cannot be rescheduled")
+      first = datetime.fromisoformat(str(option(args, "--start")).replace("Z", "+00:00"))
+      last = datetime.fromisoformat(str(option(args, "--end")).replace("Z", "+00:00"))
+      if first.tzinfo is None or last.tzinfo is None or last <= first:
+        raise ValueError("Invalid reschedule range")
+      event["start"] = self._meeting_date_time(first)
+      event["end"] = self._meeting_date_time(last)
+      self._write()
+      return {"status": "rescheduled", "event": event}
     if args[:4] == ["teams", "calendar", "event", "get"]:
       return copy.deepcopy(self._meeting_event(str(option(args, "--eventId"))))
     if args[:3] == ["teams", "chat", "list"]:
@@ -1393,6 +1410,9 @@ class MockTenant:
         return messages[-int(requested_limit):]
       return messages
     if args[:3] == ["teams", "chat", "get"]:
+      chat_id = option(args, "--chatId", required=False)
+      if chat_id:
+        return self._chat(str(chat_id))
       wanted = {
           item.strip().casefold()
           for item in str(option(args, "--participants")).split(",")

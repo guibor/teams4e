@@ -439,7 +439,10 @@
                     (symbol-name teams4e-availability--activity-domain)
                     (length participants)
                     (if (= (length participants) 1) "" "s")))
-    (when proposal-reason
+    (when (teams4e-availability--reschedule-p)
+      (insert (propertize "Reschedule this occurrence; attendees receive the update.\n"
+                          'face 'teams4e-availability-tentative)))
+    (when (and proposal-reason (not (teams4e-availability--reschedule-p)))
       (insert (propertize (concat proposal-reason "\n")
                           'face 'teams4e-availability-tentative)))
     (when-let ((schedule-error
@@ -915,9 +918,15 @@
   (interactive)
   (teams4e-availability-set-view 'blocks))
 
+(defun teams4e-availability--reschedule-p ()
+  "Return non-nil for an event-only workspace with an organizer move handler."
+  (and teams4e-availability--source-event teams4e-availability--proposal-function
+       (teams4e--get teams4e-availability--payload 'rescheduleAllowed)))
+
 (defun teams4e-availability--proposal-allowed-p ()
   "Return non-nil when the current meeting accepts a new-time proposal."
-  (teams4e--get teams4e-availability--payload 'proposalAllowed))
+  (or (teams4e--get teams4e-availability--payload 'proposalAllowed)
+      (teams4e-availability--reschedule-p)))
 
 (defun teams4e-availability--require-proposal ()
   "Reject proposal actions unavailable for the current meeting."

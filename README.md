@@ -349,12 +349,21 @@ This is a useful calendar companion, not a complete replacement for Outlook.
 Teams meeting-chat view. Ordinary appointments, focus blocks, all-day events,
 and recurring occurrences appear even when there is no associated Teams chat.
 
-The first UI is a day-grouped agenda: `d/w/m` select day/week/month,
-`[/]` move between ranges, `t` returns to today, and `G` chooses a date.
-`RET` opens a reusable event reader; `/` filters locally and `c` selects
-another calendar. RSVP (`a`), availability and time proposals (`A`), Org
-capture (`C`), join (`J`), and Outlook (`o`) act on the selected event.
-All bindings and defaults are customizable.
+The day-grouped agenda centers on the current or nearest time on first load.
+Availability, not RSVP, drives the colors: busy, tentative, out of office,
+working elsewhere, and subdued free events. Free gaps within configurable
+working hours use the full snapshot, even when a text filter hides events;
+incomplete loads never imply that time is free.
+
+`j/k` (or `J/K`) move between events; `h/l` (or `H/L`) move between
+days. `t` centers on now, `.` or `G` chooses a date with Org's date reader,
+and `d/w/m` select day/week/month. `[/]` move between whole ranges.
+`RET` opens a reusable invite reader; `/` filters locally and `c` selects
+another calendar. RSVP (`a`), availability and rescheduling (`r` or `A`),
+Teams chat (`T`), Org capture (`C`), join (`v`), and Outlook (`o`) act
+on the selected event. All bindings, faces, and working-hour defaults are
+customizable. The time workspace proposes alternatives for invitations and moves
+one timed occurrence for events you organize, without changing the series.
 
 It reuses your existing token provider and rate-limited backend, fetching only
 the displayed range. Reopening does not reload; `g` or a prefix argument does.

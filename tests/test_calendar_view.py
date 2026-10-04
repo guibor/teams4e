@@ -79,6 +79,58 @@ class CalendarTests(unittest.TestCase):
                              "--end", "until", "--calendarId", "other"])
         view.assert_called_once_with("from", "until", "token", calendar_id="other")
 
+    def test_chat_by_id_is_one_exact_request_not_participant_search(self):
+        with mock.patch.object(backend, "mock_enabled", return_value=False), \
+             mock.patch.object(backend, "ensure_graph_token", return_value="token"), \
+             mock.patch.object(backend, "graph_json", return_value={"id": "chat"}) as get, \
+             mock.patch.object(backend, "find_chat_by_participants") as scan:
+            result = backend.execute(["teams", "chat", "get", "--chatId", "19:meeting_AbCd@thread.v2"])
+        self.assertEqual(({"id": "chat"}, "json"), result)
+        get.assert_called_once_with("/chats/19%3Ameeting_AbCd%40thread.v2", "token")
+        scan.assert_not_called()
+
+    def test_reschedule_updates_only_one_occurrence_time(self):
+        event = {"id": "occ/1", "type": "occurrence", "seriesMasterId": "series",
+                 "isOrganizer": True, "attendees": [{"emailAddress": {"address": "a@example.test"}}]}
+        with mock.patch.object(backend, "get_calendar_event", return_value=event), \
+             mock.patch.object(backend, "graph_json", return_value={**event, "subject": "Moved"}) as update:
+            result = backend.reschedule_calendar_event(
+                "occ/1", "2026-10-04T12:00:00+03:00", "2026-10-04T13:00:00+03:00", "token")
+        self.assertEqual("rescheduled", result["status"])
+        self.assertEqual("/me/events/occ%2F1", update.call_args.args[0])
+        self.assertEqual("PATCH", update.call_args.kwargs["method"])
+        self.assertEqual({"start", "end"}, set(update.call_args.kwargs["payload"]))
+        self.assertEqual("2026-10-04T09:00:00", update.call_args.kwargs["payload"]["start"]["dateTime"])
+
+    def test_reschedule_rejects_attendees_cancelled_all_day_and_series(self):
+        for event in ({}, {"isOrganizer": False}, {"isOrganizer": True, "isCancelled": True},
+                      {"isOrganizer": True, "isAllDay": True},
+                      {"isOrganizer": True, "type": "seriesMaster"}):
+            with self.subTest(event=event), \
+                 mock.patch.object(backend, "get_calendar_event", return_value=event), \
+                 mock.patch.object(backend, "graph_json") as update:
+                with self.assertRaises(backend.BackendError):
+                    backend.reschedule_calendar_event(
+                        "event", "2026-10-04T12:00:00Z", "2026-10-04T13:00:00Z", "token")
+                update.assert_not_called()
+
+    def test_reschedule_rejects_invalid_dates_before_patch(self):
+        with mock.patch.object(backend, "get_calendar_event", return_value={"isOrganizer": True}), \
+             mock.patch.object(backend, "graph_json") as update:
+            for start, end in (("2026-10-04T12:00:00", "2026-10-04T13:00:00"),
+                               ("2026-10-04T12:00:00Z", "2026-10-04T11:00:00Z")):
+                with self.assertRaises(backend.BackendError):
+                    backend.reschedule_calendar_event("event", start, end, "token")
+            update.assert_not_called()
+
+    def test_reschedule_cli_routes_explicit_action(self):
+        with mock.patch.object(backend, "mock_enabled", return_value=False), \
+             mock.patch.object(backend, "ensure_graph_token", return_value="token"), \
+             mock.patch.object(backend, "reschedule_calendar_event", return_value={}) as move:
+            backend.execute(["teams", "calendar", "event", "reschedule",
+                             "--eventId", "event", "--start", "from", "--end", "until"])
+        move.assert_called_once_with("event", "from", "until", "token")
+
     def test_mock_has_independent_events_and_calendar_selection(self):
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.dict("os.environ", {"TEAMS4E_MOCK_STATE": str(Path(directory) / "mock.json")}):
@@ -94,8 +146,19 @@ class CalendarTests(unittest.TestCase):
                 detail = tenant.execute(["teams", "calendar", "event", "get", "--eventId", rows[0]["id"]])
                 self.assertIn("body", detail)
                 self.assertTrue(tenant.execute(["teams", "calendar", "list"]))
+                chat = tenant.state["chats"][0]
+                self.assertEqual(chat, tenant.execute(["teams", "chat", "get", "--chatId", chat["id"]]))
                 with self.assertRaises(ValueError):
                     tenant.execute(args + ["--calendarId", "unknown"])
+                moved = tenant.execute(["teams", "calendar", "event", "reschedule",
+                                        "--eventId", "mock-calendar-0",
+                                        "--start", "2026-10-04T11:00:00Z",
+                                        "--end", "2026-10-04T12:00:00Z"])
+                self.assertEqual("rescheduled", moved["status"])
+                persisted = MockTenant().execute(["teams", "calendar", "event", "get",
+                                                  "--eventId", "mock-calendar-0"])
+                self.assertEqual(moved["event"]["start"], persisted["start"])
+
 
 
 if __name__ == "__main__":

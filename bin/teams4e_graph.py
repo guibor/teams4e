@@ -1924,9 +1924,33 @@ def get_meeting_availability(
       "schedules": schedules,
       "scheduleError": "; ".join(dict.fromkeys(schedule_errors)) or None,
       "proposalAllowed": proposal_reason is None,
+      "rescheduleAllowed": calendar_reschedule_allowed(event),
       "proposalUnavailableReason": proposal_reason,
       **suggestions,
   }
+
+
+def calendar_reschedule_allowed(event: dict[str, Any]) -> bool:
+  """Only timed, live events owned by the user; never move a series master."""
+  return bool(event.get("isOrganizer") and not event.get("isCancelled")
+              and not event.get("isAllDay") and event.get("type") != "seriesMaster")
+
+
+def reschedule_calendar_event(
+    event_id: str, start: str, end: str, access_token: str,
+) -> dict[str, Any]:
+  """Move one owned event/occurrence without rewriting attendees or meeting body."""
+  event = get_calendar_event(event_id, access_token)
+  if not calendar_reschedule_allowed(event):
+    raise BackendError("Only your timed, active event or occurrence can be rescheduled here; use Outlook")
+  first, last = calendar_range(start, end)
+  updated = graph_json(
+      f"/me/events/{quoted_id(event_id)}", access_token, method="PATCH",
+      payload={"start": graph_utc_date_time(first.isoformat()),
+               "end": graph_utc_date_time(last.isoformat())},
+      request_headers={"Prefer": 'outlook.timezone="UTC"'},
+  )
+  return {"status": "rescheduled", "event": updated}
 
 
 def respond_to_meeting(
@@ -3446,6 +3470,11 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
         str(option(args, "--start")), str(option(args, "--end")), access_token,
         calendar_id=option(args, "--calendarId", required=False),
     )
+  elif args[:4] == ["teams", "calendar", "event", "reschedule"]:
+    result = reschedule_calendar_event(
+        str(option(args, "--eventId")), str(option(args, "--start")),
+        str(option(args, "--end")), access_token,
+    )
   elif args[:4] == ["teams", "calendar", "event", "get"]:
     result = get_calendar_detail(str(option(args, "--eventId")), access_token)
   elif args[:4] == ["teams", "meeting", "event", "batch"]:
@@ -3541,9 +3570,13 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
     with TeamsCache() as cache:
       cache.upsert_messages("chat", chat_id, result)
   elif args[:3] == ["teams", "chat", "get"]:
-    result = find_chat_by_participants(
-        str(option(args, "--participants")), access_token
-    )
+    chat_id = option(args, "--chatId", required=False)
+    if chat_id:
+      result = graph_json(f"/chats/{quoted_id(str(chat_id))}", access_token)
+    else:
+      result = find_chat_by_participants(
+          str(option(args, "--participants")), access_token
+      )
   elif args[:4] == ["teams", "chat", "message", "send"]:
     chat_id = option(args, "--chatId", required=False)
     user_emails = option(args, "--userEmails", required=False)

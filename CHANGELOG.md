@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Center the independent agenda on now; add event/day navigation and Org date
+  selection (`j/k`, `h/l`, uppercase aliases, `t`, `.`). Color availability
+  independently of RSVP, subdue free events, and derive conservative working-hour
+  gaps from the complete unfiltered snapshot. Preserve selected multi-day rows.
+  Add direct invite-to-chat lookup (`T`) and time-proposal access (`r`); move the
+  agenda/reader join binding from `J` to `v`. All faces and work hours are options.
+  Reuse the availability workspace to reschedule an organizer's timed occurrence
+  with a start/end-only PATCH; block whole-series and all-day changes.
+
 - Add an independent calendar workspace with day/week/month agendas, calendar
   selection, on-demand event details, RSVP, availability/time proposals, and Org
   capture. Load calendarView occurrences directly with the existing credentials

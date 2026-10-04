@@ -15,7 +15,8 @@
      (unwind-protect
          (with-temp-buffer
            (teams4e-calendar-mode)
-           (setq teams4e-calendar--date (date-to-time "2026-10-04T12:00:00Z"))
+           (setq teams4e-calendar--date (date-to-time "2026-10-04T12:00:00Z")
+                 teams4e-calendar--focus nil)
            ,@body)
        (set-time-zone-rule nil))))
 
@@ -238,8 +239,213 @@
             (should (eq (key-binding (kbd "d")) #'teams4e-calendar-day))
             (should (eq (key-binding (kbd "m")) #'teams4e-calendar-month))
             (should (eq (key-binding (kbd "j")) #'teams4e-calendar-next-event))
+            (should (eq (key-binding (kbd "J")) #'teams4e-calendar-next-event))
+            (should (eq (key-binding (kbd "H")) #'teams4e-calendar-previous-day))
+            (should (eq (key-binding (kbd ".")) #'teams4e-calendar-goto-date))
             (should (eq (key-binding (kbd "a")) #'teams4e-calendar-respond))))
       (unless was-enabled (evil-mode -1)))))
+
+(ert-deftest teams4e-calendar-availability-is-not-rsvp ()
+  (should (equal (teams4e-calendar--availability
+                  '((showAs . "free") (responseStatus (response . "accepted"))))
+                 '("Free" teams4e-calendar-free nil)))
+  (should (equal (teams4e-calendar--availability
+                  '((showAs . "busy") (responseStatus (response . "notResponded"))))
+                 '("Busy" teams4e-calendar-busy t)))
+  (should (nth 2 (teams4e-calendar--availability '((showAs . "tentative")))))
+  (should (nth 2 (teams4e-calendar--availability '((showAs . "unknown")))))
+  (should-not (nth 2 (teams4e-calendar--availability
+                      '((showAs . "busy") (responseStatus (response . "declined")))))))
+
+(ert-deftest teams4e-calendar-gaps-union-hidden-blocks-and-ignore-free-events ()
+  (teams4e-calendar-test
+    (let ((teams4e-calendar-work-days '(0)) (teams4e-calendar-work-hours '(9 . 14)))
+      (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+            teams4e-calendar--filter "visible"
+            teams4e-calendar--events
+            (list (teams4e-calendar-test-event "hidden" "2026-10-04T10:00:00Z" "2026-10-04T11:30:00Z" '(showAs . "busy"))
+                  (teams4e-calendar-test-event "overlap" "2026-10-04T11:00:00Z" "2026-10-04T12:00:00Z" '(showAs . "tentative"))
+                  (teams4e-calendar-test-event "visible" "2026-10-04T09:00:00Z" "2026-10-04T14:00:00Z" '(showAs . "free"))))
+      (should
+       (equal (mapcar (lambda (gap)
+                        (mapcar (lambda (time) (format-time-string "%H:%M" time))
+                                (seq-take gap 2)))
+                      (teams4e-calendar--free-gaps teams4e-calendar--date))
+              '(("09:00" "10:00") ("12:00" "14:00")))))))
+
+(ert-deftest teams4e-calendar-gaps-require-complete-current-data ()
+  (teams4e-calendar-test
+    (let ((teams4e-calendar-work-days '(0)))
+      (should-not (teams4e-calendar--free-gaps teams4e-calendar--date))
+      (setq teams4e-calendar--loaded-key (teams4e-calendar--key))
+      (should (teams4e-calendar--free-gaps teams4e-calendar--date))
+      (let ((teams4e-calendar--loading t))
+        (should-not (teams4e-calendar--free-gaps teams4e-calendar--date)))
+      (let ((teams4e-calendar--error "incomplete"))
+        (should-not (teams4e-calendar--free-gaps teams4e-calendar--date)))
+      (let ((teams4e-calendar-free-gap-minutes nil))
+        (should-not (teams4e-calendar--free-gaps teams4e-calendar--date))))))
+
+(ert-deftest teams4e-calendar-all-day-busy-blocks-working-hours ()
+  (teams4e-calendar-test
+    (let ((teams4e-calendar-work-days '(0)))
+      (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+            teams4e-calendar--events
+            (list (teams4e-calendar-test-event "OOF" "2026-10-04T00:00:00Z" "2026-10-05T00:00:00Z"
+                                             '(isAllDay . t) '(showAs . "oof"))))
+      (should-not (teams4e-calendar--free-gaps teams4e-calendar--date)))))
+
+(ert-deftest teams4e-calendar-gaps-use-local-hours-across-dst ()
+  (teams4e-calendar-test
+    (set-time-zone-rule "America/New_York")
+    (let ((teams4e-calendar-work-days '(0)) (teams4e-calendar-work-hours '(9 . 18)))
+      (setq teams4e-calendar--view 'day
+            teams4e-calendar--date (date-to-time "2026-11-01T12:00:00-05:00")
+            teams4e-calendar--loaded-key (teams4e-calendar--key))
+      (let ((gap (car (teams4e-calendar--free-gaps teams4e-calendar--date))))
+        (should (equal "2026-11-01T14:00Z" (format-time-string "%Y-%m-%dT%H:%MZ" (car gap) t)))
+        (should (= (* 9 3600) (- (cadr gap) (car gap))))))))
+
+(ert-deftest teams4e-calendar-focus-now-selects-ongoing-row ()
+  (teams4e-calendar-test
+    (let ((teams4e-calendar-free-gap-minutes nil))
+      (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+            teams4e-calendar--focus (date-to-time "2026-10-04T12:15:00Z")
+            teams4e-calendar--events
+            (list (teams4e-calendar-test-event "all-day" "2026-10-04T00:00:00Z" "2026-10-05T00:00:00Z" '(isAllDay . t))
+                  (teams4e-calendar-test-event "now" "2026-10-04T12:00:00Z" "2026-10-04T13:00:00Z")
+                  (teams4e-calendar-test-event "later" "2026-10-04T15:00:00Z" "2026-10-04T16:00:00Z")))
+      (teams4e-calendar--render)
+      (should (equal "now" (get-text-property (point) 'teams4e-calendar-event)))
+      (should-not teams4e-calendar--focus))))
+
+(ert-deftest teams4e-calendar-focus-survives-loading-until-response ()
+  (teams4e-calendar-test
+    (let (callback)
+      (setq teams4e-calendar--focus teams4e-calendar--date)
+      (cl-letf (((symbol-function 'teams4e--require-online) #'ignore)
+                ((symbol-function 'teams4e--run-json)
+                 (lambda (_args fn &optional _error) (setq callback fn) nil)))
+        (teams4e-calendar-refresh)
+        (should teams4e-calendar--focus)
+        (funcall callback
+                 `((complete . t)
+                   (events ,(teams4e-calendar-test-event "now" "2026-10-04T12:00:00Z" "2026-10-04T13:00:00Z"))))
+        (should (equal "now" (get-text-property (point) 'teams4e-calendar-event)))
+        (should-not teams4e-calendar--focus)))))
+
+(ert-deftest teams4e-calendar-day-navigation-is-local-until-range-boundary ()
+  (teams4e-calendar-test
+    (let ((calendar-week-start-day 0) (calls 0))
+      (setq teams4e-calendar--loaded-key (teams4e-calendar--key))
+      (teams4e-calendar--render)
+      (teams4e-calendar--focus-time teams4e-calendar--date)
+      (cl-letf (((symbol-function 'teams4e-calendar-refresh) (lambda () (cl-incf calls))))
+        (teams4e-calendar-next-day)
+        (should (equal "2026-10-05" (get-text-property (point) 'teams4e-calendar-day)))
+        (should (= calls 0))
+        (teams4e-calendar-next-day 6)
+        (should (= calls 1))
+        (should (equal "2026-10-11" (format-time-string "%Y-%m-%d" teams4e-calendar--focus)))))))
+
+(ert-deftest teams4e-calendar-event-navigation-skips-gaps-and-lands-on-title ()
+  (teams4e-calendar-test
+    (let ((teams4e-calendar-work-days '(0)))
+      (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+            teams4e-calendar--events
+            (list (teams4e-calendar-test-event "one" "2026-10-04T10:00:00Z" "2026-10-04T11:00:00Z")
+                  (teams4e-calendar-test-event "two" "2026-10-04T13:00:00Z" "2026-10-04T14:00:00Z")))
+      (teams4e-calendar--render)
+      (goto-char (point-min))
+      (teams4e-calendar-next-event)
+      (teams4e-calendar-next-event)
+      (let ((last (point)))
+        (teams4e-calendar-next-event)
+        (should (= last (point))))
+      (teams4e-calendar-previous-event)
+      (should (get-text-property (point) 'teams4e-calendar-event-start))
+      (should (equal "one" (get-text-property (point) 'teams4e-calendar-event))))))
+
+(ert-deftest teams4e-calendar-redraw-preserves-multi-day-occurrence-position ()
+  (teams4e-calendar-test
+    (let ((calendar-week-start-day 0))
+      (setq teams4e-calendar--loaded-key (teams4e-calendar--key)
+            teams4e-calendar--events
+            (list (teams4e-calendar-test-event "multi" "2026-10-04T00:00:00Z" "2026-10-07T00:00:00Z" '(isAllDay . t))))
+      (teams4e-calendar--render)
+      (goto-char (point-min))
+      (teams4e-calendar-next-event)
+      (teams4e-calendar-next-event)
+      (teams4e-calendar--render)
+      (should (equal "2026-10-05" (get-text-property (point) 'teams4e-calendar-day))))))
+
+(ert-deftest teams4e-calendar-chat-link-preserves-case-and-does-not-scan-recents ()
+  (teams4e-calendar-test
+    (let ((event (teams4e-calendar-test-event
+                  "invite" "2026-10-04T10:00:00Z" "2026-10-04T11:00:00Z"
+                  '(onlineMeeting (joinUrl . "https://teams.microsoft.com/l/meetup-join/19%3Ameeting_AbCd%40thread.v2/0?context=demo"))))
+          args opened)
+      (should (equal "19:meeting_AbCd@thread.v2" (teams4e-calendar--chat-id event)))
+      (cl-letf (((symbol-function 'teams4e-calendar--context) (lambda () (list (current-buffer) event)))
+                ((symbol-function 'teams4e--require-online) #'ignore)
+                ((symbol-function 'teams4e--run-json)
+                 (lambda (command callback &optional _error)
+                   (setq args command) (funcall callback '((id . "real-chat")))))
+                ((symbol-function 'teams4e-open-chat) (lambda (chat) (setq opened chat))))
+        (teams4e-calendar-open-chat))
+      (should (equal args '("teams" "chat" "get" "--chatId" "19:meeting_AbCd@thread.v2")))
+      (should (equal opened '((id . "real-chat"))))
+      (should-not (teams4e-calendar--chat-id '((onlineMeetingUrl . "https://teams.microsoft.com/meet/123")))))))
+
+(ert-deftest teams4e-calendar-default-navigation-and-action-keys ()
+  (dolist (binding '(("J" . teams4e-calendar-next-event)
+                      ("K" . teams4e-calendar-previous-event)
+                      ("H" . teams4e-calendar-previous-day)
+                      ("L" . teams4e-calendar-next-day)
+                      ("." . teams4e-calendar-goto-date)
+                      ("t" . teams4e-calendar-today)
+                      ("r" . teams4e-calendar-availability)
+                      ("T" . teams4e-calendar-open-chat)
+                      ("v" . teams4e-calendar-join)))
+    (should (eq (lookup-key teams4e-calendar-mode-map (kbd (car binding))) (cdr binding)))))
+
+(ert-deftest teams4e-calendar-organizer-move-is-scoped-to-event-workspace ()
+  (let ((teams4e-availability--payload '((rescheduleAllowed . t)))
+        (teams4e-availability--source-event '((id . "owned") (isOrganizer . t)))
+        (teams4e-availability--proposal-function #'teams4e-calendar--propose))
+    (should (teams4e-availability--proposal-allowed-p))
+    (let ((teams4e-availability--source-event nil))
+      (should-not (teams4e-availability--proposal-allowed-p)))
+    (let ((teams4e-availability--proposal-function nil))
+      (should-not (teams4e-availability--proposal-allowed-p)))))
+
+(ert-deftest teams4e-calendar-proposal-and-organizer-move-use-distinct-actions ()
+  (dolist (organizer '(nil t))
+    (teams4e-calendar-test
+      (let* ((owner (current-buffer))
+             (event (teams4e-calendar-test-event "event" "2026-10-04T09:00:00Z" "2026-10-04T10:00:00Z"
+                                                `(isOrganizer . ,organizer)))
+             args)
+        (setq teams4e-calendar--events (list event)
+              teams4e-calendar--loaded-key (teams4e-calendar--key))
+        (with-temp-buffer
+          (teams4e-availability-mode)
+          (setq teams4e-calendar--owner owner teams4e-calendar--event-id "event"
+                teams4e-availability--source-event event
+                teams4e-availability--proposal-function #'teams4e-calendar--propose
+                teams4e-availability--payload
+                (if organizer '((rescheduleAllowed . t)) '((proposalAllowed . t))))
+          (cl-letf (((symbol-function 'teams4e--require-online) #'ignore)
+                    ((symbol-function 'read-string) (lambda (&rest _) "A note"))
+                    ((symbol-function 'teams4e--run-json)
+                     (lambda (command _callback &optional _error) (setq args command))))
+            (teams4e-calendar--propose
+             '((start (dateTime . "2026-10-04T11:00:00Z") (timeZone . "UTC"))
+               (end (dateTime . "2026-10-04T12:00:00Z") (timeZone . "UTC"))))))
+        (should (equal (seq-take args 4)
+                       (if organizer '("teams" "calendar" "event" "reschedule")
+                         '("teams" "meeting" "propose" "send"))))
+        (should (eq (not (null (member "--comment" args))) (not organizer)))))))
 
 (provide 'teams4e-calendar-tests)
 ;;; teams4e-calendar-tests.el ends here
