@@ -120,6 +120,9 @@
               teams4e-token-command nil
               teams4e-bootstrap-program nil
               teams4e-preview-on-move nil
+              ;; This timer-driven capture opens readers programmatically;
+              ;; asynchronous headers redraws must not replace the chosen scene.
+              teams4e--inhibit-reader-follow t
               teams4e-mark-read-on-open nil
               teams4e-cache-first nil
               teams4e-message-renderer 'agent-shell-markdown
