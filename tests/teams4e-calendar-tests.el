@@ -364,7 +364,13 @@
         (should (= last (point))))
       (teams4e-calendar-previous-event)
       (should (get-text-property (point) 'teams4e-calendar-event-start))
-      (should (equal "one" (get-text-property (point) 'teams4e-calendar-event))))))
+      (should (equal "one" (get-text-property (point) 'teams4e-calendar-event)))
+      (should (looking-at "  10:00"))
+      (forward-line 1)
+      (should-not (get-text-property (point) 'teams4e-calendar-event-start))
+      (goto-char (point-min))
+      (search-forward "Free in this calendar")
+      (should-not (get-text-property (point) 'teams4e-calendar-event)))))
 
 (ert-deftest teams4e-calendar-redraw-preserves-multi-day-occurrence-position ()
   (teams4e-calendar-test

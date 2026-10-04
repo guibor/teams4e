@@ -290,7 +290,8 @@ Never infer free time from an incomplete, stale, or loading snapshot."
         (insert (propertize (concat (format-time-string "%A, %d %B" day)
                                     (if today "  TODAY" "")
                                     (if loaded
-                                        (format "  |  %d events%s\n" (length events)
+                                        (format "  |  %d event%s%s\n" (length events)
+                                                (if (= (length events) 1) "" "s")
                                                 (if teams4e-calendar--error " returned" ""))
                                       "  |  Not loaded\n"))
                             'face '(:inherit font-lock-keyword-face :weight bold)))
@@ -560,10 +561,6 @@ With BACKWARD, move to the previous event.  Stay put at the boundary."
             "Organizer " (or (teams4e--dig event 'organizer 'emailAddress 'name) "") "\n")
     (when (teams4e--get event 'seriesMasterId)
       (insert "Series    Recurring occurrence\n"))
-    (dolist (attendee (teams4e--get event 'attendees))
-      (insert "          " (or (teams4e--dig attendee 'emailAddress 'name) "")
-              " <" (or (teams4e--dig attendee 'emailAddress 'address) "") ">  "
-              (or (teams4e--dig attendee 'status 'response) "") "\n"))
     (insert "\n")
     (dolist (link `(("Open in Outlook" . ,(teams4e--get event 'webLink))
                     ("Join meeting" . ,(or (teams4e--dig event 'onlineMeeting 'joinUrl)
@@ -581,6 +578,13 @@ With BACKWARD, move to the previous event.  Stay put at the boundary."
                             "Availability / reschedule" "Availability / propose time") 'follow-link t
                         'action (lambda (_) (teams4e-calendar-availability)))
     (insert "\n\n")
+    (when (teams4e--get event 'attendees)
+      (insert (propertize "Participants\n" 'face 'bold))
+    (dolist (attendee (teams4e--get event 'attendees))
+      (insert "          " (or (teams4e--dig attendee 'emailAddress 'name) "")
+              " <" (or (teams4e--dig attendee 'emailAddress 'address) "") ">  "
+              (or (teams4e--dig attendee 'status 'response) "") "\n"))
+      (insert "\n"))
     (let ((body (teams4e--dig event 'body 'content)))
       (if (and body (equal (downcase (or (teams4e--dig event 'body 'contentType) "")) "html")
                (fboundp 'libxml-parse-html-region))
