@@ -361,7 +361,10 @@ the displayed range. Reopening does not reload; `g` or a prefix argument does.
 No event-to-chat conversion or calendar-to-Org synchronization is involved.
 Update the installed backend as well as the Lisp package for this feature.
 
-See [Calendar setup, defaults, and boundaries](CALENDAR.md).
+![Independent calendar agenda in real Emacs with Moe Dark and synthetic events](assets/calendar.png)
+
+See [Calendar setup, defaults, and boundaries](CALENDAR.md), including the
+[event reader](assets/calendar-detail.png).
 
 ## Optional Agent Workflows
 
