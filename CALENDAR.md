@@ -21,7 +21,7 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `d / w / m` | Day / week / month agenda |
 | `t` | Center on now, or the closest timed row today |
 | `.`, `G` | Choose a date using Org's date reader and calendar |
-| `TAB` | Fold / unfold the enclosing conflict group; no effect elsewhere |
+| `TAB` | Fold / unfold a Summary heading or conflict group; no effect on the timeline |
 | `RET` | Read an event or activate its action button |
 | `/` | Filter subject, location, or organizer; empty input clears |
 | `x` | Include / hide declined and cancelled events |
@@ -40,7 +40,10 @@ your selected occurrence and day, including multi-day events; reopening resumes
 your position. `t` recenters without fetching when today is already loaded.
 
 The time and availability label use theme-aware faces: `teams4e-calendar-busy`,
-`-tentative`, `-out-of-office`, `-elsewhere`, and `-free`.
+`-tentative`, `-out-of-office`, `-elsewhere`, and `-free`. Actual available gaps
+use the separate `teams4e-calendar-free-slot` face: bold text with a green-tinted
+background and an explicit `[FREE]` label. Free/following invitations remain
+subdued, so a non-blocking appointment cannot be mistaken for an available slot.
 Free and declined/cancelled events have subdued titles. RSVP remains separate
 text: accepting a "free" invitation does not make it look busy.
 A `>` marks a timed row covering now when the agenda is rendered.
@@ -61,11 +64,28 @@ Three-way overlaps show the actual simultaneous count, not misleading pair
 counts or transitive groups. Filtering cannot hide the existence of a clash:
 summaries say how many affected events are filtered out.
 
-`TAB` folds or unfolds the enclosing conflict group. Conflicts start collapsed;
-days always remain expanded. On day headings, ordinary event rows, free gaps,
-or blank lines, TAB does nothing. Conflict expansion survives redraws and local
-filtering without fetching anything. `H/L` reach day headings, `j/k` skip folded
-conflict details, and `t` recenters on now or the closest timed row today.
+Each day has an independently foldable **Summary**, above its chronological
+timeline. It starts open and shows available intervals plus their combined
+duration, then **Needs response**, foldable conflicts, **Tentative**, **Accepted**,
+and **Organizing**, in that order. Empty meeting groups are omitted. Within each
+group, titles follow start time, without repeating time/location details. Titles
+open invitations; unanswered and tentative invitations also have a Respond
+button. The normal `a`, `r`, `o`, and capture commands work on these rows too.
+
+Unanswered means an attendee invitation with no response, not an ordinary
+appointment or an event you organize. Declined, cancelled, free/following, and
+working-elsewhere entries are excluded from the summary's meeting lists, even
+when `x` exposes them in the timeline. Lists respect the text filter; conflicts
+and free slots continue to use the full snapshot. The free-time total sums the
+shown slots within your configured working hours and minimum-gap threshold,
+not every minute in a 24-hour day. Partial/loading data never claims free time.
+
+`TAB` on the Summary heading hides only its summary; the day and timeline stay
+visible. Conflicts start collapsed and keep their own expansion when the summary
+is closed and reopened. On day headings, ordinary event rows (including summary
+meeting lists), free gaps, or blank lines, TAB does nothing. Folding and local
+filtering do not fetch anything. `H/L` reach day headings, `j/k` navigate timeline
+events and expanded conflict details, and `t` recenters on now.
 
 Expand a conflict to see **every involved meeting**, including filtered-out
 partners, with its full interval, availability, and RSVP state. Click its title

@@ -634,7 +634,7 @@
         (should-not (teams4e-calendar--section-open-p key))
         (should (string-match-p "09:00 - 11:00.*A" (buffer-string)))))))
 
-(ert-deftest teams4e-calendar-tab-outside-conflicts-does-nothing ()
+(ert-deftest teams4e-calendar-tab-outside-fold-headings-and-conflicts-does-nothing ()
   (teams4e-calendar-test
     (teams4e-calendar-test-conflicts)
     (goto-char (point-min))
@@ -659,10 +659,10 @@
                     (reverse teams4e-calendar--events)))
       (teams4e-calendar--render)
       (should (equal key (get-text-property (point) 'teams4e-calendar-item)))
-      (should (looking-at "  C2 \\[-\\]"))
+      (should (looking-at "    C2 \\[-\\]"))
       (should (string-match-p "C1 \\[[+]\\]" (buffer-string)))
       (teams4e-calendar-filter "A")
-      (should (looking-at "  C2 \\[-\\]"))
+      (should (looking-at "    C2 \\[-\\]"))
       (should (string-match-p "Filtered out" (buffer-string)))
       ;; Expanding a group includes its filtered-out partner for resolution.
       (search-forward "Availability / propose time")
@@ -771,9 +771,144 @@
                            (lambda (&rest _) (ert-fail "Centering must reuse the loaded day"))))
                   (execute-kbd-macro (kbd "t")))
                 (should (equal "A" (teams4e--get (cadr (teams4e-calendar--context)) 'id)))
+                (let ((summary (list 'summary (teams4e-calendar--day-key teams4e-calendar--date))))
+                  (goto-char (teams4e-calendar--find-item summary))
+                  (execute-kbd-macro (kbd "TAB"))
+                  (should-not (teams4e-calendar--section-open-p summary))
+                  (should (teams4e-calendar--find-item
+                           (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "A")))
+                  (execute-kbd-macro (kbd "TAB"))
+                  (should (teams4e-calendar--section-open-p summary)))
                 (goto-char (teams4e-calendar--find-item key))))))
       (unless enabled (evil-mode -1))
       (when (and (fboundp 'purpose-mode) (not purpose-enabled)) (purpose-mode -1)))))
+
+(ert-deftest teams4e-calendar-summary-classifies-only-attending-events ()
+  (dolist (case '((nil unanswered) ("" unanswered) ("none" unanswered)
+                  ("notResponded" unanswered) ("accepted" accepted)
+                  ("tentativelyAccepted" tentative) ("declined" nil)
+                  ("following" nil) ("follow" nil)))
+    (let ((event `((showAs . "busy") (attendees ((name . "Guest")))
+                   (responseStatus (response . ,(car case))))))
+      (should (eq (cadr case) (teams4e-calendar--summary-group event)))))
+  (should-not (teams4e-calendar--summary-group '((showAs . "busy"))))
+  (should-not (teams4e-calendar--summary-group
+               '((showAs . "free") (responseStatus (response . "accepted")))))
+  (should-not (teams4e-calendar--summary-group
+               '((showAs . "workingElsewhere") (isOrganizer . t))))
+  (should-not (teams4e-calendar--summary-group
+               '((isCancelled . t) (responseStatus (response . "accepted")))))
+  (should (eq 'organizing (teams4e-calendar--summary-group '((isOrganizer . t))))))
+
+(ert-deftest teams4e-calendar-summary-order-and-exclusions ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--show-declined t
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (cl-loop for (id response hour . extra)
+                   in '(("accepted" "accepted" 9)
+                        ("later" "notResponded" 14)
+                        ("earlier" "none" 11)
+                        ("tentative" "tentativelyAccepted" 10)
+                        ("rejected" "declined" 12)
+                        ("following" "accepted" 13 (showAs . "free"))
+                        ("cancelled" "accepted" 15 (isCancelled . t)))
+                   collect
+                   (apply #'teams4e-calendar-test-event id
+                          (format "2026-10-04T%02d:00:00Z" hour)
+                          (format "2026-10-04T%02d:30:00Z" hour)
+                          `(responseStatus (response . ,response))
+                          '(attendees ((name . "Guest"))) extra)))
+    (teams4e-calendar--render)
+    (let ((key (list 'summary (teams4e-calendar--day-key teams4e-calendar--date))))
+      (should (< (teams4e-calendar--find-item (list 'summary-event key "earlier"))
+                 (teams4e-calendar--find-item (list 'summary-event key "later"))))
+      (should (< (teams4e-calendar--find-item (list 'summary-event key "later"))
+                 (teams4e-calendar--find-item (list 'summary-event key "tentative"))))
+      (should (< (teams4e-calendar--find-item (list 'summary-event key "tentative"))
+                 (teams4e-calendar--find-item (list 'summary-event key "accepted"))))
+      (dolist (id '("rejected" "following" "cancelled"))
+        (should-not (teams4e-calendar--find-item (list 'summary-event key id))))
+      ;; A summary title refers to the original event and is not a second store.
+      (goto-char (teams4e-calendar--find-item (list 'summary-event key "earlier")))
+      (should (eq (cadr (teams4e-calendar--context)) (nth 2 teams4e-calendar--events)))
+      (should-not (get-text-property (point) 'teams4e-calendar-section))
+      (should-not (get-text-property (point) 'teams4e-calendar-row-start)))))
+
+(ert-deftest teams4e-calendar-summary-folding-keeps-timeline-and-conflict-state ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (let ((conflict (get-text-property (point) 'teams4e-calendar-section))
+          (summary (list 'summary (teams4e-calendar--day-key teams4e-calendar--date)))
+          (timeline (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "A")))
+      (cl-letf (((symbol-function 'teams4e--run-json)
+                 (lambda (&rest _) (ert-fail "Summary folding must not fetch"))))
+        (teams4e-calendar-toggle-section)
+        (goto-char (teams4e-calendar--find-item summary))
+        (teams4e-calendar-toggle-section)
+        (should-not (teams4e-calendar--section-open-p summary))
+        (should-not (teams4e-calendar--find-item conflict))
+        (should (teams4e-calendar--find-item timeline))
+        (teams4e-calendar--render)
+        (should (equal summary (get-text-property (point) 'teams4e-calendar-item)))
+        (teams4e-calendar-toggle-section)
+        (should (teams4e-calendar--find-item conflict))
+        (should (teams4e-calendar--section-open-p conflict))
+        (should (string-match-p "Availability / reschedule" (buffer-string)))))))
+
+(ert-deftest teams4e-calendar-free-summary-is-distinct-and-ignores-filter ()
+  (teams4e-calendar-test
+    (let ((teams4e-calendar-work-days '(0))
+          (teams4e-calendar-work-hours '(9 . 18)))
+      (setq teams4e-calendar--view 'day
+            teams4e-calendar--loaded-key (teams4e-calendar--key)
+            teams4e-calendar--events
+            (list (teams4e-calendar-test-event "hidden" "2026-10-04T09:00:00Z" "2026-10-04T11:00:00Z"
+                                              '(showAs . "busy"))
+                  (teams4e-calendar-test-event "visible" "2026-10-04T13:00:00Z" "2026-10-04T14:00:00Z"
+                                              '(showAs . "busy"))
+                  (teams4e-calendar-test-event "free invite" "2026-10-04T15:00:00Z" "2026-10-04T16:00:00Z"
+                                              '(showAs . "free"))))
+      (teams4e-calendar-filter "visible")
+      (should (string-match-p "FREE 6h 00m  |  11:00 - 13:00  |  14:00 - 18:00" (buffer-string)))
+      (goto-char (point-min))
+      (search-forward "[FREE]")
+      (should (eq 'teams4e-calendar-free-slot (get-text-property (1- (point)) 'face)))
+      (should (eq 'teams4e-calendar-free
+                  (cadr (teams4e-calendar--availability (nth 2 teams4e-calendar--events)))))
+      (let ((summary (list 'summary (teams4e-calendar--day-key teams4e-calendar--date))))
+        (goto-char (teams4e-calendar--find-item summary))
+        (teams4e-calendar-toggle-section)
+        (should (string-match-p "FREE 6h 00m" (buffer-string))))
+      (setq teams4e-calendar--fold-state nil teams4e-calendar--error "Incomplete")
+      (teams4e-calendar--render)
+      (should-not (string-match-p "FREE [0-9]" (buffer-string)))
+      (should-not (string-match-p (regexp-quote "[FREE]") (buffer-string)))
+      (should (string-match-p "Free time unavailable" (buffer-string))))))
+
+(ert-deftest teams4e-calendar-summary-response-updates-groups ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (teams4e-calendar--replace-event '((id . "B") (responseStatus (response . "notResponded"))))
+    (teams4e-calendar--render)
+    (let* ((key (list 'summary (teams4e-calendar--day-key teams4e-calendar--date)))
+           (row (list 'summary-event key "B")))
+      (goto-char (teams4e-calendar--find-item row))
+      (search-forward "Respond")
+      (backward-char 1)
+      (cl-letf (((symbol-function 'teams4e--require-online) #'ignore)
+                ((symbol-function 'completing-read) (lambda (&rest _) "accepted"))
+                ((symbol-function 'read-string) (lambda (&rest _) ""))
+                ((symbol-function 'teams4e--run-json)
+                 (lambda (args callback &optional _error)
+                   (should (member "B" args))
+                   (funcall callback '((event (id . "B") (responseStatus (response . "accepted"))))))))
+        (teams4e-calendar-activate))
+      (should (teams4e-calendar--find-item row))
+      (should-not (string-match-p "Needs response (1)" (buffer-string)))
+      (should (string-match-p "Accepted (1)" (buffer-string)))
+      (should (equal row (get-text-property (point) 'teams4e-calendar-item))))))
 
 (provide 'teams4e-calendar-tests)
 ;;; teams4e-calendar-tests.el ends here

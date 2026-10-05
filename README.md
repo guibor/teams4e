@@ -355,10 +355,18 @@ working elsewhere, and subdued free events. Free gaps within configurable
 working hours use the full snapshot, even when a text filter hides events;
 incomplete loads never imply that time is free. Exact overlap intervals share
 labels with the affected events; the invite reader links to conflicting events,
-even when a text filter hides them from the agenda. `TAB` folds conflict
-groups only; days always remain visible. Expanding a conflict lists all its meetings with direct actions to
-respond, propose another time, reschedule your own event, or open Outlook.
-These use the same calendar snapshot, with no extra loading just to unfold.
+even when a text filter hides them from the agenda.
+
+Each day has a foldable summary: highlighted free intervals and total available
+hours, unanswered invitations first, then conflicts, tentative and accepted
+meetings, and events you organize. Its compact lists omit declined, cancelled,
+and free/following invitations. Actual free slots have a distinct tinted face
+and `[FREE]` label, separate from non-blocking appointments.
+
+`TAB` folds the Summary heading or a conflict group, never the day or timeline.
+Expanding a conflict lists its meetings with actions to respond, propose another
+time, reschedule your own event, or open Outlook. Summaries and actions use the
+same calendar snapshot; unfolding does not fetch anything.
 
 `j/k` (or `J/K`) move between events; `h/l` (or `H/L`) move between
 days. `t` centers on now, `.` or `G` chooses a date with Org's date reader,

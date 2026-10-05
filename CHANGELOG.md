@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Highlight real free slots separately from free/following invitations. Add a
+  foldable day summary with free intervals and total duration, unanswered
+  invitations, conflicts, tentative/accepted meetings, and organizer events.
+  Compact lists exclude non-attending entries; RSVP actions reuse canonical
+  events. Folding a summary never hides its day's timeline.
+
 - Remove calendar day folding. TAB now toggles conflict groups only and does
   nothing elsewhere in the agenda. Ignore old day-fold state during live updates;
   keep all days visible and preserve conflict actions and `t` recentering.
