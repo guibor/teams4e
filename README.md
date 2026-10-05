@@ -380,6 +380,13 @@ on the selected event. All bindings, faces, and working-hour defaults are
 customizable. The time workspace proposes alternatives for invitations and moves
 one timed occurrence for events you organize, without changing the series.
 
+`+` opens an Org meeting draft beside the agenda. Edit its title, times,
+required/optional attendees, location, and description; `C-c C-a` searches the
+directory and `C-c C-t` chooses a time. Only `C-c C-c` creates the event and sends
+invitations. Org descriptions become HTML, and the optional Teams link is created
+by Outlook. This first version supports single timed events, not recurring or
+all-day creation. See [meeting drafts and retry behavior](CALENDAR.md#create-a-meeting).
+
 It reuses your existing token provider and rate-limited backend, fetching only
 the displayed range. Reopening does not reload; `g` or a prefix argument does.
 Refresh preserves the selected item and each window\'s reading position, with a
@@ -387,6 +394,7 @@ nearby-item fallback if an event disappears. Native Follow is not supported by
 the documented Graph response API; see the [Follow limitation](CALENDAR.md#follow-current-limitation).
 No event-to-chat conversion or calendar-to-Org synchronization is involved.
 Update the installed backend as well as the Lisp package for this feature.
+Staged runtimes need all Python sibling modules, including `teams4e_calendar.py`.
 
 ![Independent calendar agenda in real Emacs with Moe Dark and synthetic events](assets/calendar.png)
 

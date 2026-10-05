@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Create single timed calendar events from editable Org drafts (`+`). Support
+  required/optional attendees, directory search, explicit-offset times, location,
+  availability state, safe Org-to-HTML descriptions, and optional Teams links.
+  Only explicit `C-c C-c` submission sends invitations. Validate before posting,
+  retain stable transaction IDs for retries, prevent concurrent/different repeated
+  submissions, and test persistence with the offline tenant. Staged backends must
+  include the new `teams4e_calendar.py` module.
+
 - Mark accepted-summary conflicts only when another accepted meeting overlaps.
   Preserve semantic point, line/column, and each window's screen position across
   calendar refreshes, with a surviving-item fallback when an event disappears.

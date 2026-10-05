@@ -1,6 +1,7 @@
 ;;; teams4e-calendar-tests.el --- Calendar workspace tests -*- lexical-binding: t; -*-
 (require 'ert)
 (require 'teams4e)
+(require 'teams4e-calendar-create)
 
 (defun teams4e-calendar-test-event (id start end &rest extra)
   (append `((id . ,id) (subject . ,id)
@@ -1140,6 +1141,105 @@
       (cl-letf (((symbol-function 'teams4e--open-with-command)
                  (lambda (&rest _) (ert-fail "Organizer cannot Follow"))))
         (should-error (teams4e-calendar-follow-in-outlook) :type 'user-error)))))
+
+
+(defmacro teams4e-calendar-draft-test (&rest body)
+  (declare (indent 0))
+  `(with-temp-buffer
+     (org-mode)
+     (insert "* Synthetic review\n:PROPERTIES:\n:START_AT: 2026-10-06T10:00:00+0300\n"
+             ":END_AT: 2026-10-06T10:30:00+0300\n:TEAMS: yes\n:SHOW_AS: busy\n"
+             ":REQUIRED: guest@example.test\n:TRANSACTION_ID: 88f06b7f-f43e-42e8-8e98-a4fdc7ca0b34\n"
+             ":END:\n\n*Bold agenda* and [[https://example.test][a link]].\n")
+     (teams4e-calendar-compose-mode 1)
+     ,@body))
+
+(ert-deftest teams4e-calendar-create-opens-org-draft-without-any-request ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (goto-char (teams4e-calendar--find-item
+                (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "B")))
+    (let (draft)
+      (unwind-protect
+          (cl-letf (((symbol-function 'teams4e--run-json)
+                     (lambda (&rest _) (ert-fail "Opening a draft must not fetch or send")))
+                    ((symbol-function 'pop-to-buffer) (lambda (buffer &rest _) (setq draft buffer))))
+            (teams4e-calendar-create)
+            (with-current-buffer draft
+              (should (derived-mode-p 'org-mode))
+              (should teams4e-calendar-compose-mode)
+              (should (equal "2026-10-04T10:00:00+0000"
+                             (teams4e-calendar-compose--get "START_AT")))
+              (should (equal "yes" (teams4e-calendar-compose--get "TEAMS")))
+              (should (teams4e-calendar-compose--get "TRANSACTION_ID"))
+              (should-not teams4e-calendar-compose--pending)))
+        (when (buffer-live-p draft) (kill-buffer draft))))))
+
+(ert-deftest teams4e-calendar-draft-renders-org-without-metadata-or-evaluation ()
+  (teams4e-calendar-draft-test
+    (let* ((payload (teams4e-calendar-compose--payload))
+           (body (alist-get 'body payload)))
+      (should (equal "2026-10-06T07:00:00Z" (alist-get 'start payload)))
+      (should (string-match-p "<b>Bold agenda</b>" body))
+      (should-not (string-match-p "TRANSACTION_ID\\|REQUIRED\\|Synthetic review" body))
+      (should (equal ["guest@example.test"] (alist-get 'required payload))))
+    (goto-char (point-max))
+    (insert "#+INCLUDE: \"/never-read-this\"\n")
+    (should-error (teams4e-calendar-compose--payload) :type 'user-error)))
+
+(ert-deftest teams4e-calendar-draft-rejects-bad-time-and-address-before-send ()
+  (dolist (field '(("END_AT" . "2026-10-05T09:00:00Z")
+                   ("START_AT" . "2026-10-06T10:00:00")
+                   ("REQUIRED" . "not-an-email") ("TEAMS" . "perhaps")))
+    (teams4e-calendar-draft-test
+      (teams4e-calendar-compose--put (car field) (cdr field))
+      (cl-letf (((symbol-function 'teams4e--require-online) #'ignore)
+                ((symbol-function 'teams4e--run-json) (lambda (&rest _) (ert-fail "Invalid draft sent"))))
+        (should-error (teams4e-calendar-compose-send) :type 'user-error))
+      (should-not buffer-read-only))))
+
+(ert-deftest teams4e-calendar-draft-explicit-send-prevents-double-submission ()
+  (teams4e-calendar-draft-test
+    (let (calls callback)
+      (cl-letf (((symbol-function 'teams4e--require-online) #'ignore)
+                ((symbol-function 'teams4e--run-json)
+                 (lambda (args done &optional _error) (push args calls) (setq callback done))))
+        (teams4e-calendar-compose-send)
+        (should teams4e-calendar-compose--pending)
+        (should buffer-read-only)
+        (should-error (teams4e-calendar-compose-send) :type 'user-error)
+        (should (= 1 (length calls)))
+        (should (equal '("teams" "calendar" "event" "create") (seq-take (car calls) 4)))
+        (funcall callback '((event (id . "new-event") (subject . "Synthetic review"))))
+        (should-not teams4e-calendar-compose--pending)
+        (should (equal "new-event" (teams4e-calendar-compose--get "CREATED_ID")))
+        (should-error (teams4e-calendar-compose-send) :type 'user-error)))))
+
+(ert-deftest teams4e-calendar-draft-failed-send-retries-identical-payload-only ()
+  (teams4e-calendar-draft-test
+    (goto-char (point-max))
+    (insert "** Subheading with an export-generated ID\nMore body.\n")
+    (let (calls fail)
+      (cl-letf (((symbol-function 'teams4e--require-online) #'ignore)
+                ((symbol-function 'teams4e--run-json)
+                 (lambda (args _done &optional error) (push args calls) (setq fail error))))
+        (teams4e-calendar-compose-send)
+        (funcall fail 1 "Synthetic timeout")
+        (teams4e-calendar-compose-send)
+        (should (equal (car calls) (cadr calls)))
+        (funcall fail 1 "Synthetic timeout")
+        (goto-char (point-max))
+        (insert "Changed after submission.\n")
+        (should-error (teams4e-calendar-compose-send) :type 'user-error)
+        (should (= 2 (length calls)))))))
+
+(ert-deftest teams4e-calendar-draft-attendee-search-updates-draft-only ()
+  (teams4e-calendar-draft-test
+    (cl-letf (((symbol-function 'teams4e--search-user)
+               (lambda (_query callback) (funcall callback '((mail . "optional@example.test"))))))
+      (teams4e-calendar-compose-add-attendee "optional" t))
+    (should (equal "optional@example.test" (teams4e-calendar-compose--get "OPTIONAL")))
+    (should-not (teams4e-calendar-compose--get "SUBMITTED_HASH"))))
 
 
 (provide 'teams4e-calendar-tests)

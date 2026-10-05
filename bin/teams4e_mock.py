@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from teams4e_cache import TeamsCache
+from teams4e_calendar import calendar_draft_payload
 
 
 def mock_enabled() -> bool:
@@ -1233,6 +1234,24 @@ class MockTenant:
       return {"events": events, "complete": True, "error": None,
               "start": first.isoformat(), "end": last.isoformat(),
               "calendarId": option(args, "--calendarId", required=False)}
+    if args[:4] == ["teams", "calendar", "event", "create"]:
+      if option(args, "--calendarId", required=False) not in (None, "mock-primary"):
+        raise ValueError("Unknown mock calendar")
+      payload = calendar_draft_payload(json.loads(str(option(args, "--draft"))))
+      events = self.state.setdefault("calendarEvents", [])
+      for event in events:
+        if event.get("transactionId") == payload["transactionId"]:
+          return {"status": "created", "event": copy.deepcopy(event)}
+      event = {**payload, "id": "mock-created-" + str(uuid.uuid4()),
+               "isOrganizer": True, "isAllDay": False, "type": "singleInstance",
+               "responseStatus": {"response": "organizer"},
+               "organizer": {"emailAddress": {"address": "user@example.test"}}}
+      event["webLink"] = "https://outlook.office.com/calendar/item/" + event["id"]
+      if payload["isOnlineMeeting"]:
+        event["onlineMeeting"] = {"joinUrl": "https://teams.microsoft.com/meet/mock-created"}
+      events.append(event)
+      self._write()
+      return {"status": "created", "event": copy.deepcopy(event)}
     if args[:4] == ["teams", "calendar", "event", "reschedule"]:
       event = self._meeting_event(str(option(args, "--eventId")))
       if not (event.get("isOrganizer") and not event.get("isCancelled")

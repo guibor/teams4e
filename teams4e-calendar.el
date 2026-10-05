@@ -14,6 +14,8 @@
 (require 'url-util)
 (require 'hl-line)
 
+(autoload 'teams4e-calendar-create "teams4e-calendar-create" nil t)
+
 (declare-function evil-set-initial-state "evil-core" (mode state))
 (declare-function evil-local-set-key "evil-core" (state key def))
 (declare-function evil-make-overriding-map "evil-core" (keymap &optional state copy))
@@ -1332,6 +1334,7 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("/" . teams4e-calendar-filter)
                        ("x" . teams4e-calendar-toggle-declined)
                        ("c" . teams4e-calendar-select)
+                       ("+" . teams4e-calendar-create)
                        ("RET" . teams4e-calendar-activate)
                        ("TAB" . teams4e-calendar-toggle-section)
                        ("<tab>" . teams4e-calendar-toggle-section)
@@ -1347,7 +1350,8 @@ Short meeting links without a thread ID cannot be resolved locally."
     map))
 
 ;; Extend already-loaded maps during a Lisp-only update, preserving custom keys.
-(dolist (binding '(("f" . teams4e-calendar-follow-in-outlook)
+(dolist (binding '(("+" . teams4e-calendar-create)
+                   ("f" . teams4e-calendar-follow-in-outlook)
                    ("N" . teams4e-calendar-next-slot)
                    ("TAB" . teams4e-calendar-toggle-section)
                    ("<tab>" . teams4e-calendar-toggle-section)
@@ -1375,7 +1379,7 @@ Short meeting links without a thread ID cannot be resolved locally."
 Read the public mode map so user customizations remain authoritative."
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
-      (dolist (key '("j" "k" "J" "K" "h" "l" "H" "L" "t" "N" "f" "TAB" "<tab>" "RET"))
+      (dolist (key '("j" "k" "J" "K" "h" "l" "H" "L" "t" "N" "f" "+" "TAB" "<tab>" "RET"))
         (evil-local-set-key state (kbd key)
                             (lookup-key teams4e-calendar-mode-map (kbd key)))))))
 

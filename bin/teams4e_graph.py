@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from teams4e_cache import TeamsCache
+from teams4e_calendar import calendar_draft_payload
 from teams4e_mock import MockTenant, mock_enabled
 
 
@@ -1930,6 +1931,20 @@ def get_meeting_availability(
   }
 
 
+def create_calendar_event(draft: dict[str, Any], access_token: str,
+                          calendar_id: str | None = None) -> dict[str, Any]:
+  """Create only on explicit submission; transactionId protects identical retries."""
+  try:
+    payload = calendar_draft_payload(draft)
+  except (ValueError, TypeError) as error:
+    raise BackendError(str(error)) from error
+  endpoint = (f"/me/calendars/{quoted_id(calendar_id)}/events"
+              if calendar_id else "/me/calendar/events")
+  event = graph_json(endpoint, access_token, method="POST", payload=payload,
+                     request_headers={"Prefer": 'outlook.timezone="UTC"'})
+  return {"status": "created", "event": event}
+
+
 def calendar_reschedule_allowed(event: dict[str, Any]) -> bool:
   """Only timed, live events owned by the user; never move a series master."""
   return bool(event.get("isOrganizer") and not event.get("isCancelled")
@@ -3469,6 +3484,14 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
     result = list_calendar_view(
         str(option(args, "--start")), str(option(args, "--end")), access_token,
         calendar_id=option(args, "--calendarId", required=False),
+    )
+  elif args[:4] == ["teams", "calendar", "event", "create"]:
+    try:
+      draft = json.loads(str(option(args, "--draft")))
+    except ValueError as error:
+      raise BackendError("Calendar draft is not valid JSON") from error
+    result = create_calendar_event(
+        draft, access_token, calendar_id=option(args, "--calendarId", required=False),
     )
   elif args[:4] == ["teams", "calendar", "event", "reschedule"]:
     result = reschedule_calendar_event(

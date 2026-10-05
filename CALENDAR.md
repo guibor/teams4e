@@ -27,6 +27,7 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `/` | Filter subject, location, or organizer; empty input clears |
 | `x` | Include / hide declined and cancelled events |
 | `c` | Choose a calendar returned by Microsoft Graph |
+| `+` | Compose a new single timed event in an Org draft |
 | `a` | Accept, tentative, or decline |
 | `f` | Follow in Outlook: open the invitation; choose Follow there |
 | `r`, `A` | Availability workspace: propose a time, or reschedule your own event |
@@ -153,6 +154,50 @@ range replaces the single loaded snapshot. This is not a persistent offline
 calendar database: an existing buffer remains readable offline, but a new range
 requires a working token and network.
 
+## Create a Meeting
+
+Press `+` in the agenda, or run `M-x teams4e-calendar-create`. This opens an
+editable Org draft beside the calendar. Opening the draft does not fetch or send
+anything. The first heading is the title; the text below its property drawer is
+the description, exported to HTML with the same safe Org renderer as chat replies.
+Includes, setup files, macros, and executable export directives are rejected.
+
+The drawer contains `START_AT` and `END_AT` (ISO timestamps with an explicit UTC
+offset), `REQUIRED` and `OPTIONAL` (comma-separated email addresses), `LOCATION`,
+`TEAMS` (`yes` or `no`), and `SHOW_AS`. The selected calendar is retained in
+`CALENDAR_ID`; an empty value means the primary calendar. Keep `TRANSACTION_ID`:
+it allows Graph to recognize retries of the same creation request.
+
+| Default draft key | Action |
+| --- | --- |
+| `C-c C-t` | Choose start time with Org's date reader and enter a duration |
+| `C-c C-a` | Search the existing directory and add a required attendee |
+| `C-u C-c C-a` | Add an optional attendee |
+| `C-c C-c` | **Create the event and send invitations** |
+| `C-c C-k` | Leave the draft pane without submitting; the draft remains a buffer |
+
+The default duration is 30 minutes and a Teams link is requested by default.
+Customize `teams4e-calendar-new-duration`, `teams4e-calendar-new-online-meeting`,
+and `teams4e-calendar-compose-mode-map`. Without attendees, the draft creates an
+appointment. Set `TEAMS` to `no` for an ordinary non-online event. No hidden
+confirmation step follows `C-c C-c`: inspect the draft before invoking it.
+
+An in-flight draft cannot be submitted twice. Success records `CREATED_ID` and
+updates the owning agenda snapshot when the event is in its loaded range.
+Failures retain the draft, and retrying an unchanged draft uses the same request
+and transaction ID. After an ambiguous timeout, **check Outlook before replacing
+or changing the submitted draft**. Changed submissions are blocked to avoid
+accidentally sending a second invitation. `C-c C-k` does not cancel a request
+already in flight, nor delete an event already created.
+
+This first version creates single timed events only: no recurrence, all-day
+creation, attachments, room booking, or participant-availability picker before
+creation. Existing events still have their availability/rescheduling workspace.
+Creation uses the selected user's calendar and existing token, requiring already
+authorized `Calendars.ReadWrite`; teams4e does not request more permissions.
+Teams-link availability depends on the account/calendar's supported providers.
+See Microsoft's [create-event API](https://learn.microsoft.com/en-us/graph/api/calendar-post-events?view=graph-rest-1.0).
+
 ## Follow: Current Limitation
 
 Official documentation checked on 2026-10-05. Outlook's **Follow** is a distinct
@@ -199,8 +244,17 @@ See [authentication](AUTHENTICATION.md).
 
 Update **both** the Lisp package and your installed Python backend. A deployment
 that copies `teams4e-graph` and its Python modules outside the checkout must
-reinstall those files too. Restart the persistent backend or Emacs afterward.
+reinstall those files too, including the new `teams4e_calendar.py` sibling module.
+Copy the complete `bin/` runtime, not just the launcher or `teams4e_graph.py`.
+Restart the persistent backend or Emacs afterward.
 An older backend will reject the new `teams calendar` commands.
+
+Check `M-x find-library RET teams4e-calendar RET` for the Lisp installation and
+`C-h v teams4e-backend-program` for a separate staged backend. Updating a source
+checkout alone does not replace either running component. For Spacemacs/Quelpa,
+update the installed package (retaining the recipe's `bin/*` files), run your
+deployment's backend installer if it stages a separate copy, then restart Emacs.
+Save drafts and wait for pending submissions before updating or stopping a backend.
 
 For Lisp-only calendar updates in an existing session, evaluate with `M-:`:
 
@@ -211,6 +265,11 @@ For Lisp-only calendar updates in an existing session, evaluate with `M-:`:
 This reinstalls the agenda's buffer-local Evil navigation bindings and redraws
 from the current snapshot without fetching. The invite pane uses a standard
 Emacs display action that is also tested with Spacemacs' window-purpose enabled.
+For this creation update, reload `teams4e-calendar-create.el` as well if it was
+already loaded. After staging the Python files, an in-session backend restart is
+possible with `(teams4e--stop-server "Backend updated")`; this is an internal
+helper and will fail any pending requests, so use it only when idle. The next
+backend operation starts the updated process. A full Emacs restart is simpler.
 
 Example optional configuration:
 
