@@ -81,8 +81,10 @@ The invite reader also links to overlap partners and their exact shared
 intervals, reusing the same pane.
 As with free gaps, overlap detection covers only the loaded selected calendar.
 
-[Conflict detail in real Emacs with Moe and window-purpose](assets/calendar-conflicts.png)
-uses synthetic appointments, not account data.
+![Expanded calendar conflict with per-meeting actions in real Emacs and Moe](assets/calendar-folds.png)
+
+The [invite detail](assets/calendar-conflicts.png) and expanded agenda above use
+real Emacs with Moe and window-purpose, with synthetic appointments only.
 
 These are ordinary, customizable Emacs keymaps:
 `teams4e-calendar-mode-map` and `teams4e-calendar-event-mode-map`.

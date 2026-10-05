@@ -378,7 +378,8 @@ Update the installed backend as well as the Lisp package for this feature.
 ![Independent calendar agenda in real Emacs with Moe Dark and synthetic events](assets/calendar.png)
 
 See [Calendar setup, defaults, and boundaries](CALENDAR.md), including the
-[event reader](assets/calendar-detail.png).
+[event reader](assets/calendar-detail.png) and
+[expanded conflict actions](assets/calendar-folds.png).
 
 ## Optional Agent Workflows
 
