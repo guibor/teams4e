@@ -355,13 +355,13 @@ working elsewhere, and subdued free events. Free gaps within configurable
 working hours use the full snapshot, even when a text filter hides events;
 incomplete loads never imply that time is free. Exact overlap intervals share
 labels with the affected events; the invite reader links to conflicting events,
-even when a text filter hides them from the agenda. `TAB` folds days and conflict
-groups. Expanding a conflict lists all its meetings with direct actions to
+even when a text filter hides them from the agenda. `TAB` folds conflict
+groups only; days always remain visible. Expanding a conflict lists all its meetings with direct actions to
 respond, propose another time, reschedule your own event, or open Outlook.
 These use the same calendar snapshot, with no extra loading just to unfold.
 
 `j/k` (or `J/K`) move between events; `h/l` (or `H/L`) move between
-days. `t` unfolds today and centers on now, `.` or `G` chooses a date with Org's date reader,
+days. `t` centers on now, `.` or `G` chooses a date with Org's date reader,
 and `d/w/m` select day/week/month. `[/]` move between whole ranges.
 `RET` opens a reusable invite reader; `/` filters locally and `c` selects
 another calendar. RSVP (`a`), availability and rescheduling (`r` or `A`),

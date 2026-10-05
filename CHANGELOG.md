@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Remove calendar day folding. TAB now toggles conflict groups only and does
+  nothing elsewhere in the agenda. Ignore old day-fold state during live updates;
+  keep all days visible and preserve conflict actions and `t` recentering.
+
 - Fold calendar days and conflict groups with `TAB`. Expanded conflicts show
   each meeting with direct invite, RSVP, availability/rescheduling, and Outlook
   actions using canonical event IDs. Retain expansion through redraws and filters;

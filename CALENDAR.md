@@ -19,9 +19,9 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `h / l`, `H / L` | Center on the previous / next highlighted day heading; no fetch inside the loaded range |
 | `[ / ]` | Previous / next day, week, or month |
 | `d / w / m` | Day / week / month agenda |
-| `t` | Unfold today and center on now, or the closest timed row |
+| `t` | Center on now, or the closest timed row today |
 | `.`, `G` | Choose a date using Org's date reader and calendar |
-| `TAB` | Fold / unfold the enclosing day or conflict group |
+| `TAB` | Fold / unfold the enclosing conflict group; no effect elsewhere |
 | `RET` | Read an event or activate its action button |
 | `/` | Filter subject, location, or organizer; empty input clears |
 | `x` | Include / hide declined and cancelled events |
@@ -61,11 +61,11 @@ Three-way overlaps show the actual simultaneous count, not misleading pair
 counts or transitive groups. Filtering cannot hide the existence of a clash:
 summaries say how many affected events are filtered out.
 
-`TAB` folds or unfolds the day or conflict group at point. Days start expanded;
-conflicts start collapsed. A closed day still shows its event and conflict counts.
-Expansion survives redraws, local filtering, and folding the parent day; it does
-not fetch anything. `H/L` reach day headings, `j/k` skip folded content, and
-`t` unfolds today and recenters on now or the closest timed row.
+`TAB` folds or unfolds the enclosing conflict group. Conflicts start collapsed;
+days always remain expanded. On day headings, ordinary event rows, free gaps,
+or blank lines, TAB does nothing. Conflict expansion survives redraws and local
+filtering without fetching anything. `H/L` reach day headings, `j/k` skip folded
+conflict details, and `t` recenters on now or the closest timed row today.
 
 Expand a conflict to see **every involved meeting**, including filtered-out
 partners, with its full interval, availability, and RSVP state. Click its title
