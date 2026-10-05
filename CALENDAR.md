@@ -19,9 +19,10 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `h / l`, `H / L` | Center on the previous / next highlighted day heading; no fetch inside the loaded range |
 | `[ / ]` | Previous / next day, week, or month |
 | `d / w / m` | Day / week / month agenda |
-| `t` | Center on now, or the closest time on today's agenda |
+| `t` | Unfold today and center on now, or the closest timed row |
 | `.`, `G` | Choose a date using Org's date reader and calendar |
-| `RET` | Read an event in one reusable detail pane |
+| `TAB` | Fold / unfold the enclosing day or conflict group |
+| `RET` | Read an event or activate its action button |
 | `/` | Filter subject, location, or organizer; empty input clears |
 | `x` | Include / hide declined and cancelled events |
 | `c` | Choose a calendar returned by Microsoft Graph |
@@ -58,9 +59,26 @@ and unknown availability conservatively count as blocking time.
 
 Three-way overlaps show the actual simultaneous count, not misleading pair
 counts or transitive groups. Filtering cannot hide the existence of a clash:
-summaries say how many affected events are filtered out. Hover a summary for its
-titles, or open an event to see clickable overlap partners and their exact shared
-intervals. Those links reuse the same invite pane, where `r` opens availability.
+summaries say how many affected events are filtered out.
+
+`TAB` folds or unfolds the day or conflict group at point. Days start expanded;
+conflicts start collapsed. A closed day still shows its event and conflict counts.
+Expansion survives redraws, local filtering, and folding the parent day; it does
+not fetch anything. `H/L` reach day headings, `j/k` skip folded content, and
+`t` unfolds today and recenters on now or the closest timed row.
+
+Expand a conflict to see **every involved meeting**, including filtered-out
+partners, with its full interval, availability, and RSVP state. Click its title
+(or use `RET` on the meeting row) to read the invitation. Use `r` for
+availability/rescheduling, `a` to respond (including decline), or `o` for Outlook.
+The same actions are buttons under each meeting; `RET` activates a button at
+point. Your own events offer rescheduling; received invitations offer time
+proposals and RSVP. Folding or browsing never changes an invitation. Successful
+responses and moves update the original snapshot and recompute the conflicts;
+a proposal alone does not resolve a clash until the organizer changes the time.
+
+The invite reader also links to overlap partners and their exact shared
+intervals, reusing the same pane.
 As with free gaps, overlap detection covers only the loaded selected calendar.
 
 [Conflict detail in real Emacs with Moe and window-purpose](assets/calendar-conflicts.png)

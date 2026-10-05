@@ -62,6 +62,8 @@
 (defvar-local teams4e-calendar--event-id nil)
 (defvar-local teams4e-calendar--focus nil)
 (defvar-local teams4e-calendar--focus-day-heading nil)
+(defvar-local teams4e-calendar--fold-state nil
+  "Local section expansion overrides, keyed by calendar, day, and event IDs.")
 
 (defun teams4e-calendar--midnight (time &optional days)
   "Return local midnight at TIME plus calendar DAYS, including across DST."
@@ -233,24 +235,115 @@ Do not group transitive overlaps: A/B followed by B/C is not an A/C clash."
         (push (format "C%d" index) result)))
     (nreverse result)))
 
-(defun teams4e-calendar--insert-conflicts (conflicts)
-  "Insert a compact overlap summary for CONFLICTS in the current day."
+(defun teams4e-calendar--day-key (day)
+  "Return a calendar-qualified folding key for DAY."
+  (list 'day teams4e-calendar--id (format-time-string "%Y-%m-%d" day)))
+
+(defun teams4e-calendar--section-open-p (key)
+  "Whether section KEY is expanded; days open and conflicts close by default."
+  (let ((state (assoc key teams4e-calendar--fold-state)))
+    (if state (eq (cdr state) 'open) (eq (car key) 'day))))
+
+(defun teams4e-calendar--find-item (key)
+  "Find the rendered row identified by KEY, without relying on its position."
+  (when key
+    (let ((position (point-min)))
+      (while (and (< position (point-max))
+                  (not (equal key (get-text-property position 'teams4e-calendar-item))))
+        (setq position (next-single-property-change
+                        position 'teams4e-calendar-item nil (point-max))))
+      (when (< position (point-max)) position))))
+
+(defun teams4e-calendar-toggle-section ()
+  "Fold or unfold the current day or enclosing conflict group, without fetching."
+  (interactive)
+  (let ((key (get-text-property (point) 'teams4e-calendar-section)))
+    (unless key (user-error "No calendar section here"))
+    (setf (alist-get key teams4e-calendar--fold-state nil nil #'equal)
+          (if (teams4e-calendar--section-open-p key) 'closed 'open))
+    (setq teams4e-calendar--focus nil teams4e-calendar--focus-day-heading nil)
+    (goto-char (or (teams4e-calendar--find-item key) (point)))
+    (teams4e-calendar--render)))
+
+(defun teams4e-calendar-activate ()
+  "Activate an event action at point, or open the selected invitation."
+  (interactive)
+  (if-let ((button (button-at (point))))
+      (button-activate button)
+    (teams4e-calendar-open-event)))
+
+(defun teams4e-calendar--action-button (label command id)
+  "Insert LABEL invoking COMMAND for canonical event ID in this agenda."
+  (let ((owner (current-buffer)))
+    (insert-text-button
+     label 'follow-link t 'action
+     (lambda (_)
+       (unless (buffer-live-p owner) (user-error "Calendar buffer was closed"))
+       (with-current-buffer owner
+         (let ((teams4e-calendar--event-id id))
+           (call-interactively command)))))))
+
+(defun teams4e-calendar--insert-conflict-event (event day key)
+  "Insert actionable EVENT under conflict KEY on DAY, retaining only its ID."
+  (let* ((start (point))
+         (id (teams4e--get event 'id))
+         (availability (teams4e-calendar--availability event)))
+    (insert (propertize (format "      %-15s " (teams4e-calendar--time-label event day))
+                        'face (cadr availability)))
+    (teams4e-calendar--action-button
+     (teams4e-calendar--line (or (teams4e--get event 'subject) "(Untitled event)"))
+     #'teams4e-calendar-open-event id)
+    (insert "\n")
+    (add-text-properties start (point) '(teams4e-calendar-event-start t))
+    (insert "      " (propertize (car availability) 'face (cadr availability))
+            (propertize (concat " | " (teams4e-calendar--status event)
+                                (unless (teams4e-calendar--visible-p event) " | Filtered out"))
+                        'face 'shadow)
+            "\n      ")
+    (teams4e-calendar--action-button
+     (if (teams4e--get event 'isOrganizer)
+         "Availability / reschedule" "Availability / propose time")
+     #'teams4e-calendar-availability id)
+    (when (and (not (teams4e--get event 'isOrganizer)) (teams4e--get event 'attendees))
+      (insert "   ")
+      (teams4e-calendar--action-button "Respond" #'teams4e-calendar-respond id))
+    (insert "   ")
+    (teams4e-calendar--action-button "Outlook" #'teams4e-calendar-open-outlook id)
+    (insert "\n")
+    (add-text-properties start (point)
+                         (list 'teams4e-calendar-event id
+                               'teams4e-calendar-item (list 'conflict-event key id)))))
+
+(defun teams4e-calendar--insert-conflicts (conflicts day)
+  "Insert foldable overlap groups for CONFLICTS on DAY."
   (let ((index 0))
     (dolist (segment conflicts)
       (cl-incf index)
-      (let* ((events (nth 2 segment))
+      (let* ((start (point))
+             (events (nth 2 segment))
+             ;; Stable across sorting and label changes; not a second event store.
+             (key (list 'conflict (teams4e-calendar--day-key day)
+                        (car segment) (cadr segment)
+                        (sort (mapcar (lambda (event) (teams4e--get event 'id)) events)
+                              #'string-lessp)))
+             (open (teams4e-calendar--section-open-p key))
              (hidden (seq-count (lambda (event) (not (teams4e-calendar--visible-p event))) events))
              (titles (mapconcat (lambda (event)
-                                  (teams4e-calendar--line (teams4e--get event 'subject)))
-                                events "; ")))
+                                 (teams4e-calendar--line (teams4e--get event 'subject)))
+                               events "; ")))
         (insert (propertize
-                 (format "  C%d  %s - %s  |  %d overlapping events%s\n"
-                         index (format-time-string "%H:%M" (car segment))
+                 (format "  C%d [%s]  %s - %s  |  %d overlapping events%s\n"
+                         index (if open "-" "+") (format-time-string "%H:%M" (car segment))
                          (if (equal (format-time-string "%H:%M" (cadr segment)) "00:00")
                              "24:00" (format-time-string "%H:%M" (cadr segment)))
                          (length events)
                          (if (> hidden 0) (format " (%d filtered out)" hidden) ""))
-                 'face 'teams4e-calendar-conflict 'help-echo titles))))))
+                 'face 'teams4e-calendar-conflict 'help-echo titles
+                 'teams4e-calendar-item key))
+        (when open
+          (dolist (event events)
+            (teams4e-calendar--insert-conflict-event event day key)))
+        (add-text-properties start (point) (list 'teams4e-calendar-section key))))))
 
 (defun teams4e-calendar--insert-event-conflicts (owner event)
   "Insert clickable overlap partners for EVENT from OWNER's snapshot."
@@ -343,13 +436,13 @@ Never infer free time from an incomplete, stale, or loading snapshot."
 (defun teams4e-calendar--render ()
   "Render the snapshot, preserving the selected occurrence and day."
   (let* ((inhibit-read-only t)
-         (selected (get-text-property (point) 'teams4e-calendar-event))
+         (selected-item (get-text-property (point) 'teams4e-calendar-item))
          (selected-day (get-text-property (point) 'teams4e-calendar-day))
          (position (point))
          (range (teams4e-calendar--range))
          (day (car range))
          (loaded (equal (teams4e-calendar--key) teams4e-calendar--loaded-key))
-         selected-position)
+         body-start)
     (erase-buffer)
     (setq header-line-format
           (list " Calendar | " teams4e-calendar--name " | "
@@ -370,6 +463,8 @@ Never infer free time from an incomplete, stale, or loading snapshot."
       (insert (propertize (concat teams4e-calendar--error "\n\n") 'face 'warning)))
     (while (time-less-p day (cadr range))
       (let* ((day-start (point))
+             (section (teams4e-calendar--day-key day))
+             (open (teams4e-calendar--section-open-p section))
              (day-key (format-time-string "%Y-%m-%d" day))
              (today (equal day-key (format-time-string "%Y-%m-%d")))
              (events (and loaded (teams4e-calendar--day-events day)))
@@ -381,81 +476,102 @@ Never infer free time from an incomplete, stale, or loading snapshot."
                                     (float-time (teams4e-calendar--time event 'end)) event))
                             events)
                     gaps)))
+        (when (and teams4e-calendar--focus (not teams4e-calendar--focus-day-heading)
+                   (equal day-key (format-time-string "%Y-%m-%d" teams4e-calendar--focus)))
+          (setf (alist-get section teams4e-calendar--fold-state nil nil #'equal) 'open)
+          (setq open t))
         (insert (propertize (concat (format-time-string "%A, %d %B" day)
                                     (if today "  TODAY" "")
                                     (if loaded
-                                        (format "  |  %d event%s%s\n" (length events)
+                                        (format "  |  %d event%s%s" (length events)
                                                 (if (= (length events) 1) "" "s")
                                                 (if teams4e-calendar--error " returned" ""))
-                                      "  |  Not loaded\n"))
+                                      "  |  Not loaded")
+                                    (if conflicts (format "  |  %d conflict%s" (length conflicts)
+                                                          (if (= (length conflicts) 1) "" "s")) "")
+                                    (if open "  [-]\n" "  [+]\n"))
+                            'teams4e-calendar-item section
                             'face '(:inherit font-lock-keyword-face :weight bold)))
-        (teams4e-calendar--insert-conflicts conflicts)
-        (dolist (row (sort rows (lambda (a b) (< (car a) (car b)))))
-          (pcase-let* ((`(,start-time ,end-time ,event) row)
-                       (start (point))
-                       (availability (if event (teams4e-calendar--availability event)
-                                       '("Free" teams4e-calendar-free nil)))
-                       (face (nth 1 availability))
-                       (conflict-labels (and event (teams4e-calendar--conflict-labels event conflicts)))
-                       (location (teams4e--dig event 'location 'displayName))
-                       (ongoing (and today (not (teams4e--get event 'isAllDay))
-                                     (<= start-time (float-time))
-                                     (< (float-time) end-time))))
-            (when (and selected (equal selected (teams4e--get event 'id))
-                       (equal selected-day day-key))
-              (setq selected-position start))
-            (insert (propertize
-                     (format "%s %-15s "
-                             (if ongoing ">" " ")
-                             (if event (teams4e-calendar--time-label event day)
-                               (format "%s - %s" (format-time-string "%H:%M" start-time)
-                                       (format-time-string "%H:%M" end-time))))
-                     'face face)
-                    (propertize
-                     (if event
-                         (teams4e-calendar--line (or (teams4e--get event 'subject) "(Untitled event)"))
-                       (format "Free in this calendar (%d min)" (/ (- end-time start-time) 60)))
-                     'face (if (nth 2 availability) 'bold face))
-                    (if conflict-labels
-                        (propertize (concat "  [" (string-join conflict-labels ", ") "]")
-                                    'face 'teams4e-calendar-conflict)
-                      "")
-                    "\n")
-            (add-text-properties start (point)
-                                 (list 'teams4e-calendar-row-start start-time
-                                       'teams4e-calendar-row-end end-time
-                                       'teams4e-calendar-all-day (teams4e--get event 'isAllDay)
-                                       'teams4e-calendar-event-start (and event t)))
-            (when event
-              (insert "                  "
-                      (propertize (car availability) 'face face)
+        (setq body-start (point))
+        (when open
+          (teams4e-calendar--insert-conflicts conflicts day)
+          (dolist (row (sort rows (lambda (a b) (< (car a) (car b)))))
+            (pcase-let* ((`(,start-time ,end-time ,event) row)
+                         (start (point))
+                         (availability (if event (teams4e-calendar--availability event)
+                                         '("Free" teams4e-calendar-free nil)))
+                         (face (nth 1 availability))
+                         (conflict-labels (and event (teams4e-calendar--conflict-labels event conflicts)))
+                         (location (teams4e--dig event 'location 'displayName))
+                         (ongoing (and today (not (teams4e--get event 'isAllDay))
+                                       (<= start-time (float-time))
+                                       (< (float-time) end-time))))
+              (insert (propertize
+                       (format "%s %-15s "
+                               (if ongoing ">" " ")
+                               (if event (teams4e-calendar--time-label event day)
+                                 (format "%s - %s" (format-time-string "%H:%M" start-time)
+                                         (format-time-string "%H:%M" end-time))))
+                       'face face)
                       (propertize
-                       (concat " | "
-                               (string-join
-                                (delq nil (list (teams4e-calendar--status event)
-                                                (and (not (string-empty-p (or location "")))
-                                                     (teams4e-calendar--line location))
-                                                (when (member (teams4e--get event 'type)
-                                                              '("occurrence" "exception"))
-                                                  "Recurring")))
-                                " | "))
-                       'face 'shadow)
+                       (if event
+                           (teams4e-calendar--line (or (teams4e--get event 'subject) "(Untitled event)"))
+                         (format "Free in this calendar (%d min)" (/ (- end-time start-time) 60)))
+                       'face (if (nth 2 availability) 'bold face))
+                      (if conflict-labels
+                          (propertize (concat "  [" (string-join conflict-labels ", ") "]")
+                                      'face 'teams4e-calendar-conflict)
+                        "")
                       "\n")
               (add-text-properties start (point)
-                                   (list 'teams4e-calendar-event (teams4e--get event 'id)
-                                         'mouse-face 'highlight)))))
-        (unless rows
-          (insert (propertize
-                   (cond ((not loaded) "  Not loaded\n")
-                         (teams4e-calendar--error "  No events returned (incomplete)\n")
-                         (t "  No matching events\n"))
-                   'face 'shadow)))
+                                   (list 'teams4e-calendar-row-start start-time
+                                         'teams4e-calendar-row-end end-time
+                                         'teams4e-calendar-all-day (teams4e--get event 'isAllDay)
+                                         'teams4e-calendar-event-start (and event t)))
+              (when event
+                (insert "                  "
+                        (propertize (car availability) 'face face)
+                        (propertize
+                         (concat " | "
+                                 (string-join
+                                  (delq nil (list (teams4e-calendar--status event)
+                                                  (and (not (string-empty-p (or location "")))
+                                                       (teams4e-calendar--line location))
+                                                  (when (member (teams4e--get event 'type)
+                                                                '("occurrence" "exception"))
+                                                    "Recurring")))
+                                  " | "))
+                         'face 'shadow)
+                        "\n")
+                (add-text-properties start (point)
+                                     (list 'teams4e-calendar-event (teams4e--get event 'id)
+                                           'teams4e-calendar-item
+                                           (list 'event section (teams4e--get event 'id))
+                                           'mouse-face 'highlight)))))
+          (unless rows
+            (insert (propertize
+                     (cond ((not loaded) "  Not loaded\n")
+                           (teams4e-calendar--error "  No events returned (incomplete)\n")
+                           (t "  No matching events\n"))
+                     'face 'shadow))))
         (insert "\n")
+        ;; Conflict children keep their own enclosing section.
+        (put-text-property day-start body-start 'teams4e-calendar-section section)
+        (let ((position body-start))
+          (while (< position (point))
+            (let ((end (next-single-property-change
+                        position 'teams4e-calendar-section nil (point))))
+              (unless (get-text-property position 'teams4e-calendar-section)
+                (put-text-property position end 'teams4e-calendar-section section))
+              (setq position end))))
         (add-text-properties day-start (point)
                              (list 'teams4e-calendar-day day-key 'teams4e-calendar-day-time day
                                    'rear-nonsticky t)))
       (setq day (teams4e-calendar--midnight day 1)))
-    (goto-char (or selected-position (min position (point-max))))
+    (goto-char (or (teams4e-calendar--find-item selected-item)
+                   (and selected-day (teams4e-calendar--find-item
+                                      (list 'day teams4e-calendar--id selected-day)))
+                   (min position (point-max))))
     (when teams4e-calendar--focus
       (teams4e-calendar--focus-time teams4e-calendar--focus teams4e-calendar--focus-day-heading)
       (when (and loaded (not teams4e-calendar--loading))
@@ -553,7 +669,7 @@ Never infer free time from an incomplete, stale, or loading snapshot."
   (teams4e-calendar-next-period (- (or count 1))))
 
 (defun teams4e-calendar-today ()
-  "Visit today in the current agenda view."
+  "Unfold today and center on now or the nearest timed row."
   (interactive)
   (setq teams4e-calendar--date (current-time)
         teams4e-calendar--focus teams4e-calendar--date
@@ -602,14 +718,12 @@ With BACKWARD, move to the previous event.  Stay put at the boundary."
   (setq teams4e-calendar--focus nil teams4e-calendar--focus-day-heading nil)
   (let* ((step (if backward -1 1))
          (original (point))
-         (id (get-text-property original 'teams4e-calendar-event))
-         (day (get-text-property original 'teams4e-calendar-day))
+         (item (get-text-property original 'teams4e-calendar-item))
          found)
     (forward-line step)
     (while (and (not found) (not (if backward (bobp) (eobp))))
       (when (and (get-text-property (point) 'teams4e-calendar-event-start)
-                 (not (and (equal id (get-text-property (point) 'teams4e-calendar-event))
-                           (equal day (get-text-property (point) 'teams4e-calendar-day)))))
+                 (not (equal item (get-text-property (point) 'teams4e-calendar-item))))
         (setq found (point)))
       (unless found (forward-line step)))
     (goto-char (or found original))
@@ -952,7 +1066,9 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("/" . teams4e-calendar-filter)
                        ("x" . teams4e-calendar-toggle-declined)
                        ("c" . teams4e-calendar-select)
-                       ("RET" . teams4e-calendar-open-event)
+                       ("RET" . teams4e-calendar-activate)
+                       ("TAB" . teams4e-calendar-toggle-section)
+                       ("<tab>" . teams4e-calendar-toggle-section)
                        ("o" . teams4e-calendar-open-outlook)
                        ("v" . teams4e-calendar-join)
                        ("T" . teams4e-calendar-open-chat)
@@ -962,6 +1078,14 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("C" . teams4e-calendar-capture)))
       (define-key map (kbd (car binding)) (cdr binding)))
     map))
+
+;; Extend already-loaded maps during a Lisp-only update, preserving custom keys.
+(dolist (binding '(("TAB" . teams4e-calendar-toggle-section)
+                   ("<tab>" . teams4e-calendar-toggle-section)
+                   ("RET" . teams4e-calendar-activate)))
+  (when (memq (lookup-key teams4e-calendar-mode-map (kbd (car binding)))
+              '(nil teams4e-calendar-open-event))
+    (define-key teams4e-calendar-mode-map (kbd (car binding)) (cdr binding))))
 
 (defvar teams4e-calendar-event-mode-map
   (let ((map (make-sparse-keymap)))
@@ -981,7 +1105,7 @@ Short meeting links without a thread ID cannot be resolved locally."
 Read the public mode map so user customizations remain authoritative."
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
-      (dolist (key '("j" "k" "J" "K" "h" "l" "H" "L"))
+      (dolist (key '("j" "k" "J" "K" "h" "l" "H" "L" "t" "TAB" "<tab>" "RET"))
         (evil-local-set-key state (kbd key)
                             (lookup-key teams4e-calendar-mode-map (kbd key)))))))
 

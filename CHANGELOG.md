@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fold calendar days and conflict groups with `TAB`. Expanded conflicts show
+  each meeting with direct invite, RSVP, availability/rescheduling, and Outlook
+  actions using canonical event IDs. Retain expansion through redraws and filters;
+  keep conflict counts visible on closed days. `t` unfolds today and recenters
+  without refreshing a loaded range; TAB/RET/t work in Evil normal and motion.
+
 - Fix calendar invite display with Spacemacs/window-purpose by passing a correctly
   structured display action; test opening and reusing the reader with Purpose.
   Make H/L navigation explicit in Evil normal/motion states, center on highlighted
