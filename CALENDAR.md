@@ -198,6 +198,12 @@ authorized `Calendars.ReadWrite`; teams4e does not request more permissions.
 Teams-link availability depends on the account/calendar's supported providers.
 See Microsoft's [create-event API](https://learn.microsoft.com/en-us/graph/api/calendar-post-events?view=graph-rest-1.0).
 
+![Org meeting draft beside the agenda in real Emacs with Moe](assets/calendar-draft.png)
+
+The calendar images use synthetic data in Emacs 29.3 with Moe Dark and Iosevka.
+See [capture provenance](assets/calendar-capture.json) and the
+[folded summary with its timeline still visible](assets/calendar-summary-closed.png).
+
 ## Follow: Current Limitation
 
 Official documentation checked on 2026-10-05. Outlook's **Follow** is a distinct
