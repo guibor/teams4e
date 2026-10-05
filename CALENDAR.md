@@ -76,6 +76,10 @@ Text can still wrap. This remains a chronological agenda, **not a spatial time
 grid**: overlapping meetings are separate blocks, not extra elapsed time.
 Toggling does not fetch data or change your selected event.
 
+[Duration-scaled agenda in real Emacs with Moe](assets/calendar-duration.png)
+shows the same synthetic calendar with its summary folded and longer free
+intervals taking more space. The compact agenda screenshots use the default.
+
 Free gaps describe **this calendar only**, not all your calendars. Busy,
 tentative, out-of-office, and unknown availability block time; free,
 working-elsewhere, declined, and cancelled events do not. Overlapping blocks
