@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Mark accepted-summary conflicts only when another accepted meeting overlaps.
+  Preserve semantic point, line/column, and each window's screen position across
+  calendar refreshes, with a surviving-item fallback when an event disappears.
+  Add `N` for ongoing/next slots and tomorrow after today's last slot. Document
+  why native Follow is unsupported by the published Graph contract; do not fake
+  it with Tentative + Free. Add an explicit `f` / Follow in Outlook handoff,
+  requesting background opening on macOS and requiring the user to choose Follow
+  in Outlook. Merely opening the invitation does not change its response.
+
 - Highlight real free slots separately from free/following invitations. Add a
   foldable day summary with free intervals and total duration, unanswered
   invitations, conflicts, tentative/accepted meetings, and organizer events.

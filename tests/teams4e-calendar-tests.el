@@ -410,6 +410,7 @@
                       ("L" . teams4e-calendar-next-day)
                       ("." . teams4e-calendar-goto-date)
                       ("t" . teams4e-calendar-today)
+                      ("N" . teams4e-calendar-next-slot)
                       ("r" . teams4e-calendar-availability)
                       ("T" . teams4e-calendar-open-chat)
                       ("v" . teams4e-calendar-join)))
@@ -686,7 +687,7 @@
           (forward-char 1))
         (should (equal seen '("B" "B" "A")))))))
 
-(ert-deftest teams4e-calendar-resolving-conflict-removes-group-and-keeps-day ()
+(ert-deftest teams4e-calendar-resolving-conflict-keeps-nearby-surviving-item ()
   (teams4e-calendar-test
     (teams4e-calendar-test-conflicts)
     (teams4e-calendar-toggle-section)
@@ -701,7 +702,8 @@
       (teams4e-calendar-respond))
     (should-not (teams4e-calendar--conflicts (teams4e-calendar--midnight teams4e-calendar--date)))
     (should-not (string-match-p "overlapping events" (buffer-string)))
-    (should (looking-at "Sunday,"))))
+    (should (equal "2026-10-04" (get-text-property (point) 'teams4e-calendar-day)))
+    (should (get-text-property (point) 'teams4e-calendar-item))))
 
 (ert-deftest teams4e-calendar-old-day-fold-state-is-ignored ()
   (teams4e-calendar-test
@@ -909,6 +911,236 @@
       (should-not (string-match-p "Needs response (1)" (buffer-string)))
       (should (string-match-p "Accepted (1)" (buffer-string)))
       (should (equal row (get-text-property (point) 'teams4e-calendar-item))))))
+
+(ert-deftest teams4e-calendar-accepted-markers-only-count-accepted-partners ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (cl-loop for (id response start end)
+                   in '(("A" "accepted" 9 11)
+                        ("tentative" "tentativelyAccepted" 9 10)
+                        ("B" "accepted" 10 12)
+                        ("unanswered" "notResponded" 11 12)
+                        ("C" "accepted" 12 13))
+                   collect
+                   (teams4e-calendar-test-event
+                    id (format "2026-10-04T%02d:00:00Z" start)
+                    (format "2026-10-04T%02d:00:00Z" end)
+                    `(responseStatus (response . ,response))
+                    '(showAs . "busy"))))
+    (let ((conflicts (teams4e-calendar--conflicts (teams4e-calendar--midnight teams4e-calendar--date))))
+      (dolist (index '(0 2))
+        (should (equal '("C2") (teams4e-calendar--conflict-labels
+                               (nth index teams4e-calendar--events) conflicts t))))
+      (should-not (teams4e-calendar--conflict-labels
+                   (nth 4 teams4e-calendar--events) conflicts t))
+      (should (equal '("C1" "C2") (teams4e-calendar--conflict-labels
+                                  (car teams4e-calendar--events) conflicts))))
+    ;; Filtering out B does not erase the accepted clash with A.
+    (setq teams4e-calendar--filter "A")
+    (teams4e-calendar--render)
+    (goto-char (teams4e-calendar--find-item
+                (list 'summary-event
+                      (list 'summary (teams4e-calendar--day-key teams4e-calendar--date)) "A")))
+    (should (string-match-p (regexp-quote "[C2]")
+                            (buffer-substring (point) (line-end-position))))))
+
+(ert-deftest teams4e-calendar-refresh-preserves-metadata-line-and-column ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (goto-char (teams4e-calendar--find-item
+                (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "B")))
+    (forward-line 1)
+    (move-to-column 23)
+    (let ((anchor (teams4e-calendar--position-anchor (point))))
+      (teams4e-calendar--render)
+      (should (equal (plist-get anchor :item)
+                     (get-text-property (point) 'teams4e-calendar-item)))
+      (should (= 23 (current-column)))
+      (should (= 1 (plist-get (teams4e-calendar--position-anchor (point)) :line))))))
+
+(ert-deftest teams4e-calendar-vanished-conflict-child-falls-back-to-its-event ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (teams4e-calendar-toggle-section)
+    (search-forward "Availability / propose time")
+    (teams4e-calendar--replace-event '((id . "A") (showAs . "free")))
+    (teams4e-calendar--render)
+    (should (equal (get-text-property (point) 'teams4e-calendar-item)
+                   (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "B")))))
+
+(ert-deftest teams4e-calendar-refresh-callback-respects-movement-while-loading ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (let (callback)
+      (cl-letf (((symbol-function 'teams4e--require-online) #'ignore)
+                ((symbol-function 'teams4e--run-json)
+                 (lambda (_args fn &optional _err) (setq callback fn) nil)))
+        (teams4e-calendar-refresh))
+      (goto-char (teams4e-calendar--find-item
+                  (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "B")))
+      (forward-line 1)
+      (move-to-column 21)
+      (funcall callback `((events . ,teams4e-calendar--events) (complete . t)))
+      (should (equal "B" (get-text-property (point) 'teams4e-calendar-event)))
+      (should (= 21 (current-column)))
+      (should (= 1 (plist-get (teams4e-calendar--position-anchor (point)) :line))))))
+
+(ert-deftest teams4e-calendar-refresh-preserves-independent-window-positions ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (save-window-excursion
+      (set-frame-size (selected-frame) 100 40)
+      (switch-to-buffer (current-buffer))
+      (delete-other-windows)
+      (let* ((first (selected-window))
+             (second (split-window-right))
+             (day (teams4e-calendar--day-key teams4e-calendar--date))
+             (a (teams4e-calendar--find-item (list 'event day "A")))
+             (b (teams4e-calendar--find-item (list 'event day "B"))))
+        (set-window-buffer second (current-buffer))
+        (goto-char (+ a 23))
+        (set-window-start first a t)
+        (set-window-point second (+ b 24))
+        (set-window-start second b t)
+        (set-window-hscroll second 3)
+        (let ((first-start (window-start first))
+              (second-start (window-start second))
+              (first-point (window-point first))
+              (second-point (window-point second)))
+          (teams4e-calendar--render)
+          (should (eq first (selected-window)))
+          (should (= first-start (window-start first)))
+          (should (= second-start (window-start second)))
+          (should (= first-point (window-point first)))
+          (should (= second-point (window-point second)))
+          (should (= 3 (window-hscroll second))))))))
+
+(ert-deftest teams4e-calendar-refresh-compensates-for-inserted-wrapped-rows ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (teams4e-calendar--replace-event
+     `((id . "A") (subject . ,(mapconcat #'identity (make-list 18 "Long title") " "))))
+    (teams4e-calendar--render)
+    (save-window-excursion
+      (set-frame-size (selected-frame) 100 40)
+      (switch-to-buffer (current-buffer))
+      (delete-other-windows)
+      (let* ((window (selected-window))
+             (day (teams4e-calendar--day-key teams4e-calendar--date)))
+        (goto-char (teams4e-calendar--find-item (list 'event day "B")))
+        (move-to-column 20)
+        (set-window-start window (teams4e-calendar--find-item (list 'event day "A")) t)
+        (let ((row (teams4e-calendar--screen-row window)))
+          (push (teams4e-calendar-test-event "New" "2026-10-04T09:30:00Z" "2026-10-04T09:45:00Z")
+                teams4e-calendar--events)
+          (teams4e-calendar--render)
+          (should (equal "B" (get-text-property (point) 'teams4e-calendar-event)))
+          (should (= 20 (current-column)))
+          (should (= row (teams4e-calendar--screen-row window))))))))
+
+(ert-deftest teams4e-calendar-next-slot-uses-ongoing-or-next-not-ended ()
+  (teams4e-calendar-test
+    (let ((calendar-week-start-day 0)
+          (teams4e-calendar-free-gap-minutes nil))
+      (teams4e-calendar-test-conflicts)
+      (cl-letf (((symbol-function 'teams4e--run-json)
+                 (lambda (&rest _) (ert-fail "Loaded navigation must not fetch"))))
+        (dolist (now '("2026-10-04T11:30:00Z" "2026-10-04T09:59:00Z" "2026-10-04T23:30:00Z"))
+          (cl-letf (((symbol-function 'current-time) (lambda () (date-to-time now))))
+            (teams4e-calendar-next-slot)
+            (should (equal (cond ((string-match-p "11:30" now) "B")
+                                 ((string-match-p "09:59" now) "A")
+                                 (t "Tomorrow"))
+                           (get-text-property (point) 'teams4e-calendar-event)))))))))
+
+(ert-deftest teams4e-calendar-next-slot-at-night-fetches-only-next-day-across-dst ()
+  (teams4e-calendar-test
+    (set-time-zone-rule "America/New_York")
+    (setq teams4e-calendar--view 'day)
+    (let (args callback)
+      (cl-letf (((symbol-function 'current-time)
+                 (lambda () (date-to-time "2026-10-31T23:30:00-04:00")))
+                ((symbol-function 'teams4e--require-online) #'ignore)
+                ((symbol-function 'teams4e--run-json)
+                 (lambda (command fn &optional _err)
+                   (setq args command callback fn) nil)))
+        (teams4e-calendar-next-slot))
+      (should (equal args '("teams" "calendar" "view" "--start" "2026-11-01T04:00:00Z"
+                           "--end" "2026-11-02T05:00:00Z")))
+      (funcall callback '((events) (complete . t)))
+      (should (equal "2026-11-01" (get-text-property (point) 'teams4e-calendar-day))))))
+
+(ert-deftest teams4e-calendar-next-slot-is-accessible-in-evil ()
+  (skip-unless (fboundp 'evil-mode))
+  (teams4e-calendar-test
+    (evil-local-mode 1)
+    (teams4e-calendar--install-navigation)
+    (dolist (state '(normal motion))
+      (evil-change-state state)
+      (should (eq (key-binding (kbd "N")) #'teams4e-calendar-next-slot)))))
+
+
+(ert-deftest teams4e-calendar-refresh-preserves-unkeyed-summary-and-separators ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (teams4e-calendar-test-conflicts)
+    (dolist (search '("    FREE" "Organizing"))
+      (goto-char (point-min))
+      (search-forward search)
+      (let ((before (point)))
+        (teams4e-calendar--render)
+        (should (= before (point)))))
+    (goto-char (point-min))
+    (forward-line 1)
+    (let ((before (point)))
+      (teams4e-calendar--render)
+      (should (= before (point))))))
+
+
+(ert-deftest teams4e-calendar-follow-links-are-only-documented-outlook-items ()
+  (should (equal "https://outlook.office365.com/calendar/item/demo%2Fid%3D"
+                 (teams4e-calendar--follow-url
+                  '((webLink . "https://outlook.office365.com/owa/?itemid=demo%2Fid%3D&exvsurl=1&path=/calendar/item")))))
+  (let ((link "https://outlook.live.com/calendar/item/demo"))
+    (should (equal link (teams4e-calendar--follow-url `((webLink . ,link))))))
+  (dolist (link '(nil "" "javascript:alert(1)" "http://outlook.office.com/calendar/item/demo"
+                 "https://outlook.office.com.invalid/calendar/item/demo"
+                 "https://user:secret@outlook.office.com/calendar/item/demo"))
+    (should-error (teams4e-calendar--follow-url `((webLink . ,link))) :type 'user-error)))
+
+(ert-deftest teams4e-calendar-follow-handoff-never-responds-or-changes-snapshot ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (teams4e-calendar--replace-event
+     '((id . "B") (webLink . "https://outlook.office.com/calendar/item/demo")))
+    (goto-char (teams4e-calendar--find-item
+                (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "B")))
+    (let ((before (copy-tree teams4e-calendar--events))
+          (teams4e-calendar-follow-browser-command 'auto)
+          (teams4e-browser-command '("open" "-a" "Arc"))
+          (system-type 'darwin)
+          opened)
+      (cl-letf (((symbol-function 'teams4e--run-json)
+                 (lambda (&rest _) (ert-fail "Follow handoff must not call Graph")))
+                ((symbol-function 'teams4e--open-with-command)
+                 (lambda (url command _description) (setq opened (list url command)))))
+        (teams4e-calendar-follow-in-outlook))
+      (should (equal opened '("https://outlook.office.com/calendar/item/demo"
+                              ("open" "-a" "Arc" "-g"))))
+      (should (equal before teams4e-calendar--events))
+      (let ((system-type 'gnu/linux)
+            (teams4e-browser-command '("test-browser" "--new-tab")))
+        (cl-letf (((symbol-function 'teams4e--open-with-command)
+                   (lambda (_url command _description) (setq opened command))))
+          (teams4e-calendar-follow-in-outlook))
+        (should (equal opened '("test-browser" "--new-tab"))))
+      (teams4e-calendar--replace-event '((id . "B") (isOrganizer . t)))
+      (cl-letf (((symbol-function 'teams4e--open-with-command)
+                 (lambda (&rest _) (ert-fail "Organizer cannot Follow"))))
+        (should-error (teams4e-calendar-follow-in-outlook) :type 'user-error)))))
+
 
 (provide 'teams4e-calendar-tests)
 ;;; teams4e-calendar-tests.el ends here

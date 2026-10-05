@@ -1063,6 +1063,18 @@ class GraphBackendTests(unittest.TestCase):
         self.assertEqual(response, result["event"]["responseStatus"]["response"])
         request.assert_called_once()
 
+  def test_follow_is_not_fabricated_or_sent_to_an_undocumented_endpoint(self) -> None:
+    for response in ("follow", "following"):
+      with self.subTest(response=response):
+        with (
+            mock.patch.object(backend, "get_calendar_event") as read,
+            mock.patch.object(backend, "graph_json") as request,
+        ):
+          with self.assertRaisesRegex(backend.BackendError, "Unsupported meeting response"):
+            backend.respond_to_meeting("event-one", response, "", "token")
+        read.assert_not_called()
+        request.assert_not_called()
+
   def test_propose_new_meeting_time_posts_tentative_response(self) -> None:
     event = {
         "id": "event:id",

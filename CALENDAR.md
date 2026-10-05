@@ -20,6 +20,7 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `[ / ]` | Previous / next day, week, or month |
 | `d / w / m` | Day / week / month agenda |
 | `t` | Center on now, or the closest timed row today |
+| `N` | Ongoing / next timed slot; tomorrow after today\'s last slot |
 | `.`, `G` | Choose a date using Org's date reader and calendar |
 | `TAB` | Fold / unfold a Summary heading or conflict group; no effect on the timeline |
 | `RET` | Read an event or activate its action button |
@@ -27,6 +28,7 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `x` | Include / hide declined and cancelled events |
 | `c` | Choose a calendar returned by Microsoft Graph |
 | `a` | Accept, tentative, or decline |
+| `f` | Follow in Outlook: open the invitation; choose Follow there |
 | `r`, `A` | Availability workspace: propose a time, or reschedule your own event |
 | `T` | Open the invite's Teams chat directly, without scanning recents |
 | `v` | Join an online meeting |
@@ -36,8 +38,21 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `q` | Quit the current pane |
 
 First load centers on the ongoing or nearest timed row. Explicit refreshes keep
-your selected occurrence and day, including multi-day events; reopening resumes
-your position. `t` recenters without fetching when today is already loaded.
+your selected occurrence, line, column, and screen row, independently in every
+agenda window. Unchanged content keeps the exact scroll position. If a summary
+or conflict row disappears, its event's timeline row is preferred; otherwise
+point falls back to a surviving neighboring item, then the day heading. Positions
+are clamped when text shrinks or a buffer boundary prevents the old screen row.
+Reopening resumes your position. A response arriving while you move through the
+agenda preserves your current position, not where you were when loading began.
+
+`t` recenters without fetching when today is already loaded. `N`
+(`teams4e-calendar-next-slot`) excludes ended rows and chooses the ongoing or next
+event/free slot. After today's last timed slot it visits tomorrow; an empty day
+lands on its heading. When today's snapshot is not loaded, invoking `N` after
+configured work hours also starts on tomorrow. Navigation reuses the loaded
+range, fetching only the displayed day/week/month when necessary, not scanning
+indefinitely for a future appointment.
 
 The time and availability label use theme-aware faces: `teams4e-calendar-busy`,
 `-tentative`, `-out-of-office`, `-elsewhere`, and `-free`. Actual available gaps
@@ -71,6 +86,10 @@ and **Organizing**, in that order. Empty meeting groups are omitted. Within each
 group, titles follow start time, without repeating time/location details. Titles
 open invitations; unanswered and tentative invitations also have a Respond
 button. The normal `a`, `r`, `o`, and capture commands work on these rows too.
+In **Accepted**, a `[Cx]` marker means an overlap with another **accepted**
+blocking meeting, even if that partner is filtered out. Tentative/unanswered-only
+clashes do not add this marker to Accepted. Numbers retain their meanings in the
+full day's conflict list; the timeline still marks all blocking overlaps.
 
 Unanswered means an attendee invitation with no response, not an ordinary
 appointment or an event you organize. Declined, cancelled, free/following, and
@@ -133,6 +152,42 @@ argument to refresh. Filtering is entirely local. Visiting a different date
 range replaces the single loaded snapshot. This is not a persistent offline
 calendar database: an existing buffer remains readable offline, but a new range
 requires a working token and network.
+
+## Follow: Current Limitation
+
+Official documentation checked on 2026-10-05. Outlook's **Follow** is a distinct
+response: the organizer receives a Follow notification and may receive recording
+reminders, while the attendee retains meeting/chat access with free availability.
+It is not simply Tentative plus Free. Availability depends on the Outlook version,
+meeting settings, and rollout. See [Microsoft's Follow documentation](https://support.microsoft.com/en-us/outlook/calendar/follow-a-meeting-in-outlook).
+
+No documented true Follow operation was found in the published Graph
+[event methods (v1.0)](https://learn.microsoft.com/en-us/graph/api/resources/event?view=graph-rest-1.0)
+or [beta methods](https://learn.microsoft.com/en-us/graph/api/resources/event?view=graph-rest-beta).
+The [v1.0 responseStatus](https://learn.microsoft.com/en-us/graph/api/resources/responsestatus?view=graph-rest-1.0)
+and [beta responseStatus](https://learn.microsoft.com/en-us/graph/api/resources/responsestatus?view=graph-rest-beta)
+contracts do not include Follow either. Therefore teams4e does **not** offer
+native Follow, write guessed extended properties, use private Outlook endpoints,
+or infer Follow from a tentative/free event. Such events remain non-blocking
+based on their reported availability, without claiming to know their Follow state.
+
+The **Follow in Outlook** handoff (`f`, or the invite-reader button) opens the
+selected invitation using its Graph-provided `webLink`. Choose **Follow** in
+Outlook yourself, then use `g` to refresh. There is no documented direct-action
+deep link that follows an invitation just by opening a URL. No response or
+availability changes locally when you open it. Microsoft's documented legacy
+OWA item links are converted to modern calendar item links; no guessed action
+parameters are appended. Missing/unsupported links fail clearly instead of
+silently opening a different meeting.
+
+`teams4e-calendar-follow-browser-command` controls opening. Its default `auto`
+requests background opening with macOS `open -g`, retaining an existing
+`teams4e-browser-command` that uses `open -a` (for example Arc). Otherwise macOS
+uses its default browser. Other platforms use `teams4e-browser-command` or
+`browse-url`. Browser focus/tab behavior is not guaranteed; no global settings,
+automation permissions, or security preferences are changed. Set the option to
+your own argv list for browser-specific behavior, or nil for `browse-url`.
+The URL is passed as one argument, never interpolated into a shell command.
 
 ## Setup
 

@@ -44,6 +44,14 @@
   "Calendar URL used when no individual event link is available."
   :type 'string :group 'teams4e-calendar)
 
+(defcustom teams4e-calendar-follow-browser-command 'auto
+  "Browser argv for Follow handoff, or auto for best-effort background opening.
+Auto uses macOS open -g (preserving an existing open -a browser choice);
+elsewhere it uses `teams4e-browser-command'.  Nil delegates to `browse-url'.
+The URL is appended as one argument.  No background-tab guarantee is possible."
+  :type '(choice (const auto) (const nil) (repeat string))
+  :group 'teams4e-calendar)
+
 (defconst teams4e-calendar--buffer-name "*Teams Calendar*")
 (defconst teams4e-calendar--detail-name "*Teams Calendar Event*")
 (defvar-local teams4e-calendar--events nil)
@@ -234,12 +242,21 @@ Do not group transitive overlaps: A/B followed by B/C is not an A/C clash."
         (setq boundaries (cdr boundaries)))
       (nreverse result))))
 
-(defun teams4e-calendar--conflict-labels (event conflicts)
-  "Return DAY-local overlap labels for EVENT in CONFLICTS."
+(defun teams4e-calendar--conflict-labels (event conflicts &optional accepted-only)
+  "Return day-local overlap labels for EVENT in CONFLICTS.
+With ACCEPTED-ONLY, require another accepted event in the same segment.
+Keep original segment numbers so labels still refer to the conflict details."
   (let ((id (teams4e--get event 'id)) (index 0) result)
     (dolist (segment conflicts)
       (cl-incf index)
-      (when (seq-some (lambda (other) (equal id (teams4e--get other 'id))) (nth 2 segment))
+      (when (and (seq-some (lambda (other) (equal id (teams4e--get other 'id))) (nth 2 segment))
+                 (or (not accepted-only)
+                     (and (equal (teams4e--dig event 'responseStatus 'response) "accepted")
+                          (seq-some
+                           (lambda (other)
+                             (and (not (equal id (teams4e--get other 'id)))
+                                  (equal (teams4e--dig other 'responseStatus 'response) "accepted")))
+                           (nth 2 segment)))))
         (push (format "C%d" index) result)))
     (nreverse result)))
 
@@ -368,9 +385,9 @@ Elsewhere do nothing; days and their timelines are never folded."
                   (member response '(nil "" "none" "notResponded")))
              'unanswered)))))
 
-(defun teams4e-calendar--insert-summary-group (label events key &optional respond)
+(defun teams4e-calendar--insert-summary-group (label events key &optional respond conflicts)
   "Insert compact LABEL rows for EVENTS under summary KEY.
-Offer RESPOND buttons when these are attendee invitations."
+Offer RESPOND buttons for invitations, and accepted-only labels from CONFLICTS."
   (when events
     (insert (propertize (format "    %s (%d)\n" label (length events))
                         'face (if respond 'warning 'bold)))
@@ -380,6 +397,9 @@ Offer RESPOND buttons when these are attendee invitations."
         (teams4e-calendar--action-button
          (teams4e-calendar--line (or (teams4e--get event 'subject) "(Untitled event)"))
          #'teams4e-calendar-open-event id)
+        (when-let ((labels (teams4e-calendar--conflict-labels event conflicts t)))
+          (insert (propertize (concat "  [" (string-join labels ", ") "]")
+                              'face 'teams4e-calendar-conflict)))
         (when (and respond (teams4e--get event 'attendees))
           (insert "   ")
           (teams4e-calendar--action-button "Respond" #'teams4e-calendar-respond id))
@@ -436,7 +456,7 @@ Only the summary heading folds the summary; the timeline always stays visible."
       (teams4e-calendar--insert-summary-group "Needs response" (alist-get 'unanswered groups) key t)
       (teams4e-calendar--insert-conflicts conflicts day)
       (teams4e-calendar--insert-summary-group "Tentative" (alist-get 'tentative groups) key t)
-      (teams4e-calendar--insert-summary-group "Accepted" (alist-get 'accepted groups) key)
+      (teams4e-calendar--insert-summary-group "Accepted" (alist-get 'accepted groups) key nil conflicts)
       (teams4e-calendar--insert-summary-group "Organizing" (alist-get 'organizing groups) key))
     (insert "\n")))
 
@@ -506,7 +526,8 @@ Never infer free time from an incomplete, stale, or loading snapshot."
     (with-selected-window window (recenter))))
 
 (defun teams4e-calendar--focus-time (time &optional day-heading)
-  "Center on TIME, or its day heading when DAY-HEADING is non-nil."
+  "Center on TIME, or its day heading when DAY-HEADING is t.
+When DAY-HEADING is `upcoming', exclude ended timed rows."
   (let* ((day (format-time-string "%Y-%m-%d" time))
          (target (float-time time))
          (heading (save-excursion
@@ -525,19 +546,112 @@ Never infer free time from an incomplete, stale, or loading snapshot."
                  (distance (cond ((< target start) (- start target))
                                  ((>= target end) (+ 1 (- target end)))
                                  (t 0))))
-            (unless (get-text-property (point) 'teams4e-calendar-all-day)
+            (unless (or (get-text-property (point) 'teams4e-calendar-all-day)
+                        (and (eq day-heading 'upcoming) (<= end target)))
               (when (or (null score) (< distance score))
                 (setq best (point) score distance)))))
         (forward-line 1)))
-    (goto-char (or (and day-heading heading) best heading (point-min)))
+    (goto-char (or (and (eq day-heading t) heading) best heading (point-min)))
     (teams4e-calendar--center)))
+
+(defun teams4e-calendar--position-anchor (position)
+  "Capture a semantic anchor for POSITION before replacing the rendered text."
+  (save-excursion
+    (goto-char position)
+    (let* ((direct (get-text-property position 'teams4e-calendar-item))
+           (item (or direct
+                     (save-excursion
+                       (beginning-of-line)
+                       (while (and (> (point) (point-min))
+                                   (not (get-text-property (point) 'teams4e-calendar-item)))
+                         (forward-line -1))
+                       (get-text-property (point) 'teams4e-calendar-item))))
+           (day (get-text-property position 'teams4e-calendar-day))
+           (start (and item (teams4e-calendar--find-item item)))
+           (line (if start (count-lines start (line-beginning-position)) 0))
+           (column (current-column))
+           (event (get-text-property position 'teams4e-calendar-event))
+           before after last)
+      (save-excursion
+        (goto-char (point-min))
+        (while (< (point) (point-max))
+          (let ((key (get-text-property (point) 'teams4e-calendar-item)))
+            (when (and key (not (equal key last)) (not (equal key item)))
+              (if (< (point) position) (push key before) (push key after)))
+            (setq last key))
+          (forward-line 1)))
+      (list :item item :gap (not direct) :day day :event event :line line :column column
+            :fallback (and item (append (nreverse after) before)) :position position))))
+
+(defun teams4e-calendar--anchor-position (anchor)
+  "Resolve ANCHOR in the new render, preferring its event and surviving neighbors."
+  (let* ((item (plist-get anchor :item))
+         (exact (teams4e-calendar--find-item item))
+         (event (plist-get anchor :event))
+         (day-key (list 'day teams4e-calendar--id (plist-get anchor :day)))
+         (start (or exact
+                    (and event (teams4e-calendar--find-item (list 'event day-key event)))
+                    (seq-some #'teams4e-calendar--find-item (plist-get anchor :fallback))
+                    (teams4e-calendar--find-item day-key)
+                    (min (or (plist-get anchor :position) 1) (point-max)))))
+    (save-excursion
+      (goto-char start)
+      (when exact
+        (let ((remaining (plist-get anchor :line)))
+          (while (and (> remaining 0)
+                      (save-excursion
+                        (forward-line 1)
+                        (let ((next (get-text-property (point) 'teams4e-calendar-item)))
+                          (or (equal item next) (and (plist-get anchor :gap) (null next))))))
+            (forward-line 1)
+            (setq remaining (1- remaining)))))
+      (move-to-column (or (plist-get anchor :column) 0))
+      (point))))
+
+(defun teams4e-calendar--screen-row (window)
+  "Return point's visual row in WINDOW, accounting for wrapped lines."
+  (save-excursion
+    (goto-char (window-point window))
+    (vertical-motion 0 window)
+    (count-screen-lines (window-start window) (point) nil window)))
+
+(defun teams4e-calendar--window-anchors ()
+  "Capture independent point and viewport anchors for each agenda window."
+  (mapcar
+   (lambda (window)
+     (with-selected-window window
+       (list :window window
+             :point (teams4e-calendar--position-anchor (window-point window))
+             :start (teams4e-calendar--position-anchor (window-start window))
+             :row (teams4e-calendar--screen-row window)
+             :vscroll (window-vscroll window t)
+             :hscroll (window-hscroll window))))
+   (get-buffer-window-list (current-buffer) nil t)))
+
+(defun teams4e-calendar--restore-window-anchors (anchors)
+  "Restore ANCHORS without stealing focus or recentering ordinary refreshes."
+  (dolist (state anchors)
+    (let ((window (plist-get state :window)))
+      (when (and (window-live-p window) (eq (window-buffer window) (current-buffer)))
+        (let ((position (teams4e-calendar--anchor-position (plist-get state :point)))
+              (start (teams4e-calendar--anchor-position (plist-get state :start)))
+              (row (plist-get state :row)))
+          (set-window-start window start t)
+          (set-window-point window position)
+          (with-selected-window window
+            ;; Keep an unchanged viewport exactly; compensate only for changed rows.
+            (when (and (<= 0 row) (< row (window-body-height window))
+                       (/= row (teams4e-calendar--screen-row window)))
+              (goto-char position)
+              (recenter row)))
+          (set-window-hscroll window (plist-get state :hscroll))
+          (set-window-vscroll window (plist-get state :vscroll) t))))))
 
 (defun teams4e-calendar--render ()
   "Render the snapshot, preserving the selected occurrence and day."
   (let* ((inhibit-read-only t)
-         (selected-item (get-text-property (point) 'teams4e-calendar-item))
-         (selected-day (get-text-property (point) 'teams4e-calendar-day))
-         (position (point))
+         (anchor (teams4e-calendar--position-anchor (point)))
+         (windows (teams4e-calendar--window-anchors))
          (range (teams4e-calendar--range))
          (day (car range))
          (loaded (equal (teams4e-calendar--key) teams4e-calendar--loaded-key)))
@@ -619,6 +733,9 @@ Never infer free time from an incomplete, stale, or loading snapshot."
                                        'teams4e-calendar-row-end end-time
                                        'teams4e-calendar-all-day (teams4e--get event 'isAllDay)
                                        'teams4e-calendar-event-start (and event t)))
+            (unless event
+              (put-text-property start (point) 'teams4e-calendar-item
+                                 (list 'slot section start-time end-time)))
             (when event
               (insert "                  "
                       (propertize (car availability) 'face face)
@@ -650,10 +767,9 @@ Never infer free time from an incomplete, stale, or loading snapshot."
                              (list 'teams4e-calendar-day day-key 'teams4e-calendar-day-time day
                                    'rear-nonsticky t)))
       (setq day (teams4e-calendar--midnight day 1)))
-    (goto-char (or (teams4e-calendar--find-item selected-item)
-                   (and selected-day (teams4e-calendar--find-item
-                                      (list 'day teams4e-calendar--id selected-day)))
-                   (min position (point-max))))
+    (let ((position (teams4e-calendar--anchor-position anchor)))
+      (teams4e-calendar--restore-window-anchors windows)
+      (goto-char position))
     (when teams4e-calendar--focus
       (teams4e-calendar--focus-time teams4e-calendar--focus teams4e-calendar--focus-day-heading)
       (when (and loaded (not teams4e-calendar--loading))
@@ -757,6 +873,30 @@ Never infer free time from an incomplete, stale, or loading snapshot."
         teams4e-calendar--focus teams4e-calendar--date
         teams4e-calendar--focus-day-heading nil)
   (teams4e-calendar--show-range))
+
+(defun teams4e-calendar-next-slot ()
+  "Center on the ongoing or next timed slot, never an ended event.
+After today's last slot, visit tomorrow.  Without today's snapshot, after
+working hours start on tomorrow instead.  Empty days land on their heading."
+  (interactive)
+  (let* ((now (current-time))
+         (target
+          (let ((teams4e-calendar--date now))
+            (if (if (equal (teams4e-calendar--key) teams4e-calendar--loaded-key)
+                    (or (seq-some
+                         (lambda (event)
+                           (and (not (teams4e--get event 'isAllDay))
+                                (time-less-p now (teams4e-calendar--time event 'end))))
+                         (teams4e-calendar--day-events (teams4e-calendar--midnight now)))
+                        (seq-some (lambda (gap) (> (cadr gap) (float-time now)))
+                                  (teams4e-calendar--free-gaps (teams4e-calendar--midnight now))))
+                  (< (nth 2 (decode-time now)) (cdr teams4e-calendar-work-hours)))
+                now
+              (teams4e-calendar--midnight now 1)))))
+    (setq teams4e-calendar--date target
+          teams4e-calendar--focus target
+          teams4e-calendar--focus-day-heading 'upcoming)
+    (teams4e-calendar--show-range)))
 
 (defun teams4e-calendar-goto-date ()
   "Choose a date with Org's calendar date reader."
@@ -872,6 +1012,12 @@ With BACKWARD, move to the previous event.  Stay put at the boundary."
                             'action (let ((url (cdr link)))
                                       (lambda (_) (teams4e--open-url-in-browser url))))
         (insert "   ")))
+    (when (and (teams4e--get event 'webLink)
+               (not (teams4e--get event 'isOrganizer))
+               (not (teams4e--get event 'isCancelled)))
+      (insert-text-button "Follow in Outlook" 'follow-link t
+                          'action (lambda (_) (teams4e-calendar-follow-in-outlook)))
+      (insert "   "))
     (when (teams4e-calendar--chat-id event)
       (insert-text-button "Teams chat" 'follow-link t
                           'action (lambda (_) (teams4e-calendar-open-chat)))
@@ -939,6 +1085,43 @@ With BACKWARD, move to the previous event.  Stay put at the boundary."
   (let ((event (ignore-errors (cadr (teams4e-calendar--context)))))
     (teams4e--open-url-in-browser
      (or (teams4e--get event 'webLink) teams4e-calendar-outlook-url))))
+
+(defun teams4e-calendar--follow-url (event)
+  "Return EVENT's verified Outlook web link, never an RSVP-action URL.
+Convert only Microsoft's documented legacy OWA format to its modern item URL."
+  (let* ((link (teams4e--get event 'webLink))
+         (url (and (stringp link) (url-generic-parse-url link)))
+         (host (and url (downcase (or (url-host url) "")))))
+    (unless (and url (equal (url-type url) "https")
+                 (member host '("outlook.office.com" "outlook.office365.com" "outlook.live.com"))
+                 (not (url-user url)) (not (url-password url)))
+      (user-error "This invitation has no supported HTTPS Outlook webLink"))
+    (pcase-let ((`(,path . ,query) (url-path-and-query url)))
+      (let ((id (and query (cadr (assoc "itemid" (url-parse-query-string query))))))
+        (if (and (member host '("outlook.office365.com" "outlook.live.com"))
+                 (equal path "/owa/") (stringp id) (not (string-empty-p id)))
+            (concat "https://" host "/calendar/item/" (url-hexify-string id))
+          link)))))
+
+(defun teams4e-calendar-follow-in-outlook ()
+  "Open this invitation for Follow in Outlook; the user must choose Follow there.
+No RSVP is sent or inferred.  Background opening is browser-dependent."
+  (interactive)
+  (let* ((event (cadr (teams4e-calendar--context)))
+         (url (teams4e-calendar--follow-url event))
+         (command
+          (if (eq teams4e-calendar-follow-browser-command 'auto)
+              (if (eq system-type 'darwin)
+                  (if (and teams4e-browser-command
+                           (equal (file-name-nondirectory (car teams4e-browser-command)) "open"))
+                      (append teams4e-browser-command '("-g"))
+                    '("/usr/bin/open" "-g"))
+                teams4e-browser-command)
+            teams4e-calendar-follow-browser-command)))
+    (when (or (teams4e--get event 'isOrganizer) (teams4e--get event 'isCancelled))
+      (user-error "Follow is for received, non-cancelled invitations"))
+    (teams4e--open-with-command url command "Outlook invitation")
+    (message "Opening invitation; choose Follow in Outlook. No response changed in teams4e.")))
 
 (defun teams4e-calendar--chat-id (event)
   "Extract the exact, case-sensitive Teams thread ID from EVENT's join URL.
@@ -1140,6 +1323,7 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("]" . teams4e-calendar-next-period)
                        ("[" . teams4e-calendar-previous-period)
                        ("t" . teams4e-calendar-today)
+                       ("N" . teams4e-calendar-next-slot)
                        ("G" . teams4e-calendar-goto-date)
                        ("d" . teams4e-calendar-day)
                        ("w" . teams4e-calendar-week)
@@ -1152,6 +1336,7 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("TAB" . teams4e-calendar-toggle-section)
                        ("<tab>" . teams4e-calendar-toggle-section)
                        ("o" . teams4e-calendar-open-outlook)
+                       ("f" . teams4e-calendar-follow-in-outlook)
                        ("v" . teams4e-calendar-join)
                        ("T" . teams4e-calendar-open-chat)
                        ("r" . teams4e-calendar-availability)
@@ -1162,7 +1347,9 @@ Short meeting links without a thread ID cannot be resolved locally."
     map))
 
 ;; Extend already-loaded maps during a Lisp-only update, preserving custom keys.
-(dolist (binding '(("TAB" . teams4e-calendar-toggle-section)
+(dolist (binding '(("f" . teams4e-calendar-follow-in-outlook)
+                   ("N" . teams4e-calendar-next-slot)
+                   ("TAB" . teams4e-calendar-toggle-section)
                    ("<tab>" . teams4e-calendar-toggle-section)
                    ("RET" . teams4e-calendar-activate)))
   (when (memq (lookup-key teams4e-calendar-mode-map (kbd (car binding)))
@@ -1173,6 +1360,7 @@ Short meeting links without a thread ID cannot be resolved locally."
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
     (dolist (binding '(("o" . teams4e-calendar-open-outlook)
+                       ("f" . teams4e-calendar-follow-in-outlook)
                        ("v" . teams4e-calendar-join)
                        ("T" . teams4e-calendar-open-chat)
                        ("r" . teams4e-calendar-availability)
@@ -1187,7 +1375,7 @@ Short meeting links without a thread ID cannot be resolved locally."
 Read the public mode map so user customizations remain authoritative."
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
-      (dolist (key '("j" "k" "J" "K" "h" "l" "H" "L" "t" "TAB" "<tab>" "RET"))
+      (dolist (key '("j" "k" "J" "K" "h" "l" "H" "L" "t" "N" "f" "TAB" "<tab>" "RET"))
         (evil-local-set-key state (kbd key)
                             (lookup-key teams4e-calendar-mode-map (kbd key)))))))
 
@@ -1206,7 +1394,15 @@ Read the public mode map so user customizations remain authoritative."
 
 (define-derived-mode teams4e-calendar-event-mode special-mode "Teams-Event"
   "Read a calendar event and act on it."
-  (setq-local word-wrap t))
+  (setq-local word-wrap t)
+  (when (fboundp 'evil-local-set-key)
+    (dolist (state '(normal motion))
+      (evil-local-set-key state (kbd "f")
+                          (lookup-key teams4e-calendar-event-mode-map (kbd "f"))))))
+
+;; Extend a reader map already loaded before this command was available.
+(unless (lookup-key teams4e-calendar-event-mode-map (kbd "f"))
+  (define-key teams4e-calendar-event-mode-map (kbd "f") #'teams4e-calendar-follow-in-outlook))
 
 (with-eval-after-load 'evil
   (dolist (mode '(teams4e-calendar-mode teams4e-calendar-event-mode))

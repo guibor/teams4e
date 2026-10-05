@@ -361,7 +361,8 @@ Each day has a foldable summary: highlighted free intervals and total available
 hours, unanswered invitations first, then conflicts, tentative and accepted
 meetings, and events you organize. Its compact lists omit declined, cancelled,
 and free/following invitations. Actual free slots have a distinct tinted face
-and `[FREE]` label, separate from non-blocking appointments.
+and `[FREE]` label, separate from non-blocking appointments. Accepted-summary
+`[Cx]` markers flag clashes with other accepted meetings only.
 
 `TAB` folds the Summary heading or a conflict group, never the day or timeline.
 Expanding a conflict lists its meetings with actions to respond, propose another
@@ -369,7 +370,8 @@ time, reschedule your own event, or open Outlook. Summaries and actions use the
 same calendar snapshot; unfolding does not fetch anything.
 
 `j/k` (or `J/K`) move between events; `h/l` (or `H/L`) move between
-days. `t` centers on now, `.` or `G` chooses a date with Org's date reader,
+days. `t` centers on now; `N` goes to the ongoing/next slot, or tomorrow after
+today\'s last slot. `.` or `G` chooses a date with Org\'s date reader,
 and `d/w/m` select day/week/month. `[/]` move between whole ranges.
 `RET` opens a reusable invite reader; `/` filters locally and `c` selects
 another calendar. RSVP (`a`), availability and rescheduling (`r` or `A`),
@@ -380,6 +382,9 @@ one timed occurrence for events you organize, without changing the series.
 
 It reuses your existing token provider and rate-limited backend, fetching only
 the displayed range. Reopening does not reload; `g` or a prefix argument does.
+Refresh preserves the selected item and each window\'s reading position, with a
+nearby-item fallback if an event disappears. Native Follow is not supported by
+the documented Graph response API; see the [Follow limitation](CALENDAR.md#follow-current-limitation).
 No event-to-chat conversion or calendar-to-Org synchronization is involved.
 Update the installed backend as well as the Lisp package for this feature.
 
