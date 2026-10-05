@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Calendar `j/k` now traverse summary headings and entries in summary areas;
+  timeline navigation still skips gaps and metadata. Add `M-j/M-k` aliases,
+  including Evil normal/motion states and Lisp-only updates.
+- Paint actual free intervals as full-width green bands. Add an optional,
+  locally toggled duration-scaled agenda (`S`), with configurable minutes per
+  row and bounded block heights; compact layout remains the default.
+
 - Create single timed calendar events from editable Org drafts (`+`). Support
   required/optional attendees, directory search, explicit-offset times, location,
   availability state, safe Org-to-HTML descriptions, and optional Teams links.

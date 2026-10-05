@@ -373,6 +373,167 @@
       (search-forward "Free in this calendar")
       (should-not (get-text-property (point) 'teams4e-calendar-event)))))
 
+(ert-deftest teams4e-calendar-summary-navigation-visits-headings-and-entries ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (teams4e-calendar-test-conflicts)
+    (let* ((day (teams4e-calendar--day-key teams4e-calendar--date))
+           (summary (list 'summary day))
+           (keys (list summary (list 'summary-free summary)))
+           (conflict (get-text-property (point) 'teams4e-calendar-item)))
+      (setq keys (append keys (list (list 'summary-group summary "Needs response")
+                                   (list 'summary-event summary "B")
+                                   conflict
+                                   (list 'summary-group summary "Organizing")
+                                   (list 'summary-event summary "A"))))
+      (goto-char (teams4e-calendar--find-item day))
+      (dolist (key keys)
+        (teams4e-calendar-next-event)
+        (should (equal key (get-text-property (point) 'teams4e-calendar-item))))
+      (dolist (key (cdr (reverse keys)))
+        (teams4e-calendar-previous-event)
+        (should (equal key (get-text-property (point) 'teams4e-calendar-item))))
+      (goto-char (teams4e-calendar--find-item (car (last keys))))
+      (teams4e-calendar-next-event)
+      (should (equal (list 'event day "A")
+                     (get-text-property (point) 'teams4e-calendar-item)))
+      (teams4e-calendar-next-event)
+      (should (equal (list 'event day "B")
+                     (get-text-property (point) 'teams4e-calendar-item))))))
+
+(ert-deftest teams4e-calendar-summary-navigation-includes-response-and-accepted ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event
+                 "waiting" "2026-10-04T10:00:00Z" "2026-10-04T11:00:00Z"
+                 '(showAs . "busy") '(attendees . [((type . "required"))])
+                 '(responseStatus (response . "notResponded")))
+                (teams4e-calendar-test-event
+                 "accepted" "2026-10-04T13:00:00Z" "2026-10-04T14:00:00Z"
+                 '(showAs . "busy") '(responseStatus (response . "accepted")))))
+    (teams4e-calendar--render)
+    (let ((summary (list 'summary (teams4e-calendar--day-key teams4e-calendar--date))))
+      (goto-char (teams4e-calendar--find-item (list 'summary-group summary "Needs response")))
+      (teams4e-calendar-next-event)
+      (should (equal "waiting" (teams4e--get (cadr (teams4e-calendar--context)) 'id)))
+      (teams4e-calendar-next-event)
+      (should (looking-at "    Accepted"))
+      (teams4e-calendar-next-event)
+      (should (equal "accepted" (teams4e--get (cadr (teams4e-calendar--context)) 'id)))
+      (teams4e-calendar-previous-event)
+      (should (looking-at "    Accepted")))))
+
+(ert-deftest teams4e-calendar-summary-navigation-skips-conflict-metadata ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (teams4e-calendar-toggle-section)
+    (teams4e-calendar-next-event)
+    (should (equal "A" (get-text-property (point) 'teams4e-calendar-event)))
+    (teams4e-calendar-next-event)
+    (should (equal "B" (get-text-property (point) 'teams4e-calendar-event)))
+    (should (get-text-property (point) 'teams4e-calendar-event-start))
+    (teams4e-calendar-previous-event)
+    (should (equal "A" (get-text-property (point) 'teams4e-calendar-event)))
+    (teams4e-calendar-previous-event)
+    (should (eq 'conflict (car (get-text-property (point) 'teams4e-calendar-item))))))
+
+(defun teams4e-calendar-test-item-height (key)
+  "Return the logical line count of rendered item KEY."
+  (let ((start (teams4e-calendar--find-item key)))
+    (should start)
+    (count-lines start (next-single-property-change start 'teams4e-calendar-item nil (point-max)))))
+
+(ert-deftest teams4e-calendar-duration-scaling-is-bounded-local-and-preserves-point ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-duration-scaled nil)
+    (setq-local teams4e-calendar-minutes-per-row 30)
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "short" "2026-10-04T10:00:00Z" "2026-10-04T10:30:00Z")
+                (teams4e-calendar-test-event "long" "2026-10-04T12:00:00Z" "2026-10-04T15:00:00Z")
+                (teams4e-calendar-test-event "huge" "2026-10-03T10:00:00Z" "2026-10-05T10:00:00Z")
+                (teams4e-calendar-test-event "all" "2026-10-04T00:00:00Z" "2026-10-05T00:00:00Z"
+                                            '(isAllDay . t))))
+    (teams4e-calendar--render)
+    (let* ((day (teams4e-calendar--day-key teams4e-calendar--date))
+           (key (list 'event day "long"))
+           (snapshot teams4e-calendar--events))
+      (goto-char (teams4e-calendar--find-item key))
+      (forward-line 1)
+      (move-to-column 24)
+      (cl-letf (((symbol-function 'teams4e--run-json)
+                 (lambda (&rest _) (ert-fail "Display toggles must not fetch"))))
+        (teams4e-calendar-toggle-duration)
+        (should (eq snapshot teams4e-calendar--events))
+        (should (equal key (get-text-property (point) 'teams4e-calendar-item)))
+        (should (= 24 (current-column)))
+        (dolist (spec '(("short" . 2) ("long" . 6) ("huge" . 12) ("all" . 2)))
+          (should (= (cdr spec) (teams4e-calendar-test-item-height (list 'event day (car spec))))))
+        ;; Padding is part of the canonical event; it does not add navigation stops.
+        (goto-char (teams4e-calendar--find-item key))
+        (forward-line 4)
+        (should (equal "long" (teams4e--get (cadr (teams4e-calendar--context)) 'id)))
+        (teams4e-calendar-previous-event)
+        (should (equal "short" (get-text-property (point) 'teams4e-calendar-event)))
+        (teams4e-calendar-toggle-duration)
+        (should (= 2 (teams4e-calendar-test-item-height key)))))))
+
+(ert-deftest teams4e-calendar-free-bands-cover-newlines-and-scaled-rows ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (setq-local teams4e-calendar-duration-scaled t)
+    (setq-local teams4e-calendar-minutes-per-row 30)
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "busy" "2026-10-04T10:00:00Z" "2026-10-04T11:00:00Z"
+                                            '(showAs . "busy"))
+                (teams4e-calendar-test-event "free invite" "2026-10-04T11:00:00Z" "2026-10-04T12:00:00Z"
+                                            '(showAs . "free"))))
+    (teams4e-calendar--render)
+    (let* ((day (teams4e-calendar--day-key teams4e-calendar--date))
+           (gap (car (teams4e-calendar--free-gaps (teams4e-calendar--midnight teams4e-calendar--date))))
+           (key (list 'slot day (car gap) (cadr gap)))
+           (start (teams4e-calendar--find-item key))
+           (end (next-single-property-change start 'teams4e-calendar-item)))
+      (should (= 2 (teams4e-calendar-test-item-height key)))
+      (dotimes (i (- end start))
+        (should (eq 'teams4e-calendar-free-slot (get-text-property (+ start i) 'face))))
+      (goto-char (teams4e-calendar--find-item (list 'event day "free invite")))
+      (should (eq 'teams4e-calendar-free (get-text-property (point) 'face))))))
+
+(ert-deftest teams4e-calendar-summary-meta-navigation-and-scale-work-with-evil ()
+  (skip-unless (featurep 'evil))
+  (let ((enabled evil-mode))
+    (unwind-protect
+        (save-window-excursion
+          (evil-mode 1)
+          (teams4e-calendar-test
+            (setq-local teams4e-calendar-duration-scaled nil)
+            (switch-to-buffer (current-buffer))
+            (teams4e-calendar-test-conflicts)
+            (evil-local-mode 1)
+            (let ((summary (list 'summary (teams4e-calendar--day-key teams4e-calendar--date))))
+              (dolist (state '(normal motion))
+                (evil-change-state state)
+                (goto-char (teams4e-calendar--find-item (list 'summary-group summary "Needs response")))
+                (execute-kbd-macro (kbd "M-j"))
+                (should (equal "B" (get-text-property (point) 'teams4e-calendar-event)))
+                (execute-kbd-macro (kbd "M-k"))
+                (should (looking-at "    Needs response"))
+                (execute-kbd-macro (kbd "j"))
+                (should (equal "B" (get-text-property (point) 'teams4e-calendar-event)))
+                (execute-kbd-macro (kbd "k"))
+                (should (looking-at "    Needs response"))
+                (execute-kbd-macro (kbd "S"))
+                (should teams4e-calendar-duration-scaled)
+                (execute-kbd-macro (kbd "S"))
+                (should-not teams4e-calendar-duration-scaled)))))
+      (unless enabled (evil-mode -1)))))
+
 (ert-deftest teams4e-calendar-redraw-preserves-multi-day-occurrence-position ()
   (teams4e-calendar-test
     (let ((calendar-week-start-day 0))

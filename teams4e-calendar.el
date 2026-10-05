@@ -172,6 +172,18 @@ Gaps describe only the selected calendar, not all calendars or participants."
   :type '(choice (const nil) (integer :tag "Minutes"))
   :group 'teams4e-calendar)
 
+(defcustom teams4e-calendar-duration-scaled nil
+  "Whether agenda blocks grow with their duration.
+This is an agenda, not a spatial grid: overlapping events remain separate
+blocks.  All-day events stay compact.  Toggle locally with `S'."
+  :type 'boolean :group 'teams4e-calendar)
+
+(defcustom teams4e-calendar-minutes-per-row 30
+  "Minutes represented by a row in the duration-scaled agenda.
+Blocks have at least two and at most twelve lines, excluding text wrapping.
+Durations are clipped to the displayed day."
+  :type 'natnum :group 'teams4e-calendar)
+
 (defface teams4e-calendar-busy '((t :inherit font-lock-keyword-face))
   "Busy event times." :group 'teams4e-calendar)
 (defface teams4e-calendar-tentative '((t :inherit font-lock-constant-face))
@@ -182,9 +194,9 @@ Gaps describe only the selected calendar, not all calendars or participants."
   "Non-blocking events, distinct from actual free time." :group 'teams4e-calendar)
 (defface teams4e-calendar-free-slot
   '((((class color) (min-colors 88) (background dark))
-     :foreground "#a1e9c4" :background "#173d35" :weight bold :extend t)
+     :foreground "#c8ffe1" :background "#244d3b" :weight bold :extend t)
     (((class color) (min-colors 88) (background light))
-     :foreground "#17613d" :background "#dff5e8" :weight bold :extend t)
+     :foreground "#14532d" :background "#c7efd5" :weight bold :extend t)
     (t :inherit success :weight bold))
   "Actual available slots and their summary, not free/following invitations."
   :group 'teams4e-calendar)
@@ -392,7 +404,8 @@ Elsewhere do nothing; days and their timelines are never folded."
 Offer RESPOND buttons for invitations, and accepted-only labels from CONFLICTS."
   (when events
     (insert (propertize (format "    %s (%d)\n" label (length events))
-                        'face (if respond 'warning 'bold)))
+                        'face (if respond 'warning 'bold)
+                        'teams4e-calendar-item (list 'summary-group key label)))
     (dolist (event events)
       (let ((start (point)) (id (teams4e--get event 'id)))
         (insert "      - ")
@@ -413,7 +426,8 @@ Offer RESPOND buttons for invitations, and accepted-only labels from CONFLICTS."
 (defun teams4e-calendar--insert-day-summary (day events gaps conflicts)
   "Insert a foldable summary from DAY's EVENTS, GAPS and CONFLICTS.
 Only the summary heading folds the summary; the timeline always stays visible."
-  (let* ((key (list 'summary (teams4e-calendar--day-key day)))
+  (let* ((summary-start (point))
+         (key (list 'summary (teams4e-calendar--day-key day)))
          (open (teams4e-calendar--section-open-p key))
          (minutes (/ (floor (apply #'+ (mapcar (lambda (gap) (- (cadr gap) (car gap))) gaps))) 60))
          (duration (format "%dh %02dm" (/ minutes 60) (% minutes 60)))
@@ -436,31 +450,47 @@ Only the summary heading folds the summary; the timeline always stays visible."
       (add-text-properties start (point)
                            (list 'teams4e-calendar-item key 'teams4e-calendar-section key)))
     (when open
-      (cond
-       (gaps
-        (insert (propertize
-                 (concat "    FREE " duration "  |  "
-                         (mapconcat (lambda (gap)
-                                      (format "%s - %s"
-                                              (format-time-string "%H:%M" (car gap))
-                                              (if (equal (format-time-string "%H:%M" (cadr gap)) "00:00")
-                                                  "24:00"
-                                                (format-time-string "%H:%M" (cadr gap)))))
-                                    gaps "  |  ")
-                         "\n")
-                 'face 'teams4e-calendar-free-slot)))
-       ((or teams4e-calendar--loading teams4e-calendar--error)
-        (insert (propertize "    Free time unavailable\n" 'face 'shadow)))
-       ((teams4e-calendar--free-gaps-available-p day)
-        (insert (propertize
-                 (format "    No free slots of at least %d min\n" teams4e-calendar-free-gap-minutes)
-                 'face 'shadow))))
+      (let ((free-start (point)))
+        (cond
+         (gaps
+          (insert (propertize
+                   (concat "    FREE " duration "  |  "
+                           (mapconcat (lambda (gap)
+                                        (format "%s - %s"
+                                                (format-time-string "%H:%M" (car gap))
+                                                (if (equal (format-time-string "%H:%M" (cadr gap)) "00:00")
+                                                    "24:00"
+                                                  (format-time-string "%H:%M" (cadr gap)))))
+                                      gaps "  |  ")
+                           "\n")
+                   'face 'teams4e-calendar-free-slot)))
+         ((or teams4e-calendar--loading teams4e-calendar--error)
+          (insert (propertize "    Free time unavailable\n" 'face 'shadow)))
+         ((teams4e-calendar--free-gaps-available-p day)
+          (insert (propertize
+                   (format "    No free slots of at least %d min\n" teams4e-calendar-free-gap-minutes)
+                   'face 'shadow))))
+        (put-text-property free-start (point) 'teams4e-calendar-item
+                           (list 'summary-free key)))
       (teams4e-calendar--insert-summary-group "Needs response" (alist-get 'unanswered groups) key t)
       (teams4e-calendar--insert-conflicts conflicts day)
       (teams4e-calendar--insert-summary-group "Tentative" (alist-get 'tentative groups) key t)
       (teams4e-calendar--insert-summary-group "Accepted" (alist-get 'accepted groups) key nil conflicts)
       (teams4e-calendar--insert-summary-group "Organizing" (alist-get 'organizing groups) key))
+    (put-text-property summary-start (point) 'teams4e-calendar-summary t)
     (insert "\n")))
+
+(defun teams4e-calendar--duration-minutes (start end day)
+  "Return duration of START to END clipped to local DAY, in minutes."
+  (max 0 (/ (- (min end (float-time (teams4e-calendar--midnight day 1)))
+                (max start (float-time day)))
+             60.0)))
+
+(defun teams4e-calendar-toggle-duration ()
+  "Toggle duration-scaled blocks locally without fetching calendar data."
+  (interactive)
+  (setq-local teams4e-calendar-duration-scaled (not teams4e-calendar-duration-scaled))
+  (teams4e-calendar--render))
 
 (defun teams4e-calendar--insert-event-conflicts (owner event)
   "Insert clickable overlap partners for EVENT from OWNER's snapshot."
@@ -661,6 +691,7 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
     (setq header-line-format
           (list " Calendar | " teams4e-calendar--name " | "
                 (symbol-name teams4e-calendar--view)
+                (if teams4e-calendar-duration-scaled " | Duration-scaled" "")
                 " | " '(:eval (format-time-string "%a %d %b" teams4e-calendar--date))
                 (if teams4e-calendar--loading " | Loading..." "")
                 (if teams4e-calendar--error " | Incomplete" "")
@@ -735,9 +766,6 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
                                        'teams4e-calendar-row-end end-time
                                        'teams4e-calendar-all-day (teams4e--get event 'isAllDay)
                                        'teams4e-calendar-event-start (and event t)))
-            (unless event
-              (put-text-property start (point) 'teams4e-calendar-item
-                                 (list 'slot section start-time end-time)))
             (when event
               (insert "                  "
                       (propertize (car availability) 'face face)
@@ -750,14 +778,33 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
                                                 (when (member (teams4e--get event 'type)
                                                               '("occurrence" "exception"))
                                                   "Recurring")))
-                                " | "))
+                                " | ")
+                               (when (and teams4e-calendar-duration-scaled
+                                          (not (teams4e--get event 'isAllDay)))
+                                 (format " | %d min this day"
+                                         (ceiling (teams4e-calendar--duration-minutes
+                                                   start-time end-time day)))))
                        'face 'shadow)
-                      "\n")
+                      "\n"))
+            (when (and teams4e-calendar-duration-scaled
+                       (not (teams4e--get event 'isAllDay)))
+              (let ((height (min 12 (max 2 (ceiling
+                                            (/ (teams4e-calendar--duration-minutes
+                                                start-time end-time day)
+                                               (max 1 teams4e-calendar-minutes-per-row)))))))
+                (dotimes (_ (max 0 (- height (if event 2 1))))
+                  (insert (propertize "                  |\n" 'face face)))))
+            (if event
               (add-text-properties start (point)
                                    (list 'teams4e-calendar-event (teams4e--get event 'id)
                                          'teams4e-calendar-item
                                          (list 'event section (teams4e--get event 'id))
-                                         'mouse-face 'highlight)))))
+                                         'mouse-face 'highlight))
+              ;; Include the newline: :extend then paints the whole available band.
+              (add-text-properties start (point)
+                                   (list 'face 'teams4e-calendar-free-slot
+                                         'teams4e-calendar-item
+                                         (list 'slot section start-time end-time))))))
         (unless rows
           (insert (propertize
                    (cond ((not loaded) "  Not loaded\n")
@@ -936,19 +983,27 @@ working hours start on tomorrow instead.  Empty days land on their heading."
   (teams4e-calendar-next-day (- (or count 1))))
 
 (defun teams4e-calendar-next-event (&optional backward)
-  "Move to an event's first line, skipping gaps and metadata.
-With BACKWARD, move to the previous event.  Stay put at the boundary."
+  "Move to the next agenda item, or previous with BACKWARD.
+Within summaries visit headings, free-time summaries and entries.  Within
+the timeline move between event titles, skipping gaps and metadata.
+Stay put at the boundary."
   (interactive)
   (setq teams4e-calendar--focus nil teams4e-calendar--focus-day-heading nil)
   (let* ((step (if backward -1 1))
          (original (point))
          (item (get-text-property original 'teams4e-calendar-item))
+         (summary (or (get-text-property original 'teams4e-calendar-summary)
+                      (eq (car-safe item) 'day)))
          found)
     (forward-line step)
     (while (and (not found) (not (if backward (bobp) (eobp))))
-      (when (and (get-text-property (point) 'teams4e-calendar-event-start)
-                 (not (equal item (get-text-property (point) 'teams4e-calendar-item))))
-        (setq found (point)))
+      (let ((candidate (get-text-property (point) 'teams4e-calendar-item)))
+        (when (and candidate (not (equal item candidate))
+                   (not (equal candidate (get-text-property (1- (point)) 'teams4e-calendar-item)))
+                   (if summary
+                       (not (eq (car-safe candidate) 'slot))
+                     (eq (car-safe candidate) 'event)))
+          (setq found (point))))
       (unless found (forward-line step)))
     (goto-char (or found original))
     (when found
@@ -956,7 +1011,7 @@ With BACKWARD, move to the previous event.  Stay put at the boundary."
             (get-text-property found 'teams4e-calendar-day-time)))))
 
 (defun teams4e-calendar-previous-event ()
-  "Move to the previous calendar event."
+  "Move to the previous agenda item, respecting summary context."
   (interactive)
   (teams4e-calendar-next-event t))
 
@@ -1312,6 +1367,9 @@ Short meeting links without a thread ID cannot be resolved locally."
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
     (dolist (binding '(("j" . teams4e-calendar-next-event)
+                       ("M-j" . teams4e-calendar-next-event)
+                       ("M-k" . teams4e-calendar-previous-event)
+                       ("S" . teams4e-calendar-toggle-duration)
                        ("J" . teams4e-calendar-next-event)
                        ("K" . teams4e-calendar-previous-event)
                        ("h" . teams4e-calendar-previous-day)
@@ -1351,6 +1409,9 @@ Short meeting links without a thread ID cannot be resolved locally."
 
 ;; Extend already-loaded maps during a Lisp-only update, preserving custom keys.
 (dolist (binding '(("+" . teams4e-calendar-create)
+                   ("M-j" . teams4e-calendar-next-event)
+                   ("M-k" . teams4e-calendar-previous-event)
+                   ("S" . teams4e-calendar-toggle-duration)
                    ("f" . teams4e-calendar-follow-in-outlook)
                    ("N" . teams4e-calendar-next-slot)
                    ("TAB" . teams4e-calendar-toggle-section)
@@ -1379,7 +1440,8 @@ Short meeting links without a thread ID cannot be resolved locally."
 Read the public mode map so user customizations remain authoritative."
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
-      (dolist (key '("j" "k" "J" "K" "h" "l" "H" "L" "t" "N" "f" "+" "TAB" "<tab>" "RET"))
+      (dolist (key '("j" "k" "M-j" "M-k" "J" "K" "S" "h" "l" "H" "L"
+                     "t" "N" "f" "+" "TAB" "<tab>" "RET"))
         (evil-local-set-key state (kbd key)
                             (lookup-key teams4e-calendar-mode-map (kbd key)))))))
 

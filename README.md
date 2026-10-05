@@ -360,7 +360,7 @@ even when a text filter hides them from the agenda.
 Each day has a foldable summary: highlighted free intervals and total available
 hours, unanswered invitations first, then conflicts, tentative and accepted
 meetings, and events you organize. Its compact lists omit declined, cancelled,
-and free/following invitations. Actual free slots have a distinct tinted face
+and free/following invitations. Actual free slots have a full-width green band
 and `[FREE]` label, separate from non-blocking appointments. Accepted-summary
 `[Cx]` markers flag clashes with other accepted meetings only.
 
@@ -369,7 +369,8 @@ Expanding a conflict lists its meetings with actions to respond, propose another
 time, reschedule your own event, or open Outlook. Summaries and actions use the
 same calendar snapshot; unfolding does not fetch anything.
 
-`j/k` (or `J/K`) move between events; `h/l` (or `H/L`) move between
+`j/k` (also `M-j/M-k` or `J/K`) visit summary headings and entries; in the
+timeline they move between events. `h/l` (or `H/L`) move between
 days. `t` centers on now; `N` goes to the ongoing/next slot, or tomorrow after
 today\'s last slot. `.` or `G` chooses a date with Org\'s date reader,
 and `d/w/m` select day/week/month. `[/]` move between whole ranges.
@@ -379,6 +380,12 @@ Teams chat (`T`), Org capture (`C`), join (`v`), and Outlook (`o`) act
 on the selected event. All bindings, faces, and working-hour defaults are
 customizable. The time workspace proposes alternatives for invitations and moves
 one timed occurrence for events you organize, without changing the series.
+
+`S` toggles optional duration-scaled blocks: longer meetings and free intervals
+take more vertical space. The compact agenda remains the default. Customize
+`teams4e-calendar-duration-scaled` and `teams4e-calendar-minutes-per-row` to suit
+your reading preferences. This remains an agenda rather than a spatial grid;
+overlapping meetings are still separate entries.
 
 `+` opens an Org meeting draft beside the agenda. Edit its title, times,
 required/optional attendees, location, and description; `C-c C-a` searches the

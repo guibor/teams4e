@@ -15,10 +15,11 @@ so moving by a day across DST does not assume every day has 24 hours.
 
 | Default key | Action |
 | --- | --- |
-| `j / k`, `J / K`, `n / p` | Next / previous event, skipping gaps |
+| `j / k`, `M-j / M-k`, `J / K`, `n / p` | Next / previous summary item; in the timeline, next / previous event |
 | `h / l`, `H / L` | Center on the previous / next highlighted day heading; no fetch inside the loaded range |
 | `[ / ]` | Previous / next day, week, or month |
 | `d / w / m` | Day / week / month agenda |
+| `S` | Toggle compact / duration-scaled agenda blocks locally |
 | `t` | Center on now, or the closest timed row today |
 | `N` | Ongoing / next timed slot; tomorrow after today\'s last slot |
 | `.`, `G` | Choose a date using Org's date reader and calendar |
@@ -58,11 +59,22 @@ indefinitely for a future appointment.
 The time and availability label use theme-aware faces: `teams4e-calendar-busy`,
 `-tentative`, `-out-of-office`, `-elsewhere`, and `-free`. Actual available gaps
 use the separate `teams4e-calendar-free-slot` face: bold text with a green-tinted
-background and an explicit `[FREE]` label. Free/following invitations remain
+full-width background (including the newline) and an explicit `[FREE]` label.
+Free/following invitations remain
 subdued, so a non-blocking appointment cannot be mistaken for an available slot.
 Free and declined/cancelled events have subdued titles. RSVP remains separate
 text: accepting a "free" invitation does not make it look busy.
 A `>` marks a timed row covering now when the agenda is rendered.
+
+The compact agenda is the default. `S` (`teams4e-calendar-toggle-duration`)
+makes longer meetings and free intervals taller, using 30 minutes per logical
+line. Customize `teams4e-calendar-duration-scaled` to start in this view, and
+`teams4e-calendar-minutes-per-row` to change its scale. Blocks use at least two
+and at most twelve lines; all-day entries stay compact. Event durations are
+clipped to the displayed local day, with a duration label on timed meetings.
+Text can still wrap. This remains a chronological agenda, **not a spatial time
+grid**: overlapping meetings are separate blocks, not extra elapsed time.
+Toggling does not fetch data or change your selected event.
 
 Free gaps describe **this calendar only**, not all your calendars. Busy,
 tentative, out-of-office, and unknown availability block time; free,
@@ -104,8 +116,13 @@ not every minute in a 24-hour day. Partial/loading data never claims free time.
 visible. Conflicts start collapsed and keep their own expansion when the summary
 is closed and reopened. On day headings, ordinary event rows (including summary
 meeting lists), free gaps, or blank lines, TAB does nothing. Folding and local
-filtering do not fetch anything. `H/L` reach day headings, `j/k` navigate timeline
-events and expanded conflict details, and `t` recenters on now.
+filtering do not fetch anything. `H/L` reach day headings. From a day heading or
+inside a summary, `j/k` visit the Summary heading, free-time summary, category
+headings, meeting titles, and expanded conflict entries in display order.
+Metadata and action-button lines do not create extra stops. Once in the timeline,
+they move between timeline event titles, skipping gaps and summaries. `M-j/M-k`
+are aliases in both ordinary Emacs and Evil normal/motion states; `t` recenters
+on now.
 
 Expand a conflict to see **every involved meeting**, including filtered-out
 partners, with its full interval, availability, and RSVP state. Click its title
