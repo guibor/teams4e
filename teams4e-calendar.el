@@ -648,7 +648,8 @@ Use only displayed gaps in this calendar, never fetching more dates."
 
 (defun teams4e-calendar-next-response (&optional backward)
   "Visit the next visible unanswered invitation that has not ended.
-Wrap within the loaded range.  With a prefix, go BACKWARD.  Never send a response."
+Wrap within the loaded range.  With a prefix, go BACKWARD.
+Never send a response."
   (interactive "P")
   (let* ((item (get-text-property (point) 'teams4e-calendar-item))
          (origin (if (eq (car-safe item) 'event)

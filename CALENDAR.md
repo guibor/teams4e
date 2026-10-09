@@ -180,6 +180,8 @@ As with free gaps, overlap detection covers only the loaded selected calendar.
 
 The [invite detail](assets/calendar-conflicts.png) and expanded agenda above use
 real Emacs with Moe and window-purpose, with synthetic appointments only.
+The capture fixture uses daily working hours so the demo also shows free time
+when run on a weekend; the package's default working days remain Monday-Friday.
 
 These are ordinary, customizable Emacs keymaps:
 `teams4e-calendar-mode-map` and `teams4e-calendar-event-mode-map`.
