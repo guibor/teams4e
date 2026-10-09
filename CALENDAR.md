@@ -20,6 +20,9 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `[ / ]` | Previous / next day, week, or month |
 | `d / w / m` | Day / week / month agenda |
 | `S` | Toggle compact / duration-scaled agenda blocks locally |
+| `F` | Choose a future free slot of at least 30 minutes in this range |
+| `C-u F` | Choose a different minimum free duration |
+| `!`, `C-u !` | Next / previous unanswered upcoming invitation, wrapping within visible events |
 | `t` | Center on now, or the closest timed row today |
 | `N` | Ongoing / next timed slot; tomorrow after today\'s last slot |
 | `.`, `G` | Choose a date using Org's date reader and calendar |
@@ -85,6 +88,37 @@ tentative, out-of-office, and unknown availability block time; free,
 working-elsewhere, declined, and cancelled events do not. Overlapping blocks
 are merged before gaps are calculated, using the complete unfiltered snapshot.
 No gaps are inferred during loading or after an incomplete response.
+
+### Plan From The Agenda
+
+A compact **day map** sits below each working-day heading. Each pair of
+characters represents thirty minutes: `..` free, `==` occupied, `!!` a real
+overlap, and `??` unknown availability. The endpoints show your working hours.
+Hover a cell for its interval and event titles; `RET` or a click moves to the
+nearest visible agenda entry at that time. The map uses the full snapshot even
+when a text filter hides events. Any occupied part marks the whole cell occupied;
+two back-to-back events in one cell are not a conflict. The exact gap rows and
+event times remain authoritative. Loading/incomplete snapshots never show this
+map, and `teams4e-calendar-show-day-map` can disable it.
+
+`F` (`teams4e-calendar-find-free-slot`) offers future free intervals using ordinary
+Emacs completion, sorted by time. It searches only the displayed range and uses
+the same working hours and minimum-gap settings as the agenda. `C-u F` asks how
+many minutes you need. An ongoing gap starts at the next five-minute boundary,
+not in the past. The choices state the remaining duration and timezone.
+
+After choosing a gap, `+` starts an editable Org draft inside it. Its default
+duration is shortened when needed to fit the gap, including when point is on a
+scaled gap's continuation line. Elapsed slots and incomplete data are rejected.
+The gap is **not reserved**; availability may change before submission. Edit the
+time or people normally, and only `C-c C-c` creates the event and sends invitations.
+Finding time and opening the draft make no requests.
+
+`!` (`teams4e-calendar-next-response`) cycles through visible invitations that
+have no RSVP and have not ended; `C-u !` goes backward. It skips accepted,
+tentative, declined, free/following, and organizer entries, respects the text
+filter, and visits each invitation's timeline row rather than its summary copy.
+Respond with the existing `a` action. Navigation itself never sends a response.
 
 Overlap summaries appear just below the day heading, with exact intervals and
 labels such as `C1`. The affected event titles carry matching labels. This

@@ -379,7 +379,7 @@
     (teams4e-calendar-test-conflicts)
     (let* ((day (teams4e-calendar--day-key teams4e-calendar--date))
            (summary (list 'summary day))
-           (keys (list summary (list 'summary-free summary)))
+           (keys (list (list 'day-map day) summary (list 'summary-free summary)))
            (conflict (get-text-property (point) 'teams4e-calendar-item)))
       (setq keys (append keys (list (list 'summary-group summary "Needs response")
                                    (list 'summary-event summary "B")
@@ -533,6 +533,181 @@
                 (execute-kbd-macro (kbd "S"))
                 (should-not teams4e-calendar-duration-scaled)))))
       (unless enabled (evil-mode -1)))))
+
+(ert-deftest teams4e-calendar-day-map-is-conservative-and-uses-exact-overlaps ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (setq-local teams4e-calendar-work-hours '(9 . 11))
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--filter "hidden"
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "one" "2026-10-04T09:00:00Z" "2026-10-04T09:10:00Z" '(showAs . "busy"))
+                (teams4e-calendar-test-event "two" "2026-10-04T09:10:00Z" "2026-10-04T09:20:00Z" '(showAs . "busy"))
+                (teams4e-calendar-test-event "unknown" "2026-10-04T10:00:00Z" "2026-10-04T10:10:00Z")
+                (teams4e-calendar-test-event "overlap1" "2026-10-04T10:30:00Z" "2026-10-04T10:45:00Z" '(showAs . "busy"))
+                (teams4e-calendar-test-event "overlap2" "2026-10-04T10:40:00Z" "2026-10-04T11:00:00Z" '(showAs . "busy"))))
+    (teams4e-calendar--render)
+    (goto-char (teams4e-calendar--find-item (list 'day-map (teams4e-calendar--day-key teams4e-calendar--date))))
+    (should (looking-at (regexp-quote "    09:00  ==..??!!  11:00")))
+    (search-forward "==")
+    (should (string-match-p "one" (get-text-property (1- (point)) 'help-echo)))
+    (should-not (string-match-p "Overlapping" (get-text-property (1- (point)) 'help-echo)))
+    (search-forward "..")
+    (should (eq 'teams4e-calendar-free-slot (get-text-property (1- (point)) 'face)))
+    (search-forward "??")
+    (should (string-match-p "Unknown" (get-text-property (1- (point)) 'help-echo)))))
+
+(ert-deftest teams4e-calendar-day-map-hides-incomplete-and-nonworking-days ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (setq teams4e-calendar--view 'day teams4e-calendar--loaded-key (teams4e-calendar--key))
+    (let ((key (list 'day-map (teams4e-calendar--day-key teams4e-calendar--date))))
+      (teams4e-calendar--render)
+      (should (teams4e-calendar--find-item key))
+      (dolist (variable '(teams4e-calendar--loading teams4e-calendar--error))
+        (set variable t)
+        (when (eq variable 'teams4e-calendar--error) (set variable "Partial"))
+        (teams4e-calendar--render)
+        (should-not (teams4e-calendar--find-item key))
+        (set variable nil))
+      (setq-local teams4e-calendar-work-days '(1))
+      (teams4e-calendar--render)
+      (should-not (teams4e-calendar--find-item key))
+      (setq-local teams4e-calendar-work-days '(0))
+      (setq-local teams4e-calendar-show-day-map nil)
+      (teams4e-calendar--render)
+      (should-not (teams4e-calendar--find-item key)))))
+
+(ert-deftest teams4e-calendar-day-map-buttons-jump-without-fetching ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (teams4e-calendar-test-conflicts)
+    (let ((key (list 'day-map (teams4e-calendar--day-key teams4e-calendar--date))))
+      (goto-char (teams4e-calendar--find-item key))
+      (let ((button (next-button (point))))
+        (cl-letf (((symbol-function 'teams4e--run-json)
+                   (lambda (&rest _) (ert-fail "The day map must not fetch"))))
+          (button-activate button)))
+      (should (equal "A" (get-text-property (point) 'teams4e-calendar-event))))))
+
+(ert-deftest teams4e-calendar-free-finder-rounds-now-and-reuses-filtered-snapshot ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--filter "not shown"
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "busy" "2026-10-04T10:00:00Z" "2026-10-04T11:00:00Z" '(showAs . "busy"))))
+    (teams4e-calendar--render)
+    (let (options)
+      (cl-letf (((symbol-function 'current-time) (lambda () (date-to-time "2026-10-04T09:12:00Z")))
+                ((symbol-function 'completing-read)
+                 (lambda (_ choices &rest _) (setq options choices) (caar choices)))
+                ((symbol-function 'teams4e--run-json) (lambda (&rest _) (ert-fail "Finding time must not fetch"))))
+        (teams4e-calendar-find-free-slot 30)
+        (should (= 2 (length options)))
+        (should (string-match-p "09:15 - 10:00.*45 min" (caar options)))
+        (should (eq 'slot (car (get-text-property (point) 'teams4e-calendar-item))))
+        (teams4e-calendar-find-free-slot 60)
+        (should (= 1 (length options)))
+        (should (string-match-p "11:00 - 18:00" (caar options)))))))
+
+(ert-deftest teams4e-calendar-free-finder-rejects-stale-empty-and-invalid-choices ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (setq teams4e-calendar--view 'day)
+    (should-error (teams4e-calendar-find-free-slot 30) :type 'user-error)
+    (setq teams4e-calendar--loaded-key (teams4e-calendar--key))
+    (teams4e-calendar--render)
+    (should-error (teams4e-calendar-find-free-slot 0) :type 'user-error)
+    (cl-letf (((symbol-function 'current-time) (lambda () (date-to-time "2026-10-04T19:00:00Z"))))
+      (should-error (teams4e-calendar-find-free-slot 30) :type 'user-error))
+    (cl-letf (((symbol-function 'current-time) (lambda () (date-to-time "2026-10-04T09:00:00Z")))
+              ((symbol-function 'completing-read)
+               (lambda (_ choices &rest _)
+                 ;; A refresh can finish while the minibuffer is open.
+                 (setq teams4e-calendar--loading t)
+                 (teams4e-calendar--render)
+                 (caar choices))))
+      (should-error (teams4e-calendar-find-free-slot 30) :type 'user-error))))
+
+(ert-deftest teams4e-calendar-response-queue-wraps-skips-past-and-respects-filter ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (cl-loop for id in '("past" "one" "two" "accepted" "free")
+                   for hour from 8
+                   collect (teams4e-calendar-test-event
+                            id (format "2026-10-04T%02d:00:00Z" hour)
+                            (format "2026-10-04T%02d:30:00Z" hour)
+                            `(showAs . ,(if (equal id "free") "free" "busy"))
+                            '(attendees ((emailAddress (address . "guest@example.test"))))
+                            `(responseStatus (response . ,(if (equal id "accepted") "accepted" "notResponded"))))))
+    (teams4e-calendar--render)
+    (goto-char (point-min))
+    (cl-letf (((symbol-function 'current-time) (lambda () (date-to-time "2026-10-04T08:45:00Z")))
+              ((symbol-function 'teams4e--run-json) (lambda (&rest _) (ert-fail "Browsing response queue must not send"))))
+      (dolist (id '("one" "two" "one"))
+        (teams4e-calendar-next-response)
+        (should (equal id (get-text-property (point) 'teams4e-calendar-event))))
+      (teams4e-calendar-next-response t)
+      (should (equal "two" (get-text-property (point) 'teams4e-calendar-event)))
+      (forward-line 1)
+      (teams4e-calendar-next-response t)
+      (should (equal "one" (get-text-property (point) 'teams4e-calendar-event)))
+      (teams4e-calendar-filter "one")
+      (teams4e-calendar-next-response)
+      (should (equal "one" (get-text-property (point) 'teams4e-calendar-event)))
+      (teams4e-calendar-filter "accepted")
+      (should-error (teams4e-calendar-next-response) :type 'user-error))))
+
+(ert-deftest teams4e-calendar-free-slot-draft-fits-gap-even-from-padding ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (setq-local teams4e-calendar-duration-scaled t)
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--id "selected-calendar"
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "busy" "2026-10-04T09:30:00Z" "2026-10-04T18:00:00Z" '(showAs . "busy"))))
+    (teams4e-calendar--render)
+    (goto-char (point-min))
+    (search-forward "[FREE]")
+    (forward-line 1)
+    (let (draft)
+      (unwind-protect
+          (cl-letf (((symbol-function 'current-time) (lambda () (date-to-time "2026-10-04T09:12:00Z")))
+                    ((symbol-function 'teams4e--run-json) (lambda (&rest _) (ert-fail "Drafting must not send")))
+                    ((symbol-function 'pop-to-buffer) (lambda (buffer &rest _) (setq draft buffer))))
+            (teams4e-calendar-create)
+            (with-current-buffer draft
+              (should (equal "2026-10-04T09:15:00+0000" (teams4e-calendar-compose--get "START_AT")))
+              (should (equal "2026-10-04T09:30:00+0000" (teams4e-calendar-compose--get "END_AT")))
+              (should (equal "selected-calendar" (teams4e-calendar-compose--get "CALENDAR_ID")))))
+        (when (buffer-live-p draft) (kill-buffer draft))))))
+
+(ert-deftest teams4e-calendar-free-slot-draft-rejects-expired-and-incomplete ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (setq teams4e-calendar--view 'day teams4e-calendar--loaded-key (teams4e-calendar--key))
+    (teams4e-calendar--render)
+    (goto-char (point-min))
+    (search-forward "[FREE]")
+    (cl-letf (((symbol-function 'current-time) (lambda () (date-to-time "2026-10-04T19:00:00Z"))))
+      (should-error (teams4e-calendar-create) :type 'user-error))
+    (setq teams4e-calendar--loading t)
+    (should-error (teams4e-calendar-create) :type 'user-error)))
+
+(ert-deftest teams4e-calendar-planning-keys-take-precedence-in-evil ()
+  (skip-unless (featurep 'evil))
+  (teams4e-calendar-test
+    (evil-local-mode 1)
+    (dolist (state '(normal motion))
+      (evil-change-state state)
+      (should (eq (key-binding (kbd "F")) #'teams4e-calendar-find-free-slot))
+      (should (eq (key-binding (kbd "!")) #'teams4e-calendar-next-response)))))
 
 (ert-deftest teams4e-calendar-redraw-preserves-multi-day-occurrence-position ()
   (teams4e-calendar-test

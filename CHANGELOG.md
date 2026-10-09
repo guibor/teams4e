@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add a compact working-hours day map using the complete local snapshot, with
+  conservative occupancy, exact conflict markers, interval tooltips, and local
+  navigation. Hide it when data is incomplete; make it optional.
+- Find future free slots with `F` / `C-u F`, ignoring text filters for occupancy.
+  Starting a draft with `+` on a free slot now rounds past time forward and fits
+  the default duration inside the gap. No booking happens until explicit send.
+- Cycle through unanswered, not-yet-ended visible invitations with `!` / `C-u !`,
+  skipping duplicate summary rows and never sending a response during navigation.
+
 - Calendar `j/k` now traverse summary headings and entries in summary areas;
   timeline navigation still skips gaps and metadata. Add `M-j/M-k` aliases,
   including Evil normal/motion states and Lisp-only updates.

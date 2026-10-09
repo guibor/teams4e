@@ -178,6 +178,13 @@ This is an agenda, not a spatial grid: overlapping events remain separate
 blocks.  All-day events stay compact.  Toggle locally with `S'."
   :type 'boolean :group 'teams4e-calendar)
 
+(defcustom teams4e-calendar-show-day-map t
+  "Show a compact working-hours map above each day's summary.
+Each pair of characters covers thirty minutes: . free, = occupied,
+! overlap, and ? unknown availability.  Any blocked part occupies a cell.
+The map uses the unfiltered snapshot of this calendar, not other calendars."
+  :type 'boolean :group 'teams4e-calendar)
+
 (defcustom teams4e-calendar-minutes-per-row 30
   "Minutes represented by a row in the duration-scaled agenda.
 Blocks have at least two and at most twelve lines, excluding text wrapping.
@@ -551,6 +558,122 @@ Never infer free time from an incomplete, stale, or loading snapshot."
         (push (list cursor end nil) gaps))
       (nreverse gaps))))
 
+(defun teams4e-calendar--insert-day-map (day conflicts)
+  "Insert a working-hours map for DAY using exact CONFLICTS.
+Never label partial or stale data as free.  Cells are navigation buttons."
+  (when (and teams4e-calendar-show-day-map
+             (teams4e-calendar--free-gaps-available-p day))
+    (let* ((parts (decode-time day))
+           (start (float-time (encode-time 0 0 (car teams4e-calendar-work-hours)
+                                          (nth 3 parts) (nth 4 parts) (nth 5 parts))))
+           (end (float-time (encode-time 0 0 (cdr teams4e-calendar-work-hours)
+                                        (nth 3 parts) (nth 4 parts) (nth 5 parts))))
+           (blocks (teams4e-calendar--busy-intervals start end))
+           (owner (current-buffer))
+           (begin (point)))
+      (insert (format "    %02d:00  " (car teams4e-calendar-work-hours)))
+      (while (< start end)
+        (let* ((until (min end (+ start 1800)))
+               (active (seq-filter (lambda (row) (and (< (car row) until)
+                                                      (> (cadr row) start))) blocks))
+               (overlap (seq-some (lambda (row) (and (< (car row) until)
+                                                    (> (cadr row) start))) conflicts))
+               (unknown (seq-some
+                         (lambda (row)
+                           (equal (car (teams4e-calendar--availability (nth 2 row)))
+                                  "Availability unknown")) active))
+               (glyph (cond (overlap "!!") (unknown "??") (active "==") (t "..")))
+               (face (cond (overlap 'teams4e-calendar-conflict) (unknown 'warning)
+                           (active 'teams4e-calendar-busy) (t 'teams4e-calendar-free-slot)))
+               (time start))
+          (insert-text-button
+           glyph 'face face 'mouse-face 'highlight 'follow-link t
+           'help-echo
+           (concat (format "%s - %s: %s"
+                           (format-time-string "%H:%M %z" start)
+                           (format-time-string "%H:%M %z" until)
+                           (cond (overlap "Overlapping events")
+                                 (unknown "Unknown availability")
+                                 (active "Occupied") (t "Free in this calendar")))
+                   (mapconcat (lambda (row)
+                                (concat "\n" (teams4e-calendar--line
+                                              (teams4e--get (nth 2 row) 'subject)))) active ""))
+           'action (lambda (_)
+                     (when (buffer-live-p owner)
+                       (with-current-buffer owner
+                         (setq teams4e-calendar--focus nil
+                               teams4e-calendar--date time)
+                         (teams4e-calendar--focus-time time)))))
+          (setq start until)))
+      (insert (format "  %02d:00\n" (cdr teams4e-calendar-work-hours)))
+      (put-text-property begin (point) 'teams4e-calendar-item
+                         (list 'day-map (teams4e-calendar--day-key day))))))
+
+(defun teams4e-calendar--usable-slot-start (start)
+  "Return START or the next five-minute boundary from now, whichever is later."
+  (max start (* 300 (ceiling (/ (float-time (current-time)) 300)))))
+
+(defun teams4e-calendar-find-free-slot (&optional minutes)
+  "Choose a future free slot of at least MINUTES in the loaded range.
+Default to thirty minutes; with a prefix, ask for a minimum duration.
+Use only displayed gaps in this calendar, never fetching more dates."
+  (interactive (list (if current-prefix-arg (read-number "Minimum free minutes: " 30) 30)))
+  (setq minutes (or minutes 30))
+  (unless (and (numberp minutes) (> minutes 0)) (user-error "Duration must be positive"))
+  (unless (and (equal (teams4e-calendar--key) teams4e-calendar--loaded-key)
+               (not teams4e-calendar--loading) (not teams4e-calendar--error))
+    (user-error "Wait for a complete calendar range before finding free time"))
+  (let* ((range (teams4e-calendar--range)) (day (car range)) choices)
+    (while (time-less-p day (cadr range))
+      (dolist (gap (teams4e-calendar--free-gaps day))
+        (let ((start (teams4e-calendar--usable-slot-start (car gap))))
+          (when (>= (- (cadr gap) start) (* 60 minutes))
+            (push (cons (format "%s - %s  (%d min)"
+                                (format-time-string "%a %d %b %H:%M" start)
+                                (format-time-string "%H:%M %z" (cadr gap))
+                                (floor (/ (- (cadr gap) start) 60)))
+                        (list 'slot (teams4e-calendar--day-key day) (car gap) (cadr gap)))
+                  choices))))
+      (setq day (teams4e-calendar--midnight day 1)))
+    (unless choices (user-error "No displayed future free slot of %s min in this range" minutes))
+    (setq choices (nreverse choices))
+    (let* ((choice (completing-read "Free slot: " choices nil t))
+           (key (cdr (assoc choice choices)))
+           (position (teams4e-calendar--find-item key)))
+      (unless position (user-error "Calendar changed; choose a slot again"))
+      (goto-char position)
+      (setq teams4e-calendar--date (get-text-property position 'teams4e-calendar-day-time)
+            teams4e-calendar--focus nil teams4e-calendar--focus-day-heading nil)
+      (teams4e-calendar--center))))
+
+(defun teams4e-calendar-next-response (&optional backward)
+  "Visit the next visible unanswered invitation that has not ended.
+Wrap within the loaded range.  With a prefix, go BACKWARD.  Never send a response."
+  (interactive "P")
+  (let* ((item (get-text-property (point) 'teams4e-calendar-item))
+         (origin (if (eq (car-safe item) 'event)
+                     (or (teams4e-calendar--find-item item) (point))
+                   (point)))
+         (now (float-time (current-time))) positions)
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (when (and (get-text-property (point) 'teams4e-calendar-event-start)
+                   (eq (car-safe (get-text-property (point) 'teams4e-calendar-item)) 'event))
+          (let ((event (cadr (teams4e-calendar--context))))
+            (when (and (eq (teams4e-calendar--summary-group event) 'unanswered)
+                       (> (float-time (teams4e-calendar--time event 'end)) now))
+              (push (point) positions))))
+        (forward-line 1)))
+    (unless positions (user-error "No visible upcoming invitations need a response"))
+    (unless backward (setq positions (nreverse positions)))
+    (goto-char (or (seq-find (lambda (position) (if backward (< position origin) (> position origin)))
+                            positions)
+                   (car positions)))
+    (setq teams4e-calendar--date (get-text-property (point) 'teams4e-calendar-day-time)
+          teams4e-calendar--focus nil teams4e-calendar--focus-day-heading nil)
+    (teams4e-calendar--center)))
+
 (defun teams4e-calendar--center ()
   "Center point in every window displaying this agenda without stealing focus."
   (dolist (window (get-buffer-window-list (current-buffer) nil t))
@@ -732,7 +855,9 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
                                     "\n")
                             'teams4e-calendar-item section
                             'face '(:inherit font-lock-keyword-face :weight bold)))
-        (when loaded (teams4e-calendar--insert-day-summary day events gaps conflicts))
+        (when loaded
+          (teams4e-calendar--insert-day-map day conflicts)
+          (teams4e-calendar--insert-day-summary day events gaps conflicts))
         (dolist (row (sort rows (lambda (a b) (< (car a) (car b)))))
           (pcase-let* ((`(,start-time ,end-time ,event) row)
                        (start (point))
@@ -993,7 +1118,7 @@ Stay put at the boundary."
          (original (point))
          (item (get-text-property original 'teams4e-calendar-item))
          (summary (or (get-text-property original 'teams4e-calendar-summary)
-                      (eq (car-safe item) 'day)))
+                      (memq (car-safe item) '(day day-map))))
          found)
     (forward-line step)
     (while (and (not found) (not (if backward (bobp) (eobp))))
@@ -1370,6 +1495,8 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("M-j" . teams4e-calendar-next-event)
                        ("M-k" . teams4e-calendar-previous-event)
                        ("S" . teams4e-calendar-toggle-duration)
+                       ("F" . teams4e-calendar-find-free-slot)
+                       ("!" . teams4e-calendar-next-response)
                        ("J" . teams4e-calendar-next-event)
                        ("K" . teams4e-calendar-previous-event)
                        ("h" . teams4e-calendar-previous-day)
@@ -1412,6 +1539,8 @@ Short meeting links without a thread ID cannot be resolved locally."
                    ("M-j" . teams4e-calendar-next-event)
                    ("M-k" . teams4e-calendar-previous-event)
                    ("S" . teams4e-calendar-toggle-duration)
+                   ("F" . teams4e-calendar-find-free-slot)
+                   ("!" . teams4e-calendar-next-response)
                    ("f" . teams4e-calendar-follow-in-outlook)
                    ("N" . teams4e-calendar-next-slot)
                    ("TAB" . teams4e-calendar-toggle-section)
@@ -1441,7 +1570,7 @@ Read the public mode map so user customizations remain authoritative."
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
       (dolist (key '("j" "k" "M-j" "M-k" "J" "K" "S" "h" "l" "H" "L"
-                     "t" "N" "f" "+" "TAB" "<tab>" "RET"))
+                     "t" "N" "f" "F" "!" "+" "TAB" "<tab>" "RET"))
         (evil-local-set-key state (kbd key)
                             (lookup-key teams4e-calendar-mode-map (kbd key)))))))
 

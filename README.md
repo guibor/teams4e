@@ -387,6 +387,15 @@ take more vertical space. The compact agenda remains the default. Customize
 your reading preferences. This remains an agenda rather than a spatial grid;
 overlapping meetings are still separate entries.
 
+A compact working-hours map makes the day's shape visible without expanding it:
+free time, occupied intervals, genuine overlaps, and unknown availability have
+distinct marks. `F` finds a future free slot using completion (`C-u F` changes
+the minimum duration), and `+` opens an Org meeting draft that fits the selected
+gap. `!` visits invitations still needing a response; `C-u !` goes backward.
+These commands reuse the loaded calendar and never send invitations or responses
+just by browsing. See [calendar planning](CALENDAR.md#plan-from-the-agenda) for
+the defaults, customizations, and limits of this single-calendar view.
+
 `+` opens an Org meeting draft beside the agenda. Edit its title, times,
 required/optional attendees, location, and description; `C-c C-a` searches the
 directory and `C-c C-t` chooses a time. Only `C-c C-c` creates the event and sends

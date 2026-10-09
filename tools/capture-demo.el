@@ -220,6 +220,8 @@
              (format "availability-%s-%s.png" view width))))
         (delete-other-windows)
         (when (require 'window-purpose nil t) (purpose-mode 1))
+        ;; The synthetic calendar works daily, keeping screenshots useful on weekends.
+        (setq teams4e-calendar-work-days '(0 1 2 3 4 5 6))
         (teams4e-calendar t)
         (teams4e-capture-wait
          (lambda ()
@@ -232,6 +234,9 @@
         (switch-to-buffer teams4e-calendar--buffer-name)
         (delete-other-windows)
         (teams4e-calendar--focus-time teams4e-calendar--date t)
+        (unless (teams4e-calendar--find-item
+                 (list 'day-map (teams4e-calendar--day-key teams4e-calendar--date)))
+          (error "Synthetic calendar has no working-hours map"))
         (recenter 0)
         (teams4e-capture-frame "calendar.png")
         (goto-char (point-min))
