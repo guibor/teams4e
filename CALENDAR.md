@@ -143,6 +143,11 @@ The standard meeting defaults are unchanged. Edit the title or notes as usual;
 only `C-c C-c` saves the block to the selected calendar. No time is reserved while
 you draft, and this still considers only the selected calendar's availability.
 
+![Personal focus draft beside the agenda in real Emacs with Moe](assets/calendar-focus-draft.png)
+
+This synthetic example freezes the planning clock at 08:00; it opens a draft
+for the next free hour without submitting anything to a calendar service.
+
 Overlap summaries appear just below the day heading, with exact intervals and
 labels such as `C1`. The affected event titles carry matching labels. This
 does not replace their busy/free colors. Back-to-back events do not conflict;

@@ -224,7 +224,8 @@ replacing a submitted draft after an ambiguous failure."
 (defun teams4e-calendar-block-time (minutes)
   "Draft MINUTES of personal focus time in this calendar without submitting.
 Use the free slot at point if it fits, otherwise offer the free-slot chooser.
-The Org draft has no attendees or Teams link.  Only explicit submission saves it."
+The Org draft has no attendees or Teams link.
+Only explicit submission saves it."
   (interactive (list (read-number "Focus block (minutes): " teams4e-calendar-focus-duration)))
   (unless (derived-mode-p 'teams4e-calendar-mode) (user-error "Open a calendar agenda first"))
   (unless (and (numberp minutes) (> minutes 0)) (user-error "Duration must be positive"))
