@@ -15,6 +15,7 @@
 (require 'hl-line)
 
 (autoload 'teams4e-calendar-create "teams4e-calendar-create" nil t)
+(autoload 'teams4e-calendar-block-time "teams4e-calendar-create" nil t)
 
 (declare-function evil-set-initial-state "evil-core" (mode state))
 (declare-function evil-local-set-key "evil-core" (state key def))
@@ -363,6 +364,12 @@ Elsewhere do nothing; days and their timelines are never folded."
                          (list 'teams4e-calendar-event id
                                'teams4e-calendar-item (list 'conflict-event key id)))))
 
+(defun teams4e-calendar--conflict-key (day segment)
+  "Return the stable identity of conflict SEGMENT on DAY."
+  (list 'conflict (teams4e-calendar--day-key day) (car segment) (cadr segment)
+        (sort (mapcar (lambda (event) (teams4e--get event 'id)) (nth 2 segment))
+              #'string-lessp)))
+
 (defun teams4e-calendar--insert-conflicts (conflicts day)
   "Insert foldable overlap groups for CONFLICTS on DAY."
   (let ((index 0))
@@ -370,11 +377,7 @@ Elsewhere do nothing; days and their timelines are never folded."
       (cl-incf index)
       (let* ((start (point))
              (events (nth 2 segment))
-             ;; Stable across sorting and label changes; not a second event store.
-             (key (list 'conflict (teams4e-calendar--day-key day)
-                        (car segment) (cadr segment)
-                        (sort (mapcar (lambda (event) (teams4e--get event 'id)) events)
-                              #'string-lessp)))
+             (key (teams4e-calendar--conflict-key day segment))
              (open (teams4e-calendar--section-open-p key))
              (hidden (seq-count (lambda (event) (not (teams4e-calendar--visible-p event))) events))
              (titles (mapconcat (lambda (event)
@@ -674,6 +677,75 @@ Never send a response."
     (setq teams4e-calendar--date (get-text-property (point) 'teams4e-calendar-day-time)
           teams4e-calendar--focus nil teams4e-calendar--focus-day-heading nil)
     (teams4e-calendar--center)))
+
+(defun teams4e-calendar-jump-event ()
+  "Jump to a visible event using completion, without changing the filter.
+Include each timeline occurrence once; summaries are not separate choices."
+  (interactive)
+  (let (choices)
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((key (get-text-property (point) 'teams4e-calendar-item)))
+          (when (and (eq (car-safe key) 'event)
+                     (get-text-property (point) 'teams4e-calendar-event-start))
+            (let* ((event (cadr (teams4e-calendar--context)))
+                   (day (get-text-property (point) 'teams4e-calendar-day-time)))
+              (push (cons (format "%s %s | %s | %s [%d]"
+                                  (format-time-string "%a %d %b" day)
+                                  (teams4e-calendar--time-label event day)
+                                  (teams4e-calendar--line (teams4e--get event 'subject))
+                                  (teams4e-calendar--status event) (1+ (length choices)))
+                          key) choices))))
+        (forward-line 1)))
+    (unless choices (user-error "No visible events in this range"))
+    (setq choices (nreverse choices))
+    (let* ((choice (completing-read "Jump to event: " choices nil t))
+           (position (teams4e-calendar--find-item (cdr (assoc choice choices)))))
+      (unless position (user-error "Calendar changed; choose an event again"))
+      (goto-char position)
+      (setq teams4e-calendar--date (get-text-property position 'teams4e-calendar-day-time)
+            teams4e-calendar--focus nil teams4e-calendar--focus-day-heading nil)
+      (teams4e-calendar--center))))
+
+(defun teams4e-calendar-next-conflict (&optional backward)
+  "Open the next conflict and its actions, wrapping within the loaded range.
+Include filtered-out partners.  With a prefix go BACKWARD.  Never fetch."
+  (interactive "P")
+  (unless (and (equal (teams4e-calendar--key) teams4e-calendar--loaded-key)
+               (not teams4e-calendar--loading) (not teams4e-calendar--error))
+    (user-error "Wait for a complete calendar range before browsing conflicts"))
+  (let* ((section (get-text-property (point) 'teams4e-calendar-section))
+         (current (and (eq (car-safe section) 'conflict) section))
+         (cursor (or (nth 2 current)
+                     (get-text-property (point) 'teams4e-calendar-row-start)
+                     (float-time (or (get-text-property (point) 'teams4e-calendar-day-time)
+                                     teams4e-calendar--date))))
+         (range (teams4e-calendar--range)) (day (car range)) keys)
+    (while (time-less-p day (cadr range))
+      (dolist (segment (teams4e-calendar--conflicts day))
+        (push (teams4e-calendar--conflict-key day segment) keys))
+      (setq day (teams4e-calendar--midnight day 1)))
+    (unless keys (user-error "No conflicts in the loaded calendar range"))
+    (unless backward (setq keys (nreverse keys)))
+    (let* ((key (or (seq-find (lambda (key)
+                               (if current
+                                   (if backward (< (nth 2 key) cursor) (> (nth 2 key) cursor))
+                                 (if backward (<= (nth 2 key) cursor) (> (nth 3 key) cursor)))) keys)
+                    (car keys)))
+           (summary (list 'summary (nth 1 key))))
+      (setf (alist-get summary teams4e-calendar--fold-state nil nil #'equal) 'open
+            (alist-get key teams4e-calendar--fold-state nil nil #'equal) 'open)
+      (setq teams4e-calendar--focus nil teams4e-calendar--focus-day-heading nil)
+      (teams4e-calendar--render)
+      (goto-char (teams4e-calendar--find-item key))
+      (setq teams4e-calendar--date (get-text-property (point) 'teams4e-calendar-day-time))
+      (teams4e-calendar--center))))
+
+(defun teams4e-calendar-previous-conflict ()
+  "Open the previous conflict and its actions in the loaded range."
+  (interactive)
+  (teams4e-calendar-next-conflict t))
 
 (defun teams4e-calendar--center ()
   "Center point in every window displaying this agenda without stealing focus."
@@ -1498,6 +1570,10 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("S" . teams4e-calendar-toggle-duration)
                        ("F" . teams4e-calendar-find-free-slot)
                        ("!" . teams4e-calendar-next-response)
+                       ("s" . teams4e-calendar-jump-event)
+                       ("}" . teams4e-calendar-next-conflict)
+                       ("{" . teams4e-calendar-previous-conflict)
+                       ("B" . teams4e-calendar-block-time)
                        ("J" . teams4e-calendar-next-event)
                        ("K" . teams4e-calendar-previous-event)
                        ("h" . teams4e-calendar-previous-day)
@@ -1542,6 +1618,10 @@ Short meeting links without a thread ID cannot be resolved locally."
                    ("S" . teams4e-calendar-toggle-duration)
                    ("F" . teams4e-calendar-find-free-slot)
                    ("!" . teams4e-calendar-next-response)
+                   ("s" . teams4e-calendar-jump-event)
+                   ("}" . teams4e-calendar-next-conflict)
+                   ("{" . teams4e-calendar-previous-conflict)
+                   ("B" . teams4e-calendar-block-time)
                    ("f" . teams4e-calendar-follow-in-outlook)
                    ("N" . teams4e-calendar-next-slot)
                    ("TAB" . teams4e-calendar-toggle-section)
@@ -1571,7 +1651,7 @@ Read the public mode map so user customizations remain authoritative."
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
       (dolist (key '("j" "k" "M-j" "M-k" "J" "K" "S" "h" "l" "H" "L"
-                     "t" "N" "f" "F" "!" "+" "TAB" "<tab>" "RET"))
+                     "t" "N" "f" "F" "!" "s" "}" "{" "B" "+" "TAB" "<tab>" "RET"))
         (evil-local-set-key state (kbd key)
                             (lookup-key teams4e-calendar-mode-map (kbd key)))))))
 

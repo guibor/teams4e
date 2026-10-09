@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add event completion (`s`) that preserves filters and distinguishes duplicate
+  titles. Add conflict cycling (`}` / `{`) that unfolds actionable groups without
+  fetching or hiding filtered-out partners.
+- Draft personal focus blocks with `B`: ask for a duration, reuse a fitting free
+  slot or offer alternatives, and open an Org draft with no attendees or Teams
+  link. Never save automatically or change ordinary meeting defaults.
+
 - Add a compact working-hours day map using the complete local snapshot, with
   conservative occupancy, exact conflict markers, interval tooltips, and local
   navigation. Hide it when data is incomplete; make it optional.

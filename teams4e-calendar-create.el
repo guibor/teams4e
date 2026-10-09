@@ -18,6 +18,10 @@
   "Whether new drafts request a Teams meeting link."
   :type 'boolean :group 'teams4e-calendar)
 
+(defcustom teams4e-calendar-focus-duration 60
+  "Suggested length in minutes when drafting a personal focus block."
+  :type 'integer :group 'teams4e-calendar)
+
 (defvar-local teams4e-calendar-compose--pending nil)
 (defvar-local teams4e-calendar-compose--submitted-payload nil)
 
@@ -179,7 +183,7 @@ replacing a submitted draft after an ambiguous failure."
 
 ;;;###autoload
 (defun teams4e-calendar-create ()
-  "Open a new editable Org meeting draft without sending or fetching anything."
+  "Open and return an editable Org meeting draft, without sending or fetching."
   (interactive)
   (let* ((owner (and (derived-mode-p 'teams4e-calendar-mode) (current-buffer)))
          (calendar (if owner teams4e-calendar--id teams4e-calendar-id))
@@ -213,7 +217,35 @@ replacing a submitted draft after an ambiguous failure."
       (org-show-all)
       (goto-char (point-min))
       (end-of-line))
-    (pop-to-buffer buffer '((display-buffer-reuse-window display-buffer-below-selected)))))
+    (pop-to-buffer buffer '((display-buffer-reuse-window display-buffer-below-selected)))
+    buffer))
+
+;;;###autoload
+(defun teams4e-calendar-block-time (minutes)
+  "Draft MINUTES of personal focus time in this calendar without submitting.
+Use the free slot at point if it fits, otherwise offer the free-slot chooser.
+The Org draft has no attendees or Teams link.  Only explicit submission saves it."
+  (interactive (list (read-number "Focus block (minutes): " teams4e-calendar-focus-duration)))
+  (unless (derived-mode-p 'teams4e-calendar-mode) (user-error "Open a calendar agenda first"))
+  (unless (and (numberp minutes) (> minutes 0)) (user-error "Duration must be positive"))
+  (unless (and (equal (teams4e-calendar--key) teams4e-calendar--loaded-key)
+               (not teams4e-calendar--loading) (not teams4e-calendar--error))
+    (user-error "Wait for a complete calendar range before blocking time"))
+  (let ((fits (lambda ()
+                (let ((slot (get-text-property (point) 'teams4e-calendar-item)))
+                  (and (eq (car-safe slot) 'slot)
+                       (>= (- (nth 3 slot) (teams4e-calendar--usable-slot-start (nth 2 slot)))
+                           (* 60 minutes)))))))
+    (unless (funcall fits) (teams4e-calendar-find-free-slot minutes))
+    (unless (funcall fits) (user-error "Slot no longer fits; choose free time again")))
+  (let* ((teams4e-calendar-new-duration minutes)
+         (teams4e-calendar-new-online-meeting nil)
+         (buffer (teams4e-calendar-create)))
+    (with-current-buffer buffer
+      (goto-char (point-min))
+      (org-edit-headline "Focus time")
+      (end-of-line))
+    buffer))
 
 (provide 'teams4e-calendar-create)
 ;;; teams4e-calendar-create.el ends here

@@ -22,6 +22,9 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `S` | Toggle compact / duration-scaled agenda blocks locally |
 | `F` | Choose a future free slot of at least 30 minutes in this range |
 | `C-u F` | Choose a different minimum free duration |
+| `s` | Jump to a visible meeting through completion, without changing filters |
+| `}` / `{` | Next / previous conflict; unfold its meeting actions |
+| `B` | Draft a personal focus block in a fitting free slot |
 | `!`, `C-u !` | Next / previous unanswered upcoming invitation, wrapping within visible events |
 | `t` | Center on now, or the closest timed row today |
 | `N` | Ongoing / next timed slot; tomorrow after today\'s last slot |
@@ -119,6 +122,26 @@ have no RSVP and have not ended; `C-u !` goes backward. It skips accepted,
 tentative, declined, free/following, and organizer entries, respects the text
 filter, and visits each invitation's timeline row rather than its summary copy.
 Respond with the existing `a` action. Navigation itself never sends a response.
+
+`s` (`teams4e-calendar-jump-event`) offers the visible timeline occurrences
+through completion, including their dates, times, titles and response states.
+Duplicate titles remain individually selectable. It does not clear your filter,
+include summary duplicates, or fetch another range.
+
+`}` and `{` (`teams4e-calendar-next-conflict` / `teams4e-calendar-previous-conflict`)
+cycle through exact conflict intervals in the loaded range. They open the
+target day's Summary and the selected conflict so its action buttons are ready.
+Other folds and your text filter are preserved. Hidden partners remain included:
+a filter must not hide a scheduling collision. Browsing conflicts never responds,
+reschedules, or fetches events.
+
+`B` (`teams4e-calendar-block-time`) asks for a focus duration, initially 60 minutes
+(`teams4e-calendar-focus-duration`). It uses the free slot at point when it fits;
+otherwise completion offers suitable slots in the loaded range. It opens an Org
+draft titled **Focus time**, marked Busy, with no attendees and no Teams link.
+The standard meeting defaults are unchanged. Edit the title or notes as usual;
+only `C-c C-c` saves the block to the selected calendar. No time is reserved while
+you draft, and this still considers only the selected calendar's availability.
 
 Overlap summaries appear just below the day heading, with exact intervals and
 labels such as `C1`. The affected event titles carry matching labels. This

@@ -396,6 +396,11 @@ These commands reuse the loaded calendar and never send invitations or responses
 just by browsing. See [calendar planning](CALENDAR.md#plan-from-the-agenda) for
 the defaults, customizations, and limits of this single-calendar view.
 
+For quick planning, `s` jumps to a visible meeting without changing your filter;
+`}` / `{` cycle through conflicts and unfold their per-meeting actions. `B`
+drafts a personal focus block in a fitting free slot, with no attendees or Teams
+link. The draft stays editable in Org and is saved only on explicit submission.
+
 `+` opens an Org meeting draft beside the agenda. Edit its title, times,
 required/optional attendees, location, and description; `C-c C-a` searches the
 directory and `C-c C-t` chooses a time. Only `C-c C-c` creates the event and sends
