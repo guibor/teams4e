@@ -250,7 +250,7 @@
                   (lambda ()
                     (minibuffer-completion-help)
                     (teams4e-capture-frame "calendar-actions.png")
-                    (abort-recursive-edit))
+                    (signal 'quit nil))
                 (teams4e-calendar-actions))
             (quit nil)))
         (goto-char (point-min))
