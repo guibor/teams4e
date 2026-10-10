@@ -228,7 +228,12 @@
 (declare-function teams4e-compose--start-editor "teams4e-compose" (target reply-to))
 (declare-function teams4e-compose--display "teams4e-compose" (buffer origin target))
 (declare-function teams4e-compose--render-body "teams4e-compose" (source))
+(declare-function teams4e-outbox-submit "teams4e-outbox" ())
 (defvar-local teams4e-compose--editor 'text)
+(defvar-local teams4e-compose--schedule nil)
+(defvar-local teams4e-compose--outbox-id nil)
+(defvar-local teams4e-compose--outbox-revision nil)
+(defvar-local teams4e-compose--outbox-busy nil)
 (defvar-local teams4e-compose--target nil)
 (defvar-local teams4e-compose--origin nil)
 (defvar-local teams4e-compose--reply-to nil)
@@ -360,7 +365,7 @@
   (let (result redact-next)
     (dolist (arg args (nreverse result))
       (push (if redact-next "<content redacted>" arg) result)
-      (setq redact-next (member arg '("--message" "--comment"))))))
+      (setq redact-next (member arg '("--message" "--comment" "--payload"))))))
 
 (defun teams4e--performance-operation (args)
   "Return a content-free operation label for backend ARGS."
@@ -502,7 +507,7 @@ stored or shown."
 (defun teams4e--redacted-detail (args detail)
   "Remove exact outgoing message or comment values from diagnostic DETAIL."
   (let ((redacted detail))
-    (dolist (option '("--message" "--comment") redacted)
+    (dolist (option '("--message" "--comment" "--payload") redacted)
       (let ((value (cadr (member option args))))
         (when (and (stringp redacted) (stringp value)
                    (not (string-empty-p value)))
@@ -4838,8 +4843,17 @@ REPLY-TO, when non-nil, is the source message for a native quoted reply."
      '("--output" "none"))))
 
 (defun teams4e-compose-send ()
-  "Send the current compose buffer through Microsoft Graph."
+  "Send this draft now, or commit its explicitly chosen schedule."
   (interactive)
+  (when teams4e-compose--outbox-busy (user-error "Scheduling is already in progress"))
+  (if (or teams4e-compose--schedule teams4e-compose--outbox-id)
+      (progn (require 'teams4e-outbox) (teams4e-outbox-submit))
+    (teams4e-compose-send-now)))
+
+(defun teams4e-compose-send-now ()
+  "Send the current compose buffer through Microsoft Graph."
+  (when (or teams4e-compose--schedule teams4e-compose--outbox-id)
+    (user-error "Scheduled draft: requeue it or cancel it in the outbox first"))
   (teams4e--require-online)
   (unless (teams4e-compose-p)
     (user-error "Not in a Teams compose buffer"))

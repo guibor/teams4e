@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add local scheduled sending: `C-c C-s` for the next configured workday,
+  `C-c C-t` for explicit date/time, and compose/reply-next-workday commands.
+  Reuse snooze start time and calendar workdays, with timezone/DST handling.
+- Preserve source and immutable delivery metadata in a private SQLite outbox.
+  Support holding/editing/cancelling, durable claims, account checks, bounded
+  429 retries, and conservative handling of late or ambiguous deliveries.
+  No native Teams scheduling endpoint, credentials store, or OS service is added.
+
 - Add a local week/range overview (`W`) with per-day working-time totals, longest
   free intervals, blocking-event counts, conflicts, and unanswered invitations.
   Union overlaps once, include short free gaps, distinguish nonworking days,

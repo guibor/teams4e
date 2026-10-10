@@ -14,6 +14,7 @@ __pycache__/
 /teams-state.json
 /mock-tenant.json
 /teams.sqlite3*
+/outbox.sqlite3*
 /drafts/
 /exports/
 /downloads/

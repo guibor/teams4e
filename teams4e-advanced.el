@@ -3240,6 +3240,11 @@ destination is preserved, with the forward appended."
    (format "%s.json" (md5 (teams4e-compose--target-key)))
    teams4e-draft-directory))
 
+(declare-function teams4e-outbox--edit-id "teams4e-outbox" (id))
+(declare-function teams4e-outbox "teams4e-outbox" ())
+(declare-function teams4e-send-next-workday "teams4e-outbox" (&optional explicit))
+(declare-function teams4e-reply-next-workday "teams4e-outbox" (&optional explicit))
+
 (defun teams4e-compose--update-header ()
   "Refresh compose metadata in the header line."
   (let* ((reply teams4e-compose--reply-to)
@@ -3265,7 +3270,12 @@ destination is preserved, with the forward appended."
                     "" "s")
                 (length teams4e-compose--mentions)
                 (if (= (length teams4e-compose--mentions) 1)
-                    "" "s")))))
+                    "" "s")))
+    (when teams4e-compose--schedule
+      (setq header-line-format
+            (format "SCHEDULE %s | To: %s | C-c C-c queue (local Emacs delivery)"
+                    (teams4e--get teams4e-compose--schedule 'displayTime)
+                    (teams4e--target-label teams4e-compose--target))))))
 
 (defun teams4e-compose--draft-target-record ()
   "Return minimal reopen metadata for the current compose target."
@@ -3309,6 +3319,9 @@ destination is preserved, with the forward appended."
                     (teams4e-compose--path)))
           (content-type teams4e-compose--content-type)
           (editor (symbol-name teams4e-compose--editor))
+          (schedule teams4e-compose--schedule)
+          (outbox-id teams4e-compose--outbox-id)
+          (outbox-revision teams4e-compose--outbox-revision)
           (attachments teams4e-compose--attachments)
           (mentions teams4e-compose--mentions)
           ;; Capture buffer-local metadata before `with-temp-file' changes the
@@ -3332,6 +3345,9 @@ destination is preserved, with the forward appended."
                       `((body . ,body)
                         (contentType . ,content-type)
                         (editor . ,editor)
+                        (schedule . ,schedule)
+                        (outboxId . ,outbox-id)
+                        (outboxRevision . ,outbox-revision)
                         (attachments . ,(vconcat attachments))
                         (mentions . ,(vconcat mentions))
                         (target . ,target-record)
@@ -3374,6 +3390,9 @@ destination is preserved, with the forward appended."
                (body (teams4e--get payload 'body)))
           (setq teams4e-compose--content-type
                 (or (teams4e--get payload 'contentType) "text")
+                teams4e-compose--schedule (teams4e--get payload 'schedule)
+                teams4e-compose--outbox-id (teams4e--get payload 'outboxId)
+                teams4e-compose--outbox-revision (teams4e--get payload 'outboxRevision)
                 teams4e-compose--attachments
                 (teams4e--get payload 'attachments)
                 teams4e-compose--mentions
@@ -3507,13 +3526,18 @@ destination is preserved, with the forward appended."
                                    "%Y-%m-%d %H:%M"
                                    (file-attribute-modification-time
                                     (file-attributes file)))))
-                      (list target (teams4e--get payload 'replyTo)))
+                      (list target (teams4e--get payload 'replyTo)
+                            (and (numberp (teams4e--get payload 'outboxRevision))
+                                 (teams4e--get payload 'outboxId))))
                 choices))))
     (unless choices (user-error "No reopenable Teams drafts"))
     (let* ((choice (completing-read "Teams draft: " (mapcar #'car choices)
                                     nil t))
            (metadata (cdr (assoc choice choices))))
-      (teams4e--open-compose (car metadata) (cadr metadata)))))
+      (if (nth 2 metadata)
+          (progn (require 'teams4e-outbox)
+                 (teams4e-outbox--edit-id (nth 2 metadata)))
+        (teams4e--open-compose (car metadata) (cadr metadata))))))
 
 (defvar-local teams4e-compose--mention-members-loading nil
   "Non-nil while the current compose buffer loads chat participants.")
@@ -4109,6 +4133,9 @@ shared by the terminal Teams client."
             ("Synchronize chats and channels" .
              teams4e-sync-all)
             ("Compose message" . teams4e-send)
+            ("Compose for next workday" . teams4e-send-next-workday)
+            ("Reply for next workday" . teams4e-reply-next-workday)
+            ("Scheduled outbox" . teams4e-outbox)
             ("Forward message at point" . teams4e-forward-message)
             ("Reopen compose draft" . teams4e-compose-drafts)
             ("Create chat" . teams4e-create-chat)

@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import nullcontext
+from contextvars import ContextVar
 from collections import deque
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,6 +29,7 @@ from typing import Any
 from teams4e_cache import TeamsCache
 from teams4e_calendar import calendar_draft_payload
 from teams4e_mock import MockTenant, mock_enabled
+from teams4e_outbox import Outbox, RetryLater, Rejected, schedule_time
 
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
@@ -41,6 +43,7 @@ GRAPH_MAX_RETRY_SECONDS = 60
 GRAPH_JSON_BATCH_LIMIT = 20
 TOKEN_REFRESH_LOCK = threading.Lock()
 TOKEN_COMMAND_CACHE: tuple[str, int] | None = None
+OUTBOX_SEND = ContextVar("outbox_send", default=False)
 MEETING_EVENT_SELECT = (
     "id,subject,start,end,isAllDay,isCancelled,showAs,responseStatus,"
     "location,locations,organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink,"
@@ -522,6 +525,12 @@ def graph_json(
       if exception.code == 429:
         # Even the last failed attempt must slow other workers down.
         GRAPH_REQUEST_BUDGET.defer(delay)
+      if OUTBOX_SEND.get() and method == "POST":
+        if exception.code == 429:
+          raise RetryLater(delay) from exception
+        if 400 <= exception.code < 500 and exception.code != 408:
+          raise Rejected() from exception
+        raise BackendError("Scheduled send outcome unknown") from exception
       if retryable and attempt + 1 < GRAPH_RETRY_ATTEMPTS:
         if exception.code != 429:
           time.sleep(delay)
@@ -3408,10 +3417,112 @@ def dispatch_cache(args: list[str]) -> Any:
   raise BackendError(f"Unsupported cache command: {args!r}")
 
 
+def outbox_identity():
+  """Bind each queued send to a verified account; never persist the token."""
+  if mock_enabled():
+    return "mock-account", None
+  with TOKEN_REFRESH_LOCK:
+    token = ensure_graph_token(credentials_path())
+  owner = graph_json("/me?$select=id", token).get("id")
+  if not owner:
+    raise BackendError("Cannot identify the sending account")
+  return f"{GRAPH_HOST}:{owner}", token
+
+
+def outbox_record(value, token):
+  """Freeze rendered content and immutable destination using existing encoding."""
+  draft = value["draft"]
+  target = dict(draft["target"])
+  if draft.get("attachments"):
+    raise ValueError("Scheduled file attachments are not supported; draft retained")
+  if target.get("kind") == "recipients":
+    if mock_enabled():
+      chat = MockTenant().execute(["teams", "chat", "get", "--participants", target["userEmails"]])
+    else:
+      chat = find_chat_by_participants(target["userEmails"], token)
+    target = {"kind": "chat", "chatId": chat["id"], "label": target.get("label", "")}
+  reply = draft.get("replyTo") or {}
+  reply_id = reply.get("id")
+  if reply and not reply_id:
+    raise ValueError("Reply target has no message ID")
+  attachments, tags = [], []
+  if target.get("kind") == "chat" and target.get("chatId"):
+    path = f"/chats/{quoted_id(target['chatId'])}/messages"
+    if reply_id:
+      sender = reply.get("from", {}).get("user", {})
+      reference, marker = quoted_reply_attachment(
+          reply_id, sender.get("id") or "", sender.get("displayName") or "",
+          reply.get("body", {}).get("content") or "")
+      attachments, tags = [reference], [marker]
+  elif target.get("kind") == "channel" and target.get("teamId") and target.get("channelId"):
+    path = f"/teams/{quoted_id(target['teamId'])}/channels/{quoted_id(target['channelId'])}/messages"
+    if reply_id:
+      path += f"/{quoted_id(reply_id)}/replies"
+  else:
+    raise ValueError("Invalid scheduled conversation")
+  if not value.get("message", "").strip():
+    raise ValueError("Scheduled message is empty")
+  body, mentions = outgoing_body(value["message"], content_type=value["contentType"],
+                                 mention_specs=draft.get("mentions") or [], attachment_tags=tags)
+  payload = {"body": body}
+  if mentions:
+    payload["mentions"] = mentions
+  if attachments:
+    payload["attachments"] = attachments
+  # Persist only allowlisted authoring data, never arbitrary backend options.
+  saved = {key: draft.get(key) for key in ("body", "editor", "contentType", "mentions", "replyTo")}
+  saved["target"] = target
+  return {"draft": saved, "path": path, "payload": payload,
+          "sendAt": float(value["when"]["sendAt"]),
+          "displayTime": value["when"]["displayTime"], "zone": value["when"]["zone"]}
+
+
+def outbox_send(record, token):
+  """One POST only; do not inherit the ordinary transport's 5xx retry loop."""
+  if mock_enabled():
+    # Same queue/claim path in fixtures; no authentication or external network.
+    return MockTenant().send_prepared(record["draft"]["target"],
+                                     (record["draft"].get("replyTo") or {}).get("id"),
+                                     record["payload"])
+  context = OUTBOX_SEND.set(True)
+  try:
+    return graph_json(record["path"], token, method="POST", payload=record["payload"])
+  finally:
+    OUTBOX_SEND.reset(context)
+
+
+def dispatch_outbox(args):
+  """Local queue management; only put/run need the existing token provider."""
+  try:
+    action = args[2]
+    if action == "time":
+      return schedule_time(json.loads(str(option(args, "--payload"))))
+    # Mock and live data must never share a delivery queue, even with --store.
+    store = str(option(args, "--store")) + (".mock" if mock_enabled() else "")
+    with Outbox(store) as queue:
+      if action == "list":
+        return queue.list()
+      if action in ("hold", "cancel"):
+        return queue.change(str(option(args, "--id")), "held" if action == "hold" else "cancelled")
+      if action == "put":
+        value = json.loads(str(option(args, "--payload")))
+        owner, token = outbox_identity()
+        return queue.put(value["id"], owner, outbox_record(value, token), value.get("revision"))
+      if action == "run":
+        return queue.run_one(outbox_identity, outbox_send,
+                             integer_option(args, "--grace", 900, minimum=0))
+      raise ValueError("Unknown outbox operation")
+  except (ValueError, KeyError, TypeError, OSError) as error:
+    raise BackendError(f"Outbox: {error}") from error
+
+
 def execute(raw_args: list[str]) -> tuple[Any, str]:
   """Execute RAW_ARGS and return its result plus requested output mode."""
   args, output = strip_output_option(raw_args)
   path = credentials_path()
+
+  if args[:2] == ["teams", "outbox"]:
+    return dispatch_outbox(args), output
 
   # Cache-only commands never need OAuth and must behave identically while the
   # mock tenant is enabled.  Keep this boundary ahead of backend selection.

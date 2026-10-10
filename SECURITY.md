@@ -31,6 +31,7 @@ See [AUTHENTICATION.md](AUTHENTICATION.md) for provider contracts and limitation
 | Reading/search cache | Configurable local SQLite database |
 | Snoozes, favorites, and local action state | Configurable local state file |
 | Unsent drafts and displayed images | Configurable local cache directories |
+| Scheduled source, rendered messages and delivery results | Private local SQLite outbox; not encrypted or automatically purged |
 | Downloads, Markdown exports, Org captures | Local destinations you select or configure |
 | Thread analysis | An exported conversation made available to your selected Agent Shell agent |
 | Ongoing companion | Bounded excerpts and explicitly shared context sent to the selected agent after you start it |
@@ -39,6 +40,11 @@ Local caches, drafts, exports, and snapshots can contain personal or confidentia
 content even when they contain no tokens. They are not encrypted by teams4e.
 Use appropriate device encryption, file permissions, backups, and retention.
 Agent session directories are not automatically purged.
+
+The opt-in scheduled-send worker uses the existing token provider. It stores no
+credentials, binds jobs to the sending account, and never automatically replays
+ambiguous sends. Keep the outbox on one machine, not in a cloud-synced directory.
+It requires running Emacs for delivery; see [scheduled sending](SCHEDULED-SEND.md).
 
 Ordinary reading does not start an agent. Using Agent Shell only as the local
 Markdown renderer does not submit messages to an AI service. The companion is

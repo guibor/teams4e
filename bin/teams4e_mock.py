@@ -969,6 +969,25 @@ class MockTenant:
       )
     return message
 
+  def send_prepared(self, target, reply_id, payload):
+    """Deliver a scheduled fixture using its frozen Graph-shaped payload."""
+    message = self._new_message(payload["body"]["content"], reply_to=reply_id,
+                                content_type=payload["body"]["contentType"])
+    message.update(copy.deepcopy(payload))
+    if target["kind"] == "chat":
+      chat = self._chat(target["chatId"])
+      self.state["chatMessages"].setdefault(target["chatId"], []).append(message)
+      chat["lastUpdatedDateTime"] = message["createdDateTime"]
+      chat["lastMessagePreview"] = copy.deepcopy(message)
+    else:
+      key = f"{target['teamId']}/{target['channelId']}"
+      if reply_id:
+        self.state["channelReplies"].setdefault(key + "/" + reply_id, []).append(message)
+      else:
+        self.state["channelMessages"].setdefault(key, []).append(message)
+    self._write()
+    return message
+
   def _send_chat(self, args: list[str]) -> dict[str, Any]:
     chat_id = option(args, "--chatId", required=False)
     emails = option(args, "--userEmails", required=False)

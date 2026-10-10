@@ -315,6 +315,22 @@ For rich incoming-message rendering, install [Agent Shell](https://github.com/xe
 its renderer runs locally without starting an agent. Otherwise, reading falls
 back to plain text. [Composition details](USAGE.md#writing-messages).
 
+## Scheduled Sending
+
+In a composer, `C-c C-s` queues the message for the **next configured workday**
+at `teams4e-workday-start` (07:00 by default); `C-c C-t` chooses a date/time.
+`M-x teams4e-reply-next-workday` opens a scheduled reply draft, and
+`M-x teams4e-outbox` lists pending deliveries with edit and cancel actions.
+Workdays and timezone are customizable; Org/Markdown source and reply identity
+are preserved.
+
+This is a durable **local outbox** using the documented Graph send API, not
+Teams' native scheduled-message service. Emacs must be running and authenticated.
+Late jobs are held; ambiguous send outcomes are not automatically retried.
+Scheduled file attachments are not yet supported.
+See [scheduled sending](SCHEDULED-SEND.md) for setup, keymaps, DST behavior,
+recovery, and limitations.
+
 ## History and Export
 
 Opening a chat fetches the **newest 100 messages, without a date cutoff**.
