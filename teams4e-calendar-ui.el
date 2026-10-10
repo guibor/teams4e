@@ -99,7 +99,9 @@ shorter than the agenda's display threshold.  Union occupied time exactly once."
                                    teams4e-calendar--focus-day-heading nil)
                              (teams4e-calendar--center))))))
             (insert "\n")
-            (put-text-property start (point) 'teams4e-calendar-item (list 'overview-day target)))
+            (add-text-properties start (point)
+                                 (list 'teams4e-calendar-item (list 'overview-day target)
+                                       'teams4e-calendar-day-time day)))
           (setq day (teams4e-calendar--midnight day 1))))
       (insert (propertize "  Blocking events/clashes: whole day. Durations: work hours; -- nonworking.\n\n"
                           'face 'shadow)))))

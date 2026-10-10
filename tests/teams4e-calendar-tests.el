@@ -950,6 +950,24 @@
         (should (equal day (get-text-property (point) 'teams4e-calendar-item)))
         (should (equal range (teams4e-calendar--key)))))))
 
+(ert-deftest teams4e-calendar-overview-navigation-preserves-historical-range ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (let ((range (teams4e-calendar--key))
+          (first (car (teams4e-calendar--range))))
+      (teams4e-calendar-overview)
+      (teams4e-calendar-next-event)
+      (should (eq 'overview-day (car (get-text-property (point) 'teams4e-calendar-item))))
+      (should (equal first teams4e-calendar--date))
+      (should (equal range (teams4e-calendar--key)))
+      (teams4e-calendar-previous-event)
+      (should (eq 'overview (car (get-text-property (point) 'teams4e-calendar-item))))
+      (should (equal range (teams4e-calendar--key)))
+      (teams4e-calendar-next-event)
+      (teams4e-calendar-next-event)
+      (should (equal (teams4e-calendar--midnight first 1) teams4e-calendar--date))
+      (should (equal range (teams4e-calendar--key))))))
+
 (ert-deftest teams4e-calendar-actions-reflect-event-slot-and-conflict-context ()
   (teams4e-calendar-test
     (setq-local teams4e-calendar-work-days '(0))

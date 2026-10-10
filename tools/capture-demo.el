@@ -220,8 +220,9 @@
              (format "availability-%s-%s.png" view width))))
         (delete-other-windows)
         (when (require 'window-purpose nil t) (purpose-mode 1))
-        ;; The synthetic calendar works daily, keeping screenshots useful on weekends.
-        (setq teams4e-calendar-work-days '(0 1 2 3 4 5 6))
+        ;; Include tomorrow's fixtures even when today ends a normal calendar week.
+        (setq calendar-week-start-day (nth 6 (decode-time (current-time)))
+              teams4e-calendar-work-days '(0 1 2 3 4 5 6))
         (teams4e-calendar t)
         (teams4e-capture-wait
          (lambda ()

@@ -1208,9 +1208,8 @@ Stay put at the boundary."
           (setq found (point))))
       (unless found (forward-line step)))
     (goto-char (or found original))
-    (when found
-      (setq teams4e-calendar--date
-            (get-text-property found 'teams4e-calendar-day-time)))))
+    (when-let ((date (and found (get-text-property found 'teams4e-calendar-day-time))))
+      (setq teams4e-calendar--date date))))
 
 (defun teams4e-calendar-previous-event ()
   "Move to the previous agenda item, respecting summary context."
