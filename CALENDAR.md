@@ -23,6 +23,8 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `F` | Choose a future free slot of at least 30 minutes in this range |
 | `C-u F` | Choose a different minimum free duration |
 | `s` | Jump to a visible meeting through completion, without changing filters |
+| `W` | Jump to the overview of the loaded range |
+| `?` | Contextual actions with your currently active bindings |
 | `}` / `{` | Next / previous conflict; unfold its meeting actions |
 | `B` | Draft a personal focus block in a fitting free slot |
 | `!`, `C-u !` | Next / previous unanswered upcoming invitation, wrapping within visible events |
@@ -44,6 +46,36 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `C` | Org capture: title, link, time, location, and event ID |
 | `g` | Refresh the displayed range |
 | `q` | Quit the current pane |
+
+### Overview And Actions
+
+`W` (`teams4e-calendar-overview`) brings the compact overview to the top of the
+window. The week agenda shows seven day rows; day/month views summarize their
+own loaded range, without fetching or switching to a different range. Select a
+row with `RET` to jump into that day's agenda. `j/k` traverse overview rows too.
+Customize `teams4e-calendar-show-overview` to hide the table by default; `W`
+enables it locally. Normal opening still centers on the current time.
+
+**Events** counts time-blocking entries, including focus and out-of-office
+blocks, not only Teams meetings. **Clashes** counts the exact overlapping
+intervals used by the day summary; **Reply** counts unanswered invitations.
+These counts cover the whole day. **Blocked**, **Free**, and **Longest** cover
+configured working hours. Overlapping occupied intervals are counted once.
+Free totals include short gaps hidden by the agenda's minimum-gap setting;
+Longest is the longest uninterrupted free interval. Nonworking-day durations
+are `--`, not zero. The overview ignores text filters, excludes declined,
+cancelled and nonblocking entries, and never estimates free time from a stale,
+loading, or incomplete snapshot. It describes this calendar only.
+
+`?` (`teams4e-calendar-actions`) opens an ordinary Emacs completion menu in the
+agenda or invitation reader. It offers relevant event, free-slot, section, and
+navigation actions. Organizers are not offered RSVP; entries without an online
+link are not offered Join. Labels show **effective bindings in the current
+buffer and Evil state**, including your customizations, or an `M-x` fallback
+when no active key invokes that command. No Transient dependency is required.
+Opening or cancelling the menu does not fetch or change anything; choosing an
+action invokes its normal command. If the target disappears while you choose,
+the menu aborts rather than acting on a different meeting.
 
 First load centers on the ongoing or nearest timed row. Explicit refreshes keep
 your selected occurrence, line, column, and screen row, independently in every
@@ -350,12 +382,16 @@ Save drafts and wait for pending submissions before updating or stopping a backe
 For Lisp-only calendar updates in an existing session, evaluate with `M-:`:
 
 ```elisp
-(progn (load "teams4e-calendar.el") (teams4e-calendar))
+(progn
+  (load "teams4e-calendar.el")
+  (load "teams4e-calendar-ui.el")
+  (teams4e-calendar))
 ```
 
 This reinstalls the agenda's buffer-local Evil navigation bindings and redraws
 from the current snapshot without fetching. The invite pane uses a standard
 Emacs display action that is also tested with Spacemacs' window-purpose enabled.
+Reopen an invitation to install the new reader binding in an existing pane.
 For this creation update, reload `teams4e-calendar-create.el` as well if it was
 already loaded. After staging the Python files, an in-session backend restart is
 possible with `(teams4e--stop-server "Backend updated")`; this is an internal

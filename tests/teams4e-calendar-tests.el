@@ -2,6 +2,7 @@
 (require 'ert)
 (require 'teams4e)
 (require 'teams4e-calendar-create)
+(require 'teams4e-calendar-ui)
 
 (defun teams4e-calendar-test-event (id start end &rest extra)
   (append `((id . ,id) (subject . ,id)
@@ -868,6 +869,178 @@
       (define-key teams4e-calendar-mode-map (kbd "s") #'ignore)
       (teams4e-calendar--install-navigation)
       (should (eq (key-binding (kbd "s")) #'ignore)))))
+
+(ert-deftest teams4e-calendar-overview-unions-blocks-and-counts-short-gaps ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (setq-local teams4e-calendar-free-gap-minutes 30)
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--filter "nothing matches"
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "A" "2026-10-04T09:00:00Z" "2026-10-04T11:00:00Z" '(showAs . "busy"))
+                (teams4e-calendar-test-event "B" "2026-10-04T10:00:00Z" "2026-10-04T12:00:00Z"
+                                            '(showAs . "tentative") '(attendees ((type . "required"))))
+                (teams4e-calendar-test-event "C" "2026-10-04T12:05:00Z" "2026-10-04T13:00:00Z" '(showAs . "busy"))
+                (teams4e-calendar-test-event "free" "2026-10-04T13:00:00Z" "2026-10-04T18:00:00Z" '(showAs . "free"))
+                (teams4e-calendar-test-event "declined" "2026-10-04T13:00:00Z" "2026-10-04T18:00:00Z"
+                                            '(showAs . "busy") '(responseStatus (response . "declined")))
+                (teams4e-calendar-test-event "cancelled" "2026-10-04T13:00:00Z" "2026-10-04T18:00:00Z"
+                                            '(showAs . "busy") '(isCancelled . t))))
+    (let ((stats (teams4e-calendar-ui--day-stats (teams4e-calendar--midnight teams4e-calendar--date))))
+      (should (= 3 (plist-get stats :events)))
+      (should (= 1 (plist-get stats :conflicts)))
+      (should (= 1 (plist-get stats :unanswered)))
+      (should (= (* 235 60) (plist-get stats :blocked)))
+      (should (= (* 305 60) (plist-get stats :free)))
+      (should (= (* 300 60) (plist-get stats :longest))))
+    (should (equal "nothing matches" teams4e-calendar--filter))))
+
+(ert-deftest teams4e-calendar-overview-all-day-and-nonworking-day-metrics ()
+  (teams4e-calendar-test
+    (setq teams4e-calendar--view 'day teams4e-calendar--loaded-key (teams4e-calendar--key)
+          teams4e-calendar--events
+          (list (teams4e-calendar-test-event "OOF" "2026-10-04T00:00:00Z" "2026-10-05T00:00:00Z"
+                                            '(showAs . "oof") '(isAllDay . t))))
+    (let ((day (teams4e-calendar--midnight teams4e-calendar--date)))
+      (should-not (plist-get (teams4e-calendar-ui--day-stats day) :free))
+      (setq-local teams4e-calendar-work-days '(0))
+      (let ((stats (teams4e-calendar-ui--day-stats day)))
+        (should (= (* 9 3600) (plist-get stats :blocked)))
+        (should (zerop (plist-get stats :free)))
+        (should (zerop (plist-get stats :longest)))))))
+
+(ert-deftest teams4e-calendar-overview-respects-local-dst-day-length ()
+  (teams4e-calendar-test
+    (set-time-zone-rule "America/New_York")
+    (setq-local teams4e-calendar-work-days '(0))
+    (setq-local teams4e-calendar-work-hours '(0 . 24))
+    (setq teams4e-calendar--view 'day
+          teams4e-calendar--date (date-to-time "2026-11-01T12:00:00-05:00")
+          teams4e-calendar--loaded-key (teams4e-calendar--key))
+    (should (= (* 25 3600)
+               (plist-get (teams4e-calendar-ui--day-stats (teams4e-calendar--midnight teams4e-calendar--date))
+                          :free)))))
+
+(ert-deftest teams4e-calendar-overview-never-infers-free-time-from-incomplete-data ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (let ((day (teams4e-calendar--midnight teams4e-calendar--date)))
+      (should-not (teams4e-calendar-ui--day-stats day))
+      (setq teams4e-calendar--loaded-key (teams4e-calendar--key) teams4e-calendar--loading t)
+      (should-not (teams4e-calendar-ui--day-stats day))
+      (setq teams4e-calendar--loading nil teams4e-calendar--error "Partial")
+      (teams4e-calendar--render)
+      (should-not (teams4e-calendar-ui--day-stats day))
+      (should-not (teams4e-calendar--find-item (list 'overview-day (teams4e-calendar--day-key day)))))))
+
+(ert-deftest teams4e-calendar-overview-jumps-into-real-day-without-fetching ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (setq-local teams4e-calendar-show-overview nil)
+    (let ((range (teams4e-calendar--key))
+          (day (teams4e-calendar--day-key teams4e-calendar--date)))
+      (cl-letf (((symbol-function 'teams4e--run-json) (lambda (&rest _) (ert-fail "Overview must not fetch"))))
+        (teams4e-calendar-overview)
+        (should (equal (teams4e-calendar-ui--overview-key)
+                       (get-text-property (point) 'teams4e-calendar-item)))
+        (goto-char (teams4e-calendar--find-item (list 'overview-day day)))
+        (should-not (get-text-property (point) 'teams4e-calendar-day))
+        (teams4e-calendar-activate)
+        (should (equal day (get-text-property (point) 'teams4e-calendar-item)))
+        (should (equal range (teams4e-calendar--key)))))))
+
+(ert-deftest teams4e-calendar-actions-reflect-event-slot-and-conflict-context ()
+  (teams4e-calendar-test
+    (setq-local teams4e-calendar-work-days '(0))
+    (teams4e-calendar-test-conflicts)
+    (should (assq 'teams4e-calendar-toggle-section
+                  (mapcar (lambda (pair) (cons (cdr pair) (car pair))) (teams4e-calendar-ui--actions))))
+    (let ((day (teams4e-calendar--day-key teams4e-calendar--date)))
+      (goto-char (teams4e-calendar--find-item (list 'event day "A")))
+      (should-not (memq 'teams4e-calendar-respond (mapcar #'cdr (teams4e-calendar-ui--actions))))
+      (should (assoc "Event: availability / reschedule" (teams4e-calendar-ui--actions)))
+      (goto-char (teams4e-calendar--find-item (list 'event day "B")))
+      (should (memq 'teams4e-calendar-respond (mapcar #'cdr (teams4e-calendar-ui--actions))))
+      (should-not (memq 'teams4e-calendar-join (mapcar #'cdr (teams4e-calendar-ui--actions))))
+      (goto-char (point-min))
+      (search-forward "[FREE]")
+      (should (assoc "Free slot: draft focus block" (teams4e-calendar-ui--actions)))
+      (should-not (memq 'teams4e-calendar-respond (mapcar #'cdr (teams4e-calendar-ui--actions)))))))
+
+(ert-deftest teams4e-calendar-actions-use-custom-bindings-and-original-event ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (let ((map (copy-keymap teams4e-calendar-mode-map))
+          (day (teams4e-calendar--day-key teams4e-calendar--date)) result)
+      (use-local-map map)
+      (define-key map (kbd "C") nil)
+      (define-key map (kbd "C-c c") #'teams4e-calendar-capture)
+      (goto-char (teams4e-calendar--find-item (list 'event day "A")))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_ choices &rest _)
+                   (let ((choice (car (rassq 'teams4e-calendar-capture choices))))
+                     (should (string-match-p (regexp-quote "[C-c c]") choice))
+                     (goto-char (teams4e-calendar--find-item (list 'event day "B")))
+                     choice)))
+                ((symbol-function 'teams4e-calendar-capture)
+                 (lambda () (interactive) (setq result (teams4e--get (cadr (teams4e-calendar--context)) 'id))))
+                ((symbol-function 'teams4e--run-json) (lambda (&rest _) (ert-fail "Menu must not fetch"))))
+        (teams4e-calendar-actions)
+        (should (equal "A" result))))))
+
+(ert-deftest teams4e-calendar-actions-abort-if-target-disappears ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (goto-char (teams4e-calendar--find-item (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "B")))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_ choices &rest _)
+                 (setq teams4e-calendar--events nil)
+                 (teams4e-calendar--render)
+                 (car (rassq 'teams4e-calendar-respond choices))))
+              ((symbol-function 'teams4e-calendar-respond) (lambda () (interactive) (ert-fail "Wrong event targeted"))))
+      (should-error (teams4e-calendar-actions) :type 'user-error))))
+
+(ert-deftest teams4e-calendar-actions-cancel-without-side-effects ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (let ((before (point)) (snapshot teams4e-calendar--events) cancelled)
+      (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) (signal 'quit nil)))
+                ((symbol-function 'teams4e--run-json) (lambda (&rest _) (ert-fail "Menu must not fetch"))))
+        (condition-case nil (teams4e-calendar-actions) (quit (setq cancelled t))))
+      (should cancelled)
+      (should (= before (point)))
+      (should (eq snapshot teams4e-calendar--events)))))
+
+(ert-deftest teams4e-calendar-actions-evil-labels-ignore-shadowed-keys ()
+  (skip-unless (featurep 'evil))
+  (teams4e-calendar-test
+    (evil-local-mode 1)
+    (dolist (state '(normal motion))
+      (evil-change-state state)
+      (should (eq (key-binding (kbd "?")) #'teams4e-calendar-actions))
+      (should (eq (key-binding (kbd "W")) #'teams4e-calendar-overview))
+      (evil-local-set-key state (kbd "W") #'ignore)
+      (evil-local-set-key state (kbd "z") #'teams4e-calendar-overview)
+      (should (equal "z" (teams4e-calendar-ui--binding-label #'teams4e-calendar-overview)))
+      (evil-local-set-key state (kbd "z") nil)
+      (should (equal "M-x teams4e-calendar-overview"
+                     (teams4e-calendar-ui--binding-label #'teams4e-calendar-overview))))))
+
+(ert-deftest teams4e-calendar-actions-reader-resolves-owner-without-agenda-commands ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (let ((owner (current-buffer)))
+      (with-temp-buffer
+        (teams4e-calendar-event-mode)
+        (setq teams4e-calendar--owner owner teams4e-calendar--event-id "B")
+        (should (memq 'teams4e-calendar-respond (mapcar #'cdr (teams4e-calendar-ui--actions))))
+        (should-not (memq 'teams4e-calendar-create (mapcar #'cdr (teams4e-calendar-ui--actions))))
+        (when (featurep 'evil)
+          (evil-local-mode 1)
+          (dolist (state '(normal motion))
+            (evil-change-state state)
+            (should (eq (key-binding (kbd "?")) #'teams4e-calendar-actions))))))))
 
 (ert-deftest teams4e-calendar-redraw-preserves-multi-day-occurrence-position ()
   (teams4e-calendar-test

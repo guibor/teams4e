@@ -401,6 +401,14 @@ For quick planning, `s` jumps to a visible meeting without changing your filter;
 drafts a personal focus block in a fitting free slot, with no attendees or Teams
 link. The draft stays editable in Org and is saved only on explicit submission.
 
+`W` opens the week-at-a-glance overview: each day's blocked/free working hours,
+longest free stretch, blocking-event count, conflicts, and unanswered invitations.
+Overlaps count only once toward occupied time. Select a day to enter its agenda.
+`?` opens context-sensitive actions in the agenda and invite reader, showing
+your actual active bindings rather than hard-coded defaults. Both features reuse
+the current snapshot; see [overview and actions](CALENDAR.md#overview-and-actions)
+for metric definitions and customization.
+
 `+` opens an Org meeting draft beside the agenda. Edit its title, times,
 required/optional attendees, location, and description; `C-c C-a` searches the
 directory and `C-c C-t` chooses a time. Only `C-c C-c` creates the event and sends

@@ -233,12 +233,25 @@
                             teams4e-calendar--events)))))
         (switch-to-buffer teams4e-calendar--buffer-name)
         (delete-other-windows)
+        (teams4e-calendar-overview)
+        (teams4e-capture-frame "calendar-overview.png")
         (teams4e-calendar--focus-time teams4e-calendar--date t)
         (unless (teams4e-calendar--find-item
                  (list 'day-map (teams4e-calendar--day-key teams4e-calendar--date)))
           (error "Synthetic calendar has no working-hours map"))
         (recenter 0)
         (teams4e-capture-frame "calendar.png")
+        (save-window-excursion
+          (goto-char (point-min))
+          (search-forward "Release checkpoint")
+          (condition-case nil
+              (minibuffer-with-setup-hook
+                  (lambda ()
+                    (minibuffer-completion-help)
+                    (teams4e-capture-frame "calendar-actions.png")
+                    (abort-recursive-edit))
+                (teams4e-calendar-actions))
+            (quit nil)))
         (goto-char (point-min))
         (search-forward "C1 [+]")
         (beginning-of-line)

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add a local week/range overview (`W`) with per-day working-time totals, longest
+  free intervals, blocking-event counts, conflicts, and unanswered invitations.
+  Union overlaps once, include short free gaps, distinguish nonworking days,
+  and suppress metrics on incomplete data. Day rows open their agenda headings.
+- Add contextual calendar actions (`?`) through ordinary Emacs completion in
+  agenda and invite buffers. Display effective customized bindings, respect
+  Evil shadowing, and reject stale targets before invoking an action.
+
 - Add event completion (`s`) that preserves filters and distinguishes duplicate
   titles. Add conflict cycling (`}` / `{`) that unfolds actionable groups without
   fetching or hiding filtered-out partners.

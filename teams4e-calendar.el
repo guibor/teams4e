@@ -16,6 +16,9 @@
 
 (autoload 'teams4e-calendar-create "teams4e-calendar-create" nil t)
 (autoload 'teams4e-calendar-block-time "teams4e-calendar-create" nil t)
+(autoload 'teams4e-calendar-ui--insert-overview "teams4e-calendar-ui")
+(autoload 'teams4e-calendar-overview "teams4e-calendar-ui" nil t)
+(autoload 'teams4e-calendar-actions "teams4e-calendar-ui" nil t)
 
 (declare-function evil-set-initial-state "evil-core" (mode state))
 (declare-function evil-local-set-key "evil-core" (state key def))
@@ -902,6 +905,7 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
              'face 'bold))
     (when teams4e-calendar--error
       (insert (propertize (concat teams4e-calendar--error "\n\n") 'face 'warning)))
+    (teams4e-calendar-ui--insert-overview)
     (while (time-less-p day (cadr range))
       (let* ((day-start (point))
              (section (teams4e-calendar--day-key day))
@@ -1191,7 +1195,7 @@ Stay put at the boundary."
          (original (point))
          (item (get-text-property original 'teams4e-calendar-item))
          (summary (or (get-text-property original 'teams4e-calendar-summary)
-                      (memq (car-safe item) '(day day-map))))
+                      (memq (car-safe item) '(day day-map overview overview-day))))
          found)
     (forward-line step)
     (while (and (not found) (not (if backward (bobp) (eobp))))
@@ -1574,6 +1578,8 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("}" . teams4e-calendar-next-conflict)
                        ("{" . teams4e-calendar-previous-conflict)
                        ("B" . teams4e-calendar-block-time)
+                       ("W" . teams4e-calendar-overview)
+                       ("?" . teams4e-calendar-actions)
                        ("J" . teams4e-calendar-next-event)
                        ("K" . teams4e-calendar-previous-event)
                        ("h" . teams4e-calendar-previous-day)
@@ -1622,6 +1628,8 @@ Short meeting links without a thread ID cannot be resolved locally."
                    ("}" . teams4e-calendar-next-conflict)
                    ("{" . teams4e-calendar-previous-conflict)
                    ("B" . teams4e-calendar-block-time)
+                   ("W" . teams4e-calendar-overview)
+                   ("?" . teams4e-calendar-actions)
                    ("f" . teams4e-calendar-follow-in-outlook)
                    ("N" . teams4e-calendar-next-slot)
                    ("TAB" . teams4e-calendar-toggle-section)
@@ -1635,6 +1643,7 @@ Short meeting links without a thread ID cannot be resolved locally."
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
     (dolist (binding '(("o" . teams4e-calendar-open-outlook)
+                       ("?" . teams4e-calendar-actions)
                        ("f" . teams4e-calendar-follow-in-outlook)
                        ("v" . teams4e-calendar-join)
                        ("T" . teams4e-calendar-open-chat)
@@ -1651,7 +1660,7 @@ Read the public mode map so user customizations remain authoritative."
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
       (dolist (key '("j" "k" "M-j" "M-k" "J" "K" "S" "h" "l" "H" "L"
-                     "t" "N" "f" "F" "!" "s" "}" "{" "B" "+" "TAB" "<tab>" "RET"))
+                     "t" "N" "f" "F" "!" "s" "}" "{" "B" "W" "?" "+" "TAB" "<tab>" "RET"))
         (evil-local-set-key state (kbd key)
                             (lookup-key teams4e-calendar-mode-map (kbd key)))))))
 
@@ -1673,12 +1682,15 @@ Read the public mode map so user customizations remain authoritative."
   (setq-local word-wrap t)
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
-      (evil-local-set-key state (kbd "f")
-                          (lookup-key teams4e-calendar-event-mode-map (kbd "f"))))))
+      (dolist (key '("f" "?"))
+        (evil-local-set-key state (kbd key)
+                            (lookup-key teams4e-calendar-event-mode-map (kbd key)))))))
 
 ;; Extend a reader map already loaded before this command was available.
 (unless (lookup-key teams4e-calendar-event-mode-map (kbd "f"))
   (define-key teams4e-calendar-event-mode-map (kbd "f") #'teams4e-calendar-follow-in-outlook))
+(unless (lookup-key teams4e-calendar-event-mode-map (kbd "?"))
+  (define-key teams4e-calendar-event-mode-map (kbd "?") #'teams4e-calendar-actions))
 
 (with-eval-after-load 'evil
   (dolist (mode '(teams4e-calendar-mode teams4e-calendar-event-mode))
