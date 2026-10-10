@@ -77,6 +77,16 @@ Opening or cancelling the menu does not fetch or change anything; choosing an
 action invokes its normal command. If the target disappears while you choose,
 the menu aborts rather than acting on a different meeting.
 
+![Calendar overview in real Emacs with Moe](assets/calendar-overview.png)
+
+![Contextual calendar action completion in real Emacs with Moe](assets/calendar-actions.png)
+
+These captures use synthetic appointments, Moe Dark, and ordinary Emacs
+completion. Your completion frontend and customized keys determine how the
+menu looks. The fixture uses a rolling week starting today and daily working
+hours so it remains illustrative on weekends; these are not package defaults.
+See [overview and menu capture provenance](assets/calendar-ui-capture.json).
+
 First load centers on the ongoing or nearest timed row. Explicit refreshes keep
 your selected occurrence, line, column, and screen row, independently in every
 agenda window. Unchanged content keeps the exact scroll position. If a summary
