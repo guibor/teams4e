@@ -40,6 +40,12 @@
 (defvar-local teams4e-availability--window-configuration nil)
 (defvar-local teams4e-availability--origin-frame nil)
 (defvar-local teams4e-availability--error nil)
+(defcustom teams4e-meeting-show-calendar-context t
+  "Show the selected day's calendars alongside the availability picker."
+  :type 'boolean :group 'teams4e)
+(defvar-local teams4e-availability--show-context teams4e-meeting-show-calendar-context)
+(defvar-local teams4e-availability-context--owner nil)
+(defconst teams4e-availability--context-name "*Teams Calendar Context*")
 
 (defface teams4e-availability-free
   '((t :inherit success))
@@ -794,6 +800,126 @@
     (goto-char (if (< position (point-max)) position (point-min)))
     (beginning-of-line)))
 
+(defun teams4e-availability--insert-day-context (suggestion &optional destination)
+  "Insert SUGGESTION's day and conflicts into DESTINATION or the current buffer."
+  (let* ((slot (teams4e--get suggestion 'meetingTimeSlot))
+         (day (teams4e-availability--midnight
+               (or (and slot (teams4e-availability--time slot 'start))
+                   teams4e-availability--day (teams4e-availability--original-time))))
+         (day-slot `((start (dateTime . ,(format-time-string "%FT%TZ" day t)))
+                     (end (dateTime . ,(format-time-string
+                                        "%FT%TZ" (teams4e-availability--midnight day 1) t))))))
+    (let ((records
+           (mapcar (lambda (person)
+                     (list person (teams4e-availability--schedule person)
+                           (and slot (teams4e-availability--slot-status person slot))))
+                   (teams4e-availability--participants))))
+      (with-current-buffer (or destination (current-buffer))
+        (insert (propertize (format-time-string "%A, %e %B\n" day) 'face 'bold))
+        (when slot
+          (insert (propertize (concat "Selected  " (teams4e-availability--time-label slot) "\n")
+                              'face 'bold)))
+        (dolist (record records)
+          (let* ((person (nth 0 record))
+                 (schedule (nth 1 record))
+                 (status (nth 2 record))
+                 (items (sort (seq-filter (lambda (item)
+                                            (teams4e-availability--overlap-p item day-slot))
+                                          (copy-sequence (teams4e--get schedule 'scheduleItems)))
+                              (lambda (a b) (time-less-p (teams4e-availability--time a 'start)
+                                                         (teams4e-availability--time b 'start))))))
+            (insert "\n" (propertize (teams4e-availability--participant-name person) 'face 'bold))
+            (when status
+              (insert "  " (propertize (teams4e-availability--status-name status)
+                                       'face (teams4e-availability--status-face status))))
+            (insert "\n")
+            (when-let ((error (or (teams4e--get schedule 'detailsError)
+                                  (teams4e--dig schedule 'error 'message))))
+              (insert (propertize (concat error "\n") 'face 'shadow)))
+            (unless items
+              (insert (propertize (if (or (null schedule) (teams4e--get schedule 'error)
+                                          (teams4e--get schedule 'availabilityView)
+                                          (not (assoc 'scheduleItems schedule)))
+                                      "No event details shared for this day\n"
+                                    "No calendar blocks this day\n") 'face 'shadow)))
+            (dolist (item items)
+              (let* ((overlap (and slot (teams4e-availability--overlap-p item slot)))
+                     (blocking (teams4e-availability--blocking-status-p (teams4e--get item 'status)))
+                     (start (point))
+                     (location (teams4e-availability--block-location item))
+                     (url (and (not (teams4e--get item 'isPrivate)) (teams4e--get item 'webLink))))
+                (insert (if (and overlap blocking) "! " "  ")
+                        (format-time-string "%H:%M" (teams4e-availability--time item 'start)) " - "
+                        (format-time-string "%H:%M" (teams4e-availability--time item 'end)) "  "
+                        (propertize (teams4e-availability--status-name (teams4e--get item 'status))
+                                    'face (teams4e-availability--status-face (teams4e--get item 'status)))
+                        "\n    ")
+                (if url
+                    (insert-text-button (teams4e-availability--block-title item)
+                                        'follow-link t 'action
+                                        (lambda (_) (teams4e--open-url-in-browser url)))
+                  (insert (teams4e-availability--block-title item)))
+                (when (and location (not (string-empty-p location)))
+                  (insert "\n    " location))
+                (insert "\n")
+                (when (and overlap blocking)
+                  (add-face-text-property start (point) 'teams4e-availability-selected t))))))))))
+
+(defun teams4e-availability--context-close ()
+  "Close only this picker's calendar context pane."
+  (when-let ((buffer (get-buffer teams4e-availability--context-name)))
+    (when (eq (buffer-local-value 'teams4e-availability-context--owner buffer) (current-buffer))
+      (dolist (window (get-buffer-window-list buffer nil t))
+        (quit-window nil window))
+      (kill-buffer buffer))))
+
+(defun teams4e-availability--render-context ()
+  "Project the current payload into a companion pane without additional requests."
+  (if (or (not teams4e-availability--show-context)
+          (null teams4e-availability--payload) teams4e-availability--error)
+      (teams4e-availability--context-close)
+    (when-let ((owner-window (get-buffer-window (current-buffer))))
+      (let* ((owner (current-buffer))
+             (suggestion (teams4e-availability--selected-suggestion))
+             (buffer (get-buffer-create teams4e-availability--context-name)))
+        (with-current-buffer buffer
+          (unless (derived-mode-p 'teams4e-availability-context-mode)
+            (teams4e-availability-context-mode))
+          (setq teams4e-availability-context--owner owner)
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (with-current-buffer owner
+              (teams4e-availability--insert-day-context suggestion buffer))
+            (goto-char (point-min)))
+          (setq header-line-format "Calendars / selected day"))
+        (unless (get-buffer-window buffer)
+          (with-selected-window owner-window
+            (display-buffer buffer
+                            (if (>= (window-total-width) 140)
+                                '((display-buffer-in-direction) (direction . right) (window-width . 0.40))
+                              '((display-buffer-below-selected) (window-height . 0.35))))))))))
+
+(defun teams4e-availability-toggle-calendar-context ()
+  "Toggle the selected day's own and shared calendar details."
+  (interactive)
+  (setq teams4e-availability--show-context (not teams4e-availability--show-context))
+  (teams4e-availability--render-context))
+
+(defun teams4e-availability-context-return ()
+  "Return to the slot picker owning this calendar pane."
+  (interactive)
+  (unless (buffer-live-p teams4e-availability-context--owner)
+    (user-error "The availability picker was closed"))
+  (pop-to-buffer teams4e-availability-context--owner))
+
+(define-derived-mode teams4e-availability-context-mode special-mode "Teams-Calendars"
+  "Calendar details for the selected availability day."
+  (setq-local word-wrap t truncate-lines nil)
+  (local-set-key (kbd "q") #'teams4e-availability-context-return)
+  (when (fboundp 'evil-local-set-key)
+    (dolist (state '(normal motion))
+      (evil-local-set-key state (kbd "q") #'teams4e-availability-context-return))))
+
 (defun teams4e-availability--render ()
   "Render the singleton meeting availability workspace."
   (let ((inhibit-read-only t))
@@ -819,7 +945,8 @@
                        (or teams4e-availability--day
                            (teams4e-availability--original-time)))
                     "")
-                  (teams4e-availability--title)))))
+                  (teams4e-availability--title)))
+    (teams4e-availability--render-context)))
 
 (defun teams4e-availability-next (&optional count)
   "Select the next availability row by COUNT."
@@ -1096,6 +1223,7 @@
     (define-key map (kbd "=") #'teams4e-availability-original-day)
     (define-key map (kbd "s") #'teams4e-availability-show-suggestions)
     (define-key map (kbd "b") #'teams4e-availability-show-blocks)
+    (define-key map (kbd "C") #'teams4e-availability-toggle-calendar-context)
     (define-key map (kbd "g") #'teams4e-availability-refresh)
     (define-key map (kbd "r") #'teams4e-availability-change-range)
     (define-key map (kbd "w") #'teams4e-availability-cycle-hours)
@@ -1115,11 +1243,14 @@
 
 Use j/k to move rows and RET to propose.  Use d for the day timeline,
 a for availability ranking, c for closest to original, and b for blocks.
+Use C to toggle the selected day's calendar context pane.
 Use [/] for previous/next day, = for the original day, r for the range,
 w to cycle the Outlook suggestion hour domain,
 m for an exact time, v to RSVP, J to join, o for the calendar event, and q to
 return to the previous Teams layout."
   (setq-local truncate-lines t)
+  (setq-local teams4e-availability--show-context teams4e-meeting-show-calendar-context)
+  (add-hook 'kill-buffer-hook #'teams4e-availability--context-close nil t)
   (add-hook 'kill-buffer-hook
             (lambda ()
               (teams4e--cancel-process teams4e-availability--request))
@@ -1313,6 +1444,7 @@ Accepting with an empty note sends no response to the organizer."
     (kbd "=") #'teams4e-availability-original-day
     (kbd "s") #'teams4e-availability-show-suggestions
     (kbd "b") #'teams4e-availability-show-blocks
+    (kbd "C") #'teams4e-availability-toggle-calendar-context
     (kbd "g") #'teams4e-availability-refresh
     (kbd "r") #'teams4e-availability-change-range
     (kbd "w") #'teams4e-availability-cycle-hours

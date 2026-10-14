@@ -1008,6 +1008,7 @@ class GraphBackendTests(unittest.TestCase):
                 ["getSchedule denied"],
             ),
         ),
+        mock.patch.object(backend, "graph_json", side_effect=backend.BackendError("calendar denied")),
     ):
       result = backend.get_meeting_availability(
           "event-id",

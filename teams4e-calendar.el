@@ -19,6 +19,7 @@
 (autoload 'teams4e-calendar-ui--insert-overview "teams4e-calendar-ui")
 (autoload 'teams4e-calendar-overview "teams4e-calendar-ui" nil t)
 (autoload 'teams4e-calendar-actions "teams4e-calendar-ui" nil t)
+(autoload 'teams4e-calendar-event-actions "teams4e-calendar-ui" nil t)
 
 (declare-function evil-set-initial-state "evil-core" (mode state))
 (declare-function evil-local-set-key "evil-core" (state key def))
@@ -1262,6 +1263,9 @@ Stay put at the boundary."
     (when (teams4e--get event 'seriesMasterId)
       (insert "Series    Recurring occurrence\n"))
     (insert "\n")
+    (insert-text-button "Actions" 'follow-link t
+                        'action (lambda (_) (teams4e-calendar-event-actions)))
+    (insert "   ")
     (dolist (link `(("Open in Outlook" . ,(teams4e--get event 'webLink))
                     ("Join meeting" . ,(or (teams4e--dig event 'onlineMeeting 'joinUrl)
                                           (teams4e--get event 'onlineMeetingUrl)))))
@@ -1414,8 +1418,9 @@ Short meeting links without a thread ID cannot be resolved locally."
     (unless url (user-error "This event has no online meeting link"))
     (teams4e--open-url-in-browser url)))
 
-(defun teams4e-calendar-respond ()
-  "Respond to the selected event; accepting without a note sends no response."
+(defun teams4e-calendar-respond (&optional response)
+  "Respond to the selected event, prompting when RESPONSE is nil.
+Accepting without a note sends no notification to the organizer."
   (interactive)
   (teams4e--require-online)
   (pcase-let* ((`(,owner ,event) (teams4e-calendar--context))
@@ -1423,7 +1428,7 @@ Short meeting links without a thread ID cannot be resolved locally."
     (when (or (teams4e--get event 'isOrganizer) (teams4e--get event 'isCancelled)
               (null (teams4e--get event 'attendees)))
       (user-error "This event cannot be answered as an invitation"))
-    (let* ((response (completing-read "Response: " '("accepted" "tentativelyAccepted" "declined") nil t))
+    (let* ((response (or response (completing-read "Response: " '("accepted" "tentativelyAccepted" "declined") nil t)))
            (comment (read-string (if (equal response "accepted")
                                      "Note (empty: accept without notifying): "
                                    "Note to organizer: "))))
@@ -1610,7 +1615,7 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("v" . teams4e-calendar-join)
                        ("T" . teams4e-calendar-open-chat)
                        ("r" . teams4e-calendar-availability)
-                       ("a" . teams4e-calendar-respond)
+                       ("a" . teams4e-calendar-event-actions)
                        ("A" . teams4e-calendar-availability)
                        ("C" . teams4e-calendar-capture)))
       (define-key map (kbd (car binding)) (cdr binding)))
@@ -1647,7 +1652,7 @@ Short meeting links without a thread ID cannot be resolved locally."
                        ("v" . teams4e-calendar-join)
                        ("T" . teams4e-calendar-open-chat)
                        ("r" . teams4e-calendar-availability)
-                       ("a" . teams4e-calendar-respond)
+                       ("a" . teams4e-calendar-event-actions)
                        ("A" . teams4e-calendar-availability)
                        ("C" . teams4e-calendar-capture)))
       (define-key map (kbd (car binding)) (cdr binding)))
@@ -1659,7 +1664,8 @@ Read the public mode map so user customizations remain authoritative."
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
       (dolist (key '("j" "k" "M-j" "M-k" "J" "K" "S" "h" "l" "H" "L"
-                     "t" "N" "f" "F" "!" "s" "}" "{" "B" "W" "?" "+" "TAB" "<tab>" "RET"))
+                     "t" "N" "f" "F" "!" "s" "}" "{" "B" "W" "?" "+" "TAB" "<tab>" "RET"
+                     "a" "r" "A" "C" "T" "v" "o"))
         (evil-local-set-key state (kbd key)
                             (lookup-key teams4e-calendar-mode-map (kbd key)))))))
 
@@ -1681,11 +1687,15 @@ Read the public mode map so user customizations remain authoritative."
   (setq-local word-wrap t)
   (when (fboundp 'evil-local-set-key)
     (dolist (state '(normal motion))
-      (dolist (key '("f" "?"))
+      (dolist (key '("f" "?" "a" "r" "A" "C" "T" "v" "o"))
         (evil-local-set-key state (kbd key)
                             (lookup-key teams4e-calendar-event-mode-map (kbd key)))))))
 
 ;; Extend a reader map already loaded before this command was available.
+(dolist (map (list teams4e-calendar-mode-map teams4e-calendar-event-mode-map))
+  (when (memq (lookup-key map (kbd "a")) '(nil teams4e-calendar-respond))
+    (define-key map (kbd "a") #'teams4e-calendar-event-actions)))
+
 (unless (lookup-key teams4e-calendar-event-mode-map (kbd "f"))
   (define-key teams4e-calendar-event-mode-map (kbd "f") #'teams4e-calendar-follow-in-outlook))
 (unless (lookup-key teams4e-calendar-event-mode-map (kbd "?"))

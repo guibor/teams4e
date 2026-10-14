@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add a single-key invitation action menu (`a`) in agenda and reader: accept,
+  tentative, decline, reschedule/propose, capture, chat, join, or Outlook.
+  Keep `r` available directly from the agenda, including Evil normal/motion.
+- Show a responsive companion calendar pane while selecting another time.
+  Display the selected day's own and shared event blocks with overlap highlights;
+  `C` toggles the pane. Navigation uses the loaded payload, not new requests.
+  Enrich own event subjects/locations from a bounded default-calendar view;
+  shared/private visibility continues to respect Exchange permissions.
+
 - Add local scheduled sending: `C-c C-s` for the next configured workday,
   `C-c C-t` for explicit date/time, and compose/reply-next-workday commands.
   Reuse snooze start time and calendar workdays, with timezone/DST handling.

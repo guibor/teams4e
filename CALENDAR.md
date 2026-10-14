@@ -37,7 +37,7 @@ so moving by a day across DST does not assume every day has 24 hours.
 | `x` | Include / hide declined and cancelled events |
 | `c` | Choose a calendar returned by Microsoft Graph |
 | `+` | Compose a new single timed event in an Org draft |
-| `a` | Accept, tentative, or decline |
+| `a` | Invitation action menu: `a` accept, `t` tentative, `d` decline, `r` change time |
 | `f` | Follow in Outlook: open the invitation; choose Follow there |
 | `r`, `A` | Availability workspace: propose a time, or reschedule your own event |
 | `T` | Open the invite's Teams chat directly, without scanning recents |
@@ -235,7 +235,7 @@ on now.
 Expand a conflict to see **every involved meeting**, including filtered-out
 partners, with its full interval, availability, and RSVP state. Click its title
 (or use `RET` on the meeting row) to read the invitation. Use `r` for
-availability/rescheduling, `a` to respond (including decline), or `o` for Outlook.
+availability/rescheduling, `a` for invitation actions (including decline), or `o` for Outlook.
 The same actions are buttons under each meeting; `RET` activates a button at
 point. Your own events offer rescheduling; received invitations offer time
 proposals and RSVP. Folding or browsing never changes an invitation. Successful
@@ -257,8 +257,13 @@ These are ordinary, customizable Emacs keymaps:
 `teams4e-calendar-mode-map` and `teams4e-calendar-event-mode-map`.
 Evil uses motion state with the local calendar map taking precedence.
 The event reader also provides RSVP, availability, join, Outlook, and capture
-commands, plus clickable Teams-chat and availability actions. Text selection
-and copying use normal Emacs behavior. The availability workspace retains its
+commands, plus clickable Teams-chat and availability actions. `a` opens the
+invitation action menu in the reader or agenda: `a a` accepts, `a t` is tentative,
+`a d` declines, and `a r` selects a new time. `a c` captures an Org action.
+Organizers see reschedule, while attendees see propose time. `r` goes directly
+to the time picker, without opening the reader first. These defaults work in
+Evil normal/motion as well as ordinary Emacs and remain customizable.
+Text selection and copying use normal Emacs behavior. The availability workspace retains its
 own bindings; its existing `J` join shortcut is unchanged.
 
 Invitations accept without notifying the organizer when the acceptance note is
@@ -266,6 +271,26 @@ empty, matching the existing meeting action. Other response types retain their
 existing backend behavior. `r` or `A` opens the same day timeline, availability
 ranking, proximity ranking, and participant-block sheet used by Teams meetings.
 Selecting a slot with `RET` sends the action; browsing slots never does.
+
+The companion calendar pane shows the selected day's blocks, with your calendar
+first. Times, subjects, and locations wrap separately so long titles do not
+compress the time column. Overlapping blocks carry `!` and a selection highlight;
+the participant heading shows availability for the whole selected slot. It sits
+beside the picker on wide windows and below it on narrower ones. `C` toggles it;
+customize `teams4e-meeting-show-calendar-context` to change the default. `q` in
+the pane returns focus to the picker; `q` in the picker restores the original
+layout. `b` retains the full calendar-block sheet.
+
+Shared subjects and locations come from documented
+[getSchedule sharing rules](https://learn.microsoft.com/en-us/graph/outlook-get-free-busy-schedule#event-data-returned).
+Your own default-calendar details additionally use
+[calendarView](https://learn.microsoft.com/en-us/graph/api/calendar-list-calendarview?view=graph-rest-1.0),
+which expands recurring occurrences. This is one paginated range query, capped
+at 1000 events, not a request for every participant or event. Slot/day navigation
+within that range is local. Denied or truncated details preserve free/busy data;
+they never manufacture free time. Private/confidential subjects and locations
+remain masked. Additional calendars are not merged, and no permission or token
+configuration is changed by this feature. Update the backend as well as Lisp.
 
 For an invitation, this sends a new-time proposal (with a note to the organizer).
 For an event you organize, it moves that **single occurrence**, updating only

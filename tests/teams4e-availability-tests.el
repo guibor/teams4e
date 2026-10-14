@@ -144,5 +144,70 @@
     (teams4e-availability-show-blocks)
     (should-error (teams4e-availability-choose) :type 'user-error)))
 
+(ert-deftest teams4e-availability-day-context-shows-shared-blocks-and-hides-private ()
+  (teams4e-test-with-availability
+    (let ((slot (cadr (teams4e--get teams4e-availability--payload 'suggestions)))
+          (output (generate-new-buffer " *calendar-context-test*")))
+      (unwind-protect
+          (progn
+            (teams4e-availability--insert-day-context slot output)
+            (with-current-buffer output
+              (should (string-match-p "Customer review" (buffer-string)))
+              (should (string-match-p "Room 12" (buffer-string)))
+              (should (string-match-p "! 10:00 - 11:00" (buffer-string)))
+              (should (string-match-p "Private block" (buffer-string)))
+              (should-not (string-match-p "Board reshuffle\\|Secret room" (buffer-string)))
+              (should (string-match-p "12:00 - 13:00" (buffer-string)))))
+        (kill-buffer output)))))
+
+(ert-deftest teams4e-availability-context-unknown-is-not-free ()
+  (teams4e-test-with-availability
+    (let ((output (generate-new-buffer " *calendar-context-test*")))
+      (unwind-protect
+          (progn
+            (setf (alist-get 'schedules teams4e-availability--payload) nil)
+            (teams4e-availability--insert-day-context
+             (car (teams4e--get teams4e-availability--payload 'suggestions)) output)
+            (with-current-buffer output
+              (should (string-match-p "No event details shared" (buffer-string)))
+              (should-not (string-match-p "No calendar blocks" (buffer-string)))))
+        (kill-buffer output)))))
+
+(ert-deftest teams4e-availability-context-window-follows-selection-and-closes ()
+  (save-window-excursion
+    (teams4e-test-with-availability
+      (let ((owner (current-buffer)))
+        (switch-to-buffer owner)
+        (cl-letf (((symbol-function 'teams4e--run-json)
+                   (lambda (&rest _) (ert-fail "Calendar pane must reuse loaded data"))))
+          (teams4e-availability--render)
+          (let ((pane (get-buffer teams4e-availability--context-name)))
+            (should (get-buffer-window pane))
+            (should (eq owner (buffer-local-value 'teams4e-availability-context--owner pane)))
+            (let ((before (with-current-buffer pane (buffer-string))))
+              (teams4e-availability-next)
+              (should-not (equal before (with-current-buffer pane (buffer-string)))))
+            (should (eq (current-buffer) owner))
+            (let ((teams4e-availability--payload nil))
+              (teams4e-availability--render-context)
+              (should-not (buffer-live-p pane)))
+            (teams4e-availability--render-context)
+            (setq pane (get-buffer teams4e-availability--context-name))
+            (teams4e-availability-toggle-calendar-context)
+            (should-not (buffer-live-p pane))))))))
+
+(ert-deftest teams4e-availability-context-supports-purpose-display-actions ()
+  (skip-unless (fboundp 'purpose-mode))
+  (let ((was-enabled purpose-mode))
+    (unwind-protect
+        (progn
+          (purpose-mode 1)
+          (save-window-excursion
+            (teams4e-test-with-availability
+              (switch-to-buffer (current-buffer))
+              (teams4e-availability--render)
+              (should (get-buffer-window teams4e-availability--context-name)))))
+      (unless was-enabled (purpose-mode -1)))))
+
 (provide 'teams4e-availability-tests)
 ;;; teams4e-availability-tests.el ends here

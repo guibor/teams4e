@@ -209,5 +209,49 @@ Opening or cancelling the menu neither fetches nor mutates calendar data."
         (user-error "Action is no longer available"))
       (call-interactively command))))
 
+;;;###autoload
+(defun teams4e-calendar-event-actions ()
+  "Choose an invitation action with one key, from reader or agenda.
+Use a to accept, t for tentative, d to decline, r to reschedule or propose,
+c to capture, T for the chat, v to join, and o for Outlook."
+  (interactive)
+  (pcase-let* ((`(,owner ,event) (teams4e-calendar--context))
+               (source (current-buffer))
+               (id (teams4e--get event 'id))
+               (generation (buffer-local-value 'teams4e-calendar--generation owner))
+               (choices '((?c "capture" "Capture an action to Org")
+                          (?o "Outlook" "Open the invitation in Outlook")
+                          (?q "quit" "Leave without changes"))))
+    (unless (teams4e--get event 'isCancelled)
+      (unless (teams4e--get event 'isAllDay)
+        (push (list ?r (if (teams4e--get event 'isOrganizer) "reschedule" "propose time")
+                    "Inspect calendars and choose another time") choices))
+      (when (and (not (teams4e--get event 'isOrganizer)) (teams4e--get event 'attendees))
+        (setq choices (append '((?a "accept" "Empty note accepts without notifying")
+                                (?t "tentative" "Tentatively accept")
+                                (?d "decline" "Decline the invitation")) choices)))
+      (when (teams4e-calendar--chat-id event)
+        (push '(?T "Teams chat" "Open the conversation") choices))
+      (when (or (teams4e--dig event 'onlineMeeting 'joinUrl)
+                (teams4e--get event 'onlineMeetingUrl))
+        (push '(?v "join" "Join the meeting") choices)))
+    (let ((choice (car (read-multiple-choice "Invitation action" choices))))
+      (unless (eq choice ?q)
+        (unless (and (buffer-live-p source) (buffer-live-p owner))
+          (user-error "Calendar buffer was closed"))
+        (with-current-buffer source
+          (unless (and (= generation (buffer-local-value 'teams4e-calendar--generation owner))
+                       (equal id (teams4e--get (cadr (teams4e-calendar--context)) 'id)))
+            (user-error "Calendar context changed; reopen the action menu"))
+          (pcase choice
+            (?a (teams4e-calendar-respond "accepted"))
+            (?t (teams4e-calendar-respond "tentativelyAccepted"))
+            (?d (teams4e-calendar-respond "declined"))
+            (?r (teams4e-calendar-availability))
+            (?c (teams4e-calendar-capture))
+            (?T (teams4e-calendar-open-chat))
+            (?v (teams4e-calendar-join))
+            (?o (teams4e-calendar-open-outlook))))))))
+
 (provide 'teams4e-calendar-ui)
 ;;; teams4e-calendar-ui.el ends here

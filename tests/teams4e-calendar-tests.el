@@ -4,6 +4,58 @@
 (require 'teams4e-calendar-create)
 (require 'teams4e-calendar-ui)
 
+(ert-deftest teams4e-calendar-invitation-action-menu-and-outer-reschedule ()
+  (dolist (mode '(teams4e-calendar-mode teams4e-calendar-event-mode))
+    (with-temp-buffer
+      (funcall mode)
+      (when (featurep 'evil) (evil-local-mode 1) (evil-normal-state))
+      (should (eq (key-binding (kbd "a")) #'teams4e-calendar-event-actions))
+      (should (eq (key-binding (kbd "r")) #'teams4e-calendar-availability)))))
+
+(ert-deftest teams4e-calendar-invitation-menu-accepts-and-reschedules-current-event ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (goto-char (teams4e-calendar--find-item
+                (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "B")))
+    (let (seen)
+      (cl-letf (((symbol-function 'read-multiple-choice)
+                 (lambda (_ choices &rest _)
+                   (should (assq ?r choices)) (assq ?a choices)))
+                ((symbol-function 'teams4e-calendar-respond)
+                 (lambda (response) (setq seen response))))
+        (teams4e-calendar-event-actions)
+        (should (equal "accepted" seen)))
+      (cl-letf (((symbol-function 'read-multiple-choice) (lambda (&rest _) '(?r)))
+                ((symbol-function 'teams4e-calendar-availability)
+                 (lambda () (setq seen (teams4e--get (cadr (teams4e-calendar--context)) 'id)))))
+        (teams4e-calendar-event-actions)
+        (should (equal "B" seen))))))
+
+(ert-deftest teams4e-calendar-invitation-menu-rejects-changed-context ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (goto-char (teams4e-calendar--find-item
+                (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "B")))
+    (cl-letf (((symbol-function 'read-multiple-choice)
+               (lambda (&rest _)
+                 (goto-char (teams4e-calendar--find-item
+                             (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "A"))) '(?a)))
+              ((symbol-function 'teams4e-calendar-respond)
+               (lambda (&rest _) (ert-fail "Must not respond to a different invitation"))))
+      (should-error (teams4e-calendar-event-actions) :type 'user-error))))
+
+(ert-deftest teams4e-calendar-invitation-menu-organizer-has-no-rsvp ()
+  (teams4e-calendar-test
+    (teams4e-calendar-test-conflicts)
+    (goto-char (teams4e-calendar--find-item
+                (list 'event (teams4e-calendar--day-key teams4e-calendar--date) "A")))
+    (cl-letf (((symbol-function 'read-multiple-choice)
+               (lambda (_ choices &rest _)
+                 (should-not (assq ?a choices))
+                 (should (equal "reschedule" (cadr (assq ?r choices)))) '(?q)))
+              ((symbol-function 'teams4e--run-json) (lambda (&rest _) (ert-fail "No request"))))
+      (teams4e-calendar-event-actions))))
+
 (defun teams4e-calendar-test-event (id start end &rest extra)
   (append `((id . ,id) (subject . ,id)
             (start (dateTime . ,start) (timeZone . "UTC"))
@@ -244,7 +296,7 @@
             (should (eq (key-binding (kbd "J")) #'teams4e-calendar-next-event))
             (should (eq (key-binding (kbd "H")) #'teams4e-calendar-previous-day))
             (should (eq (key-binding (kbd ".")) #'teams4e-calendar-goto-date))
-            (should (eq (key-binding (kbd "a")) #'teams4e-calendar-respond))))
+            (should (eq (key-binding (kbd "a")) #'teams4e-calendar-event-actions))))
       (unless was-enabled (evil-mode -1)))))
 
 (ert-deftest teams4e-calendar-availability-is-not-rsvp ()

@@ -391,11 +391,26 @@ days. `t` centers on now; `N` goes to the ongoing/next slot, or tomorrow after
 today\'s last slot. `.` or `G` chooses a date with Org\'s date reader,
 and `d/w/m` select day/week/month. `[/]` move between whole ranges.
 `RET` opens a reusable invite reader; `/` filters locally and `c` selects
-another calendar. RSVP (`a`), availability and rescheduling (`r` or `A`),
+another calendar. Invitation actions (`a`), availability and rescheduling (`r` or `A`),
 Teams chat (`T`), Org capture (`C`), join (`v`), and Outlook (`o`) act
 on the selected event. All bindings, faces, and working-hour defaults are
 customizable. The time workspace proposes alternatives for invitations and moves
 one timed occurrence for events you organize, without changing the series.
+
+In either the agenda or invitation reader, `a a` accepts, `a t` responds
+tentatively, `a d` declines, and `a r` chooses a new time. The action menu also
+offers Org capture, Teams chat, join, and Outlook when applicable. Accept with
+an empty note to avoid notifying the organizer. `?` remains the full calendar
+command menu; all these bindings are customizable.
+
+The time picker opens a companion calendar pane: your own day's events first,
+then the participants' shared blocks, with full titles, locations, and highlighted
+overlaps for the selected slot. `j/k` updates it locally; `[/]` changes day.
+`C` toggles the pane (`teams4e-meeting-show-calendar-context` controls its default).
+`b` still shows the full block sheet. Your own default calendar is queried for
+event details once per loaded search range; shared subjects and locations depend
+on Exchange sharing permissions. Private blocks remain masked, and unavailable
+details are never presented as confirmed free time. No new consent is requested.
 
 `S` toggles optional duration-scaled blocks: longer meetings and free intervals
 take more vertical space. The compact agenda remains the default. Customize

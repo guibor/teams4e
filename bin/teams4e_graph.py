@@ -1882,6 +1882,63 @@ def get_meeting_schedules(
   ], errors
 
 
+def enrich_own_schedule(
+    schedules: list[dict[str, Any]], participants: list[dict[str, Any]],
+    start: str, end: str, access_token: str,
+) -> None:
+  """Add own event details without fetching each participant's calendar.
+
+  getSchedule may omit even the user's own subjects. A single bounded,
+  paginated calendarView supplies occurrences and titles. An incomplete or
+  denied view never turns unknown availability into free time.
+  """
+  person = next((item for item in participants if item.get("isSelf")), None)
+  if not person:
+    return
+  address = person["email"]
+  schedule = next((item for item in schedules
+                   if str(item.get("scheduleId", "")).casefold() == address.casefold()), None)
+  if schedule is None:
+    schedule = {"scheduleId": address, "error": {"message": "No schedule returned"}}
+    schedules.append(schedule)
+  path = collection_path("/me/calendarView", [
+      ("startDateTime", start), ("endDateTime", end), ("$top", "100"),
+      ("$select", "id,subject,start,end,showAs,location,sensitivity,isCancelled,webLink"),
+  ])
+  try:
+    events, _, complete = graph_collection_with_metadata(
+        path, access_token, limit=1000,
+        request_headers={"Prefer": 'outlook.timezone="UTC"'},
+    )
+  except BackendError as exc:
+    schedule["detailsError"] = str(exc)
+    return
+  items = [{
+      "eventId": event.get("id"), "subject": event.get("subject"),
+      "start": event["start"], "end": event["end"],
+      "status": event.get("showAs") or "unknown",
+      "location": event.get("location"), "webLink": event.get("webLink"),
+      "isPrivate": event.get("sensitivity") in ("private", "confidential"),
+  } for event in events
+      if not event.get("isCancelled") and event.get("start") and event.get("end")]
+  if complete:
+    schedule["scheduleItems"] = items
+    schedule.pop("error", None)
+    # The complete event view is authoritative for self, including cancellations.
+    schedule.pop("availabilityView", None)
+  else:
+    schedule["detailsError"] = "Own calendar details truncated at 1000 events"
+    # Enrich matching blocks only; keep the original free/busy coverage intact.
+    for old in schedule.get("scheduleItems", []):
+      for item in items:
+        if all(parse_graph_datetime(old[key]["dateTime"]) ==
+               parse_graph_datetime(item[key]["dateTime"])
+               for key in ("start", "end")):
+          old.update({key: item[key] for key in ("subject", "location", "isPrivate", "webLink")})
+          break
+  schedule["detailsSource"] = "calendarView"
+
+
 def get_meeting_availability(
     event_id: str,
     search_start: str,
@@ -1920,6 +1977,7 @@ def get_meeting_availability(
       max(5, min(interval_minutes, 1440)),
       access_token,
   )
+  enrich_own_schedule(schedules, participants, search_start, search_end, access_token)
   proposal_reason = None
   if event.get("isCancelled"):
     proposal_reason = "This meeting is cancelled"
