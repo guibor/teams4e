@@ -1503,6 +1503,7 @@ Accepting without a note sends no notification to the organizer."
   (teams4e-availability--require-proposal)
   (pcase-let* ((`(,owner ,event) (teams4e-calendar--context))
                (workspace (current-buffer))
+               (availability-payload teams4e-availability--payload)
                (generation (buffer-local-value 'teams4e-calendar--generation owner)))
     (unless slot
       (let* ((original (teams4e-calendar--time event 'start))
@@ -1536,7 +1537,10 @@ Accepting without a note sends no notification to the organizer."
                     (equal (teams4e--get event 'id)
                            (buffer-local-value 'teams4e-calendar--event-id workspace)))
            (with-current-buffer workspace (teams4e-availability-quit)))
-         (message (if reschedule "Calendar event rescheduled" "Calendar time proposal sent")))))))
+         (message (if reschedule "Calendar event rescheduled" "Calendar time proposal sent")))
+       (lambda (status detail)
+         (teams4e--report-error '("teams" "calendar" "time-change") status detail)
+         (teams4e-availability--submission-failed workspace availability-payload))))))
 
 (defun teams4e-calendar-select ()
   "Choose a calendar visible to the signed-in user."

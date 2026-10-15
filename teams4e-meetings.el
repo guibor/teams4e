@@ -15,8 +15,18 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
+(autoload 'teams4e-reschedule--insert-day-map "teams4e-reschedule")
+(autoload 'teams4e-reschedule--insert-review "teams4e-reschedule")
+(autoload 'teams4e-reschedule--review "teams4e-reschedule")
+(autoload 'teams4e-reschedule--slot "teams4e-reschedule")
+(autoload 'teams4e-reschedule--duration "teams4e-reschedule")
+(autoload 'teams4e-reschedule-common-free "teams4e-reschedule" nil t)
+(autoload 'teams4e-reschedule-compare "teams4e-reschedule" nil t)
+(autoload 'teams4e-reschedule-submit "teams4e-reschedule" nil t)
+(autoload 'teams4e-reschedule-back "teams4e-reschedule" nil t)
 
 (declare-function evil-define-key* "evil-core")
+(declare-function org-read-date "org" (&optional with-time to-time from-string prompt default-time default-input))
 
 (defvar teams4e-meeting-availability-interval)
 (defvar teams4e-availability--time-cache nil
@@ -40,6 +50,8 @@
 (defvar-local teams4e-availability--window-configuration nil)
 (defvar-local teams4e-availability--origin-frame nil)
 (defvar-local teams4e-availability--error nil)
+(defvar-local teams4e-availability--review-slot nil)
+(defvar-local teams4e-availability--submission nil)
 (defcustom teams4e-meeting-show-calendar-context t
   "Show the selected day's calendars alongside the availability picker."
   :type 'boolean :group 'teams4e)
@@ -111,6 +123,14 @@
       (car teams4e-availability--window)
       (current-time)))
 
+(defun teams4e-availability--moving-item-p (participant item)
+  "Whether ITEM is the positively identified occurrence being moved by PARTICIPANT."
+  (and (teams4e--get participant 'isSelf)
+       (teams4e--get (teams4e-availability--schedule participant) 'detailsComplete)
+       teams4e-availability--event-id
+       (equal (teams4e--get item 'eventId) teams4e-availability--event-id)
+       (teams4e-availability--proposal-allowed-p)))
+
 (defun teams4e-availability--slot-status (participant slot)
   "Return conservative free/busy for PARTICIPANT over the whole SLOT."
   (let* ((schedule (teams4e-availability--schedule participant))
@@ -123,9 +143,16 @@
          (statuses
           (mapcar (lambda (item) (or (teams4e--get item 'status) "unknown"))
                   (seq-filter
-                   (lambda (item) (teams4e-availability--overlap-p item slot))
+                   (lambda (item)
+                     (and (not (teams4e-availability--moving-item-p participant item))
+                          (teams4e-availability--overlap-p item slot)))
                    items))))
     (cond
+     ((or (null start) (null end) (not (time-less-p start end))
+          (null (car teams4e-availability--window))
+          (null (cadr teams4e-availability--window))
+          (time-less-p start (car teams4e-availability--window))
+          (time-less-p (cadr teams4e-availability--window) end)) "unknown")
      ((or (null schedule) (teams4e--get schedule 'error)) "unknown")
      (t
       ;; Merged free/busy also covers private blocks lacking item details.
@@ -348,7 +375,8 @@
   "Return PARTICIPANT's non-free calendar items overlapping SLOT."
   (seq-filter
    (lambda (item)
-     (and (teams4e-availability--blocking-status-p
+     (and (not (teams4e-availability--moving-item-p participant item))
+          (teams4e-availability--blocking-status-p
            (teams4e--get item 'status))
           (teams4e-availability--overlap-p item slot)))
    (teams4e--get (teams4e-availability--schedule participant)
@@ -448,6 +476,12 @@
     (when (teams4e-availability--reschedule-p)
       (insert (propertize "Reschedule this occurrence; attendees receive the update.\n"
                           'face 'teams4e-availability-tentative)))
+    (when teams4e-availability--submission
+      (insert (propertize
+               (if (eq teams4e-availability--submission 'sending)
+                   "Submitting change; duplicate submission is disabled.\n"
+                 "Outcome uncertain. Check Outlook before refreshing and trying again.\n")
+               'face 'teams4e-availability-busy)))
     (when (and proposal-reason (not (teams4e-availability--reschedule-p)))
       (insert (propertize (concat proposal-reason "\n")
                           'face 'teams4e-availability-tentative)))
@@ -595,6 +629,8 @@
                (car suggestions))))
         (setq teams4e-availability--selected-id
               (and first (teams4e-availability--slot-id first)))))
+    (when (eq teams4e-availability--view 'timeline)
+      (teams4e-reschedule--insert-day-map))
     (teams4e-availability--insert-suggestion-details
      (seq-find (lambda (item)
                  (equal teams4e-availability--selected-id
@@ -812,7 +848,10 @@
     (let ((records
            (mapcar (lambda (person)
                      (list person (teams4e-availability--schedule person)
-                           (and slot (teams4e-availability--slot-status person slot))))
+                           (and slot (teams4e-availability--slot-status person slot))
+                           (mapcar (lambda (item) (teams4e--get item 'eventId))
+                                   (seq-filter (lambda (item) (teams4e-availability--moving-item-p person item))
+                                               (teams4e--get (teams4e-availability--schedule person) 'scheduleItems)))))
                    (teams4e-availability--participants))))
       (with-current-buffer (or destination (current-buffer))
         (insert (propertize (format-time-string "%A, %e %B\n" day) 'face 'bold))
@@ -844,7 +883,9 @@
                                     "No calendar blocks this day\n") 'face 'shadow)))
             (dolist (item items)
               (let* ((overlap (and slot (teams4e-availability--overlap-p item slot)))
-                     (blocking (teams4e-availability--blocking-status-p (teams4e--get item 'status)))
+                     (moving (member (teams4e--get item 'eventId) (nth 3 record)))
+                     (blocking (and (not moving)
+                                    (teams4e-availability--blocking-status-p (teams4e--get item 'status))))
                      (start (point))
                      (location (teams4e-availability--block-location item))
                      (url (and (not (teams4e--get item 'isPrivate)) (teams4e--get item 'webLink))))
@@ -853,7 +894,7 @@
                         (format-time-string "%H:%M" (teams4e-availability--time item 'end)) "  "
                         (propertize (teams4e-availability--status-name (teams4e--get item 'status))
                                     'face (teams4e-availability--status-face (teams4e--get item 'status)))
-                        "\n    ")
+                        (if moving "  [moving this invitation]\n    " "\n    "))
                 (if url
                     (insert-text-button (teams4e-availability--block-title item)
                                         'follow-link t 'action
@@ -880,7 +921,9 @@
       (teams4e-availability--context-close)
     (when-let ((owner-window (get-buffer-window (current-buffer))))
       (let* ((owner (current-buffer))
-             (suggestion (teams4e-availability--selected-suggestion))
+             (suggestion (if teams4e-availability--review-slot
+                             `((meetingTimeSlot . ,teams4e-availability--review-slot))
+                           (teams4e-availability--selected-suggestion)))
              (buffer (get-buffer-create teams4e-availability--context-name)))
         (with-current-buffer buffer
           (unless (derived-mode-p 'teams4e-availability-context-mode)
@@ -932,10 +975,13 @@
      ((null teams4e-availability--payload)
       (insert (propertize "Loading Outlook availability..."
                           'face 'shadow)))
+     (teams4e-availability--review-slot
+      (teams4e-reschedule--insert-review))
      ((eq teams4e-availability--view 'blocks)
       (teams4e-availability--insert-blocks))
      (t (teams4e-availability--insert-suggestions)))
-    (teams4e-availability--goto-selected)
+    (if teams4e-availability--review-slot (goto-char (point-min))
+      (teams4e-availability--goto-selected))
     (setq header-line-format
           (format "Teams availability - %s%s - %s"
                   (symbol-name teams4e-availability--view)
@@ -960,7 +1006,8 @@
     (unless (and (>= target 0) (< target (length teams4e-availability--row-ids)))
       (user-error "No more availability rows"))
     (setq teams4e-availability--selected-id
-          (nth target teams4e-availability--row-ids))
+          (nth target teams4e-availability--row-ids)
+          teams4e-availability--review-slot nil)
     (teams4e-availability--render)))
 
 (defun teams4e-availability-previous (&optional count)
@@ -976,6 +1023,7 @@
   (unless (memq view '(timeline availability proximity suggestions blocks))
     (user-error "Unsupported meeting workspace view: %s" view))
   (setq teams4e-availability--view view
+        teams4e-availability--review-slot nil
         teams4e-availability--selected-id nil)
   (unless teams4e-availability--day
     (setq teams4e-availability--day
@@ -1001,6 +1049,7 @@
 (defun teams4e-availability--visit-day (day)
   "Show DAY, fetching another window only outside the loaded range."
   (setq teams4e-availability--day day
+        teams4e-availability--review-slot nil
         teams4e-availability--view 'timeline
         teams4e-availability--selected-id nil)
   (if (and (car teams4e-availability--window)
@@ -1069,47 +1118,43 @@
   (when (derived-mode-p 'teams4e-availability-mode)
     (teams4e-availability-quit)))
 
+(defun teams4e-availability--submission-failed (buffer payload)
+  "Hold an unsuccessful submission in BUFFER if PAYLOAD is still current."
+  (when (and (buffer-live-p buffer) payload
+             (eq payload (buffer-local-value 'teams4e-availability--payload buffer))
+             (eq 'sending (buffer-local-value 'teams4e-availability--submission buffer)))
+    (with-current-buffer buffer
+      (setq teams4e-availability--submission 'uncertain)
+      (teams4e-availability--render))))
+
 (defun teams4e-availability-choose ()
-  "Propose the selected ranked time from the availability workspace."
+  "Review the selected time; this does not send an update."
   (interactive)
   (when (eq teams4e-availability--view 'blocks)
     (user-error "Calendar blocks are not proposal slots; choose a time view"))
   (teams4e-availability--require-proposal)
+  (when teams4e-availability--review-slot
+    (user-error "Already reviewing; use C-c C-c to submit or C-c C-k to return"))
   (let ((suggestion (or (teams4e-availability--selected-suggestion)
-                        (user-error "No ranked meeting time is selected")))
-        (workspace (current-buffer)))
-    (if teams4e-availability--proposal-function
-        (funcall teams4e-availability--proposal-function
-                 (teams4e--get suggestion 'meetingTimeSlot))
-      (teams4e--proposal-send
-       teams4e-availability--chat
-       teams4e-availability--event-id
-       (teams4e--get suggestion 'meetingTimeSlot)
-       (lambda (_payload)
-         (when (buffer-live-p workspace)
-           (with-current-buffer workspace
-             (teams4e-availability-quit))))))))
+                        (user-error "No ranked meeting time is selected"))))
+    (teams4e-reschedule--review (teams4e--get suggestion 'meetingTimeSlot))))
 
 (defun teams4e-availability-manual ()
-  "Enter and propose an exact start while preserving the meeting duration."
+  "Enter and review an exact start while preserving the meeting duration."
   (interactive)
   (teams4e-availability--require-proposal)
-  (let ((workspace (current-buffer)))
-    (if teams4e-availability--proposal-function
-        (funcall teams4e-availability--proposal-function nil)
-      (teams4e--proposal-send
-       teams4e-availability--chat
-       teams4e-availability--event-id
-       (teams4e--proposal-manual-slot teams4e-availability--chat)
-       (lambda (_payload)
-         (when (buffer-live-p workspace)
-           (with-current-buffer workspace
-             (teams4e-availability-quit))))))))
+  (require 'org)
+  (let ((start (org-read-date t t nil "Proposed start: " (teams4e-availability--original-time))))
+    (teams4e-reschedule--review
+     (teams4e-reschedule--slot start (time-add start (teams4e-reschedule--duration))))))
 
 (defun teams4e-availability--request ()
   "Request and render availability for the current workspace state."
+  (when (eq teams4e-availability--submission 'sending)
+    (user-error "Wait for the current update before refreshing"))
   (teams4e--cancel-process teams4e-availability--request)
   (setq teams4e-availability--payload nil
+        teams4e-availability--review-slot nil
         teams4e-availability--error nil
         teams4e-availability--selected-id nil)
   (teams4e-availability--render)
@@ -1142,6 +1187,7 @@
         (when (buffer-live-p buffer)
           (with-current-buffer buffer
             (setq teams4e-availability--request nil
+                  teams4e-availability--submission nil
                   teams4e-availability--payload payload)
             (when-let ((event (teams4e--get payload 'event)))
               (when teams4e-availability--chat
@@ -1224,6 +1270,10 @@
     (define-key map (kbd "s") #'teams4e-availability-show-suggestions)
     (define-key map (kbd "b") #'teams4e-availability-show-blocks)
     (define-key map (kbd "C") #'teams4e-availability-toggle-calendar-context)
+    (define-key map (kbd "f") #'teams4e-reschedule-common-free)
+    (define-key map (kbd "D") #'teams4e-reschedule-compare)
+    (define-key map (kbd "C-c C-c") #'teams4e-reschedule-submit)
+    (define-key map (kbd "C-c C-k") #'teams4e-reschedule-back)
     (define-key map (kbd "g") #'teams4e-availability-refresh)
     (define-key map (kbd "r") #'teams4e-availability-change-range)
     (define-key map (kbd "w") #'teams4e-availability-cycle-hours)
@@ -1238,10 +1288,19 @@
     map)
   "Keymap for the singleton Teams meeting availability workspace.")
 
+;; Add new defaults on source reload without replacing user bindings.
+(dolist (binding '(("f" . teams4e-reschedule-common-free)
+                   ("D" . teams4e-reschedule-compare)
+                   ("C-c C-c" . teams4e-reschedule-submit)
+                   ("C-c C-k" . teams4e-reschedule-back)))
+  (unless (lookup-key teams4e-availability-mode-map (kbd (car binding)))
+    (define-key teams4e-availability-mode-map (kbd (car binding)) (cdr binding))))
+
 (define-derived-mode teams4e-availability-mode special-mode "Teams-Availability"
   "Inspect meeting suggestions, participant conflicts, and calendar blocks.
 
-Use j/k to move rows and RET to propose.  Use d for the day timeline,
+Use j/k to move rows, RET to review, C-c C-c to submit, C-c C-k to return.
+Use f for common free time, D for the day comparison, d for the day timeline,
 a for availability ranking, c for closest to original, and b for blocks.
 Use C to toggle the selected day's calendar context pane.
 Use [/] for previous/next day, = for the original day, r for the range,
@@ -1445,6 +1504,10 @@ Accepting with an empty note sends no response to the organizer."
     (kbd "s") #'teams4e-availability-show-suggestions
     (kbd "b") #'teams4e-availability-show-blocks
     (kbd "C") #'teams4e-availability-toggle-calendar-context
+    (kbd "f") #'teams4e-reschedule-common-free
+    (kbd "D") #'teams4e-reschedule-compare
+    (kbd "C-c C-c") #'teams4e-reschedule-submit
+    (kbd "C-c C-k") #'teams4e-reschedule-back
     (kbd "g") #'teams4e-availability-refresh
     (kbd "r") #'teams4e-availability-change-range
     (kbd "w") #'teams4e-availability-cycle-hours

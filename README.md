@@ -378,6 +378,16 @@ workspace compares returned free/busy information and calendar blocks, offers
 alternate slots, and lets you propose a new time. Calendar permissions and
 sharing policy determine what is visible; unavailable data is not "free."
 
+In the time picker, `D` compares everyone's working day, `f` offers common-free
+stretches, and `m` enters an exact time. `d`, `a`, and `c` select the continuous
+timeline, availability ranking, and proximity-to-original ranking. `RET` reviews
+the old and new times, duration, and conflicts; `C-c C-c` sends the update or
+proposal, while `C-c C-k` goes back. Your own and shared calendar blocks remain
+visible alongside the choice (`C` toggles that pane). These are customizable
+bindings in `teams4e-availability-mode-map`, not required interaction rules.
+See [calendar actions and availability](CALENDAR.md) for sharing limits and
+conservative handling of the original meeting's occupied slot.
+
 This is a useful calendar companion, not a complete replacement for Outlook.
 [Meeting workflow](USAGE.md#meetings-without-living-in-the-calendar).
 

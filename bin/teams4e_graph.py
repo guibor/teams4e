@@ -1980,6 +1980,7 @@ def enrich_own_schedule(
           old.update({key: item[key] for key in ("subject", "location", "isPrivate", "webLink")})
           break
   schedule["detailsSource"] = "calendarView"
+  schedule["detailsComplete"] = complete
 
 
 def get_meeting_availability(

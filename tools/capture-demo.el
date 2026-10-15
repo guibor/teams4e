@@ -212,12 +212,20 @@
                                  (list `((scheduleId . ,email) (scheduleItems)))))))
         (dolist (width '(180 130))
           (set-frame-size nil width 44)
+          (teams4e-reschedule-compare)
+          (teams4e-capture-frame (format "reschedule-comparison-%s.png" width))
           (dolist (view '(timeline availability proximity))
             (teams4e-availability-set-view view)
             (unless (> (length teams4e-availability--row-ids) 20)
               (error "Availability matrix has no continuous slots"))
             (teams4e-capture-frame
              (format "availability-%s-%s.png" view width))))
+        (teams4e-availability-next)
+        (teams4e-availability-choose)
+        (unless teams4e-availability--review-slot
+          (error "Rescheduling did not stage a review"))
+        (teams4e-capture-frame "reschedule-review.png")
+        (teams4e-reschedule-back)
         (delete-other-windows)
         (when (require 'window-purpose nil t) (purpose-mode 1))
         ;; Include tomorrow's fixtures even when today ends a normal calendar week.

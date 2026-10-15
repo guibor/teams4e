@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add a compact participant day comparison (`D`), common-free stretches (`f`),
+  and an old/new time review before rescheduling or proposing. `RET` stages,
+  `C-c C-c` submits once, and `C-c C-k` returns; calendar context follows the
+  staged time. Keep the original duration and mark out-of-range data unknown.
+- Release only the positively identified own occurrence for planning, only
+  with complete calendar details. Preserve other overlapping/private blocks.
+  Hold failed/uncertain submissions for inspection rather than retrying them.
+  Use existing work-hour/workday settings and local calendar DST boundaries.
+
 - Add `teams4e-find-chat` (`M-f` in inbox/reader) to find existing direct,
   group, and meeting chats beyond recents by name or participant names/emails.
   Follow all metadata pages; resolve truncated expanded memberships only when

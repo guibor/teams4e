@@ -272,7 +272,9 @@ rather than only Outlook's short list of recommendations.
 | `[` / `]` | Previous/next calendar day |
 | `=` | Return to the original meeting day |
 | `b` | Calendar blocks, with privacy-aware details |
-| `j` / `k`, `RET` | Select a slot, propose it |
+| `j` / `k`, `RET` | Select a slot, review the change |
+| `D`, `f` | Compare participant days; choose a common-free stretch |
+| `C-c C-c`, `C-c C-k` | Submit the reviewed change; return without sending |
 | `r`, `g`, `m` | Change loaded range, refresh, enter an exact manual start |
 
 These bindings are customizable in `teams4e-availability-mode-map`.

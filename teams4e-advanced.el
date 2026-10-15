@@ -18,6 +18,7 @@
 
 (declare-function teams4e-transient "advanced")
 (declare-function teams4e-meeting-availability "teams4e-meetings")
+(declare-function teams4e-availability--submission-failed "teams4e-meetings" (buffer payload))
 (declare-function agent-shell--resolve-config-designator "agent-shell"
                   (designator))
 (declare-function agent-shell-insert "agent-shell" (&rest arguments))
@@ -26,6 +27,7 @@
                                                  default-time default-input))
 
 (defvar teams4e-background-sync-interval)
+(defvar teams4e-availability--payload)
 (defvar teams4e-background-sync-max-backoff)
 (defvar teams4e-bookmarks)
 (defvar teams4e-confirm-apply)
@@ -2560,7 +2562,10 @@ AFTER-EXPORT with its saved path when that callback is non-nil."
   "Send SLOT as a proposed new time for CHAT's linked EVENT-ID.
 
 Invoke AFTER-SEND with the backend payload after a successful mutation."
-  (let* ((old-label (or (teams4e--meeting-time-label chat) "current time"))
+  (let* ((workspace (current-buffer))
+         (availability-payload (and (boundp 'teams4e-availability--payload)
+                                    teams4e-availability--payload))
+         (old-label (or (teams4e--meeting-time-label chat) "current time"))
          (new-label (or (teams4e--meeting-slot-time-label slot) "new time"))
          (organizer
           (or (teams4e--dig (teams4e--meeting-event chat)
@@ -2594,7 +2599,9 @@ Invoke AFTER-SEND with the backend payload after a successful mutation."
          (when after-send (funcall after-send payload))))
      (lambda (status detail)
        (teams4e--report-error args status detail)
-       (message "New-time proposal was not sent: %s"
+       (when (fboundp 'teams4e-availability--submission-failed)
+         (teams4e-availability--submission-failed workspace availability-payload))
+       (message "New-time proposal was not confirmed: %s"
                 (truncate-string-to-width
                  (string-trim
                   (or (teams4e--redacted-detail args detail)

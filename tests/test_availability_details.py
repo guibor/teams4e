@@ -38,6 +38,7 @@ class CalendarDetailsTests(unittest.TestCase):
     self.assertEqual("/me/calendarView", url.path)
     self.assertEqual(["2026-10-14T00:00:00Z"], parse_qs(url.query)["startDateTime"])
     self.assertNotIn("error", schedules[0])
+    self.assertTrue(schedules[0]["detailsComplete"])
     self.assertEqual(2, len(schedules[0]["scheduleItems"]))
     self.assertEqual("Design review", schedules[0]["scheduleItems"][0]["subject"])
     self.assertEqual("Room A", schedules[0]["scheduleItems"][0]["location"]["displayName"])
@@ -61,6 +62,7 @@ class CalendarDetailsTests(unittest.TestCase):
     self.assertIn("error", schedules[0])
     self.assertNotIn("scheduleItems", schedules[0])
     self.assertIn("truncated", schedules[0]["detailsError"])
+    self.assertFalse(schedules[0]["detailsComplete"])
 
   def test_empty_complete_calendar_is_distinct_from_denied(self):
     schedules = []

@@ -270,7 +270,20 @@ Invitations accept without notifying the organizer when the acceptance note is
 empty, matching the existing meeting action. Other response types retain their
 existing backend behavior. `r` or `A` opens the same day timeline, availability
 ranking, proximity ranking, and participant-block sheet used by Teams meetings.
-Selecting a slot with `RET` sends the action; browsing slots never does.
+Selecting a slot with `RET` opens an old-time/new-time review, with each
+participant's availability and conflicting event titles. `C-c C-c` sends the
+reviewed change; `C-c C-k` returns to the times without sending. Browsing,
+selecting, and repeated `RET` never send an update.
+
+`D` shows a compact working-day comparison: one row per participant and a
+common-free row. `..` means free, `##` busy, `~~` tentative, `@@` away, and `??`
+unknown, using theme-aware faces and interval tooltips. Click a cell to review
+a move starting there, preserving the meeting duration. The detailed timeline
+(`d`) still covers the whole day; the comparison uses
+`teams4e-calendar-work-hours`. `f` offers confirmed common-free stretches with
+a fitting candidate; it also respects `teams4e-calendar-work-days` in work-hours
+mode. `m` enters an exact date/time. All these commands use the loaded snapshot;
+unknown or out-of-range availability is never treated as free.
 
 The companion calendar pane shows the selected day's blocks, with your calendar
 first. Times, subjects, and locations wrap separately so long titles do not
@@ -292,10 +305,20 @@ they never manufacture free time. Private/confidential subjects and locations
 remain masked. Additional calendars are not merged, and no permission or token
 configuration is changed by this feature. Update the backend as well as Lisp.
 
+When the complete own-calendar query positively identifies the original event
+by ID, planning releases that occurrence's block, while retaining other
+overlaps. The calendar pane labels it `moving this invitation`. No subject/time
+guessing is used: other participants' unidentified blocks remain busy, and
+incomplete own-calendar data never releases the block. Availability is a
+snapshot, not a reservation; check Outlook if a submission's outcome is
+uncertain. Pending/uncertain submissions cannot be repeated in the workspace;
+after checking the result, `g` reloads availability before another attempt.
+
 For an invitation, this sends a new-time proposal (with a note to the organizer).
 For an event you organize, it moves that **single occurrence**, updating only
-start/end and allowing Outlook to notify attendees. No second confirmation is
-added. The workspace identifies this organizer action explicitly. Recurrence-rule
+start/end and allowing Outlook to notify attendees. No additional yes/no prompt
+follows the explicit review submission. The workspace identifies this organizer
+action explicitly. Recurrence-rule
 changes, all-day moves, and cancelled events remain in Outlook; a series master
 cannot be moved accidentally. Outlook can reject an occurrence moved across
 adjacent occurrences. Prohibited attendee proposals remain prohibited.
