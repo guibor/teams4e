@@ -1289,6 +1289,22 @@ class MockTenant:
     if args[:3] == ["teams", "chat", "list"]:
       metadata_limit = int(option(args, "--metadataLimit", required=False) or 150)
       return copy.deepcopy(self.state["chats"][:metadata_limit])
+    if args[:3] == ["teams", "chat", "find"]:
+      words = str(option(args, "--query")).casefold().split()
+      if not words:
+        raise ValueError("Chat search query is empty")
+      matches = []
+      for chat in copy.deepcopy(self.state["chats"]):
+        chat["members"] = copy.deepcopy(self.state["chatMembers"].get(chat["id"], []))
+        chat["membersLoaded"] = True
+        text = " ".join(str(value or "") for value in (
+            [chat.get("topic"), chat.get("id"), chat.get("chatType")]
+            + [member.get(field) for member in chat["members"]
+               for field in ("displayName", "email")])).casefold()
+        if all(word in text for word in words):
+          matches.append(chat)
+      return {"chats": matches, "scanned": len(self.state["chats"]),
+              "memberErrors": 0, "complete": True}
     if args[:3] == ["teams", "search", "messages"]:
       query = str(option(args, "--query")).casefold()
       limit = int(option(args, "--limit", required=False) or 50)

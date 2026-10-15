@@ -1111,6 +1111,60 @@ normal reader without adding a second search cache."
   (interactive)
   (teams4e-search query t))
 
+;;;###autoload
+(defun teams4e-find-chat (query)
+  "Find an existing chat by QUERY beyond the recent-chat limit.
+Match all words against chat names and participant names/emails.  This scans
+chat metadata, not messages or calendars, and never creates a conversation.
+Use `teams4e-server-search' to find a channel thread by message contents."
+  (interactive (list (read-string "Find chat (name or participants): ")))
+  (when teams4e-offline-mode
+    (user-error "Finding chats beyond recents requires online mode"))
+  (setq query (string-trim query))
+  (when (string-empty-p query) (user-error "Chat search query is empty"))
+  (message "Finding Teams chats beyond recents...")
+  (teams4e--run-json
+   (list "teams" "chat" "find" "--query" query)
+   (lambda (payload)
+     (let* ((chats (teams4e--get payload 'chats))
+            (incomplete (> (or (teams4e--get payload 'memberErrors) 0) 0))
+            (index 0)
+            (choices
+             (mapcar
+              (lambda (chat)
+                (let* ((members (teams4e--get chat 'members))
+                       (names (mapconcat
+                               (lambda (member)
+                                 (let ((name (teams4e--get member 'displayName))
+                                       (email (teams4e--get member 'email)))
+                                   (if (and name email) (format "%s <%s>" name email)
+                                     (or name email "Unknown"))))
+                               members ", "))
+                       (topic (teams4e--get chat 'topic))
+                       (title (if (and topic (not (string-empty-p topic))) topic
+                                (if (string-empty-p names) "Untitled chat" names))))
+                  (cons (format "%s  %s%s  [%d]"
+                                (or (teams4e--get chat 'chatType) "chat")
+                                (replace-regexp-in-string "[\n\r\t]+" " " title)
+                                (if (and topic (not (string-empty-p topic))
+                                         (not (string-empty-p names)))
+                                    (concat " | " (replace-regexp-in-string "[\n\r\t]+" " " names)) "")
+                                (cl-incf index)) chat))) chats)))
+       (unless choices
+         (user-error "%s" (if incomplete
+                                "No matches; some participant lists were unavailable, so search is incomplete"
+                              (format "No chats match %s" query))))
+       (let* ((choice (completing-read
+                       (format "Chat (%d matches%s): " (length choices)
+                               (if incomplete "; participant search incomplete" ""))
+                       choices nil t))
+              (chat (cdr (assoc choice choices))))
+         (when chat
+           (when (teams4e--get chat 'membersLoaded)
+             (puthash (teams4e--chat-id chat) (or (teams4e--get chat 'members) teams4e--no-members)
+                      teams4e--member-cache))
+           (teams4e-open-chat (or (teams4e--find-chat (teams4e--chat-id chat)) chat))))))))
+
 (defun teams4e-search-open ()
   "Open the source transcript for the cached search result at point."
   (interactive)
@@ -3956,6 +4010,7 @@ shared by the terminal Teams client."
             ("Search cached messages" . teams4e-search)
             ("Search Microsoft Teams server" .
              teams4e-server-search)
+            ("Find chat beyond recents" . teams4e-find-chat)
             ("Reopen saved compose draft" . teams4e-compose-drafts)
             ("Close inactive transcript buffers" .
              teams4e-close-inactive-transcripts)
@@ -4010,6 +4065,7 @@ shared by the terminal Teams client."
          ("Z" . teams4e-snooze)
          ("M-U" . teams4e-undo-action)
          ("/" . teams4e-search)
+         ("M-f" . teams4e-find-chat)
          ("s" . teams4e-filter)
          ("b" . teams4e-bookmark-jump)
          ("B" . teams4e-bookmark-edit)
@@ -4038,6 +4094,7 @@ shared by the terminal Teams client."
 
 (defun teams4e-install-chat-reader-bindings ()
   "Install mu4e-style headers delegation and reader-local Teams commands."
+  (define-key teams4e-chat-mode-map (kbd "M-f") #'teams4e-find-chat)
   (dolist (key teams4e--chat-header-mirror-keys)
     (define-key teams4e-chat-mode-map (kbd key)
                 #'teams4e-chat-run-headers-command))
@@ -4129,6 +4186,7 @@ shared by the terminal Teams client."
             ("Search cache" . teams4e-search)
             ("Search Microsoft Teams server" .
              teams4e-server-search)
+            ("Find chat beyond recents" . teams4e-find-chat)
             ("Synchronize chats" . teams4e-sync)
             ("Synchronize chats and channels" .
              teams4e-sync-all)
@@ -4203,6 +4261,7 @@ shared by the terminal Teams client."
           ("c" "channels" teams4e-channels)
          ("/" "search" teams4e-search)
           ("?" "server search" teams4e-server-search)
+          ("M-f" "find chat" teams4e-find-chat)
           ("b" "bookmark" teams4e-bookmark-jump)
           ("f" "filter" teams4e-filter)
           ("F" "unread only" teams4e-toggle-unread-filter)
@@ -4299,6 +4358,7 @@ shared by the terminal Teams client."
 (defalias 'teams-channels #'teams4e-channels)
 (defalias 'teams-search #'teams4e-search)
 (defalias 'teams-server-search #'teams4e-server-search)
+(defalias 'teams-find-chat #'teams4e-find-chat)
 (defalias 'teams-drafts #'teams4e-compose-drafts)
 (defalias 'teams-meeting-transcript #'teams4e-meeting-transcript)
 (defalias 'teams-propose-new-time #'teams4e-meeting-propose-new-time)

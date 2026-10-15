@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add `teams4e-find-chat` (`M-f` in inbox/reader) to find existing direct,
+  group, and meeting chats beyond recents by name or participant names/emails.
+  Follow all metadata pages; resolve truncated expanded memberships only when
+  needed. Report incomplete membership search, preserve the current inbox and
+  filters, and open the chosen chat in the normal singleton reader. No new chat
+  or separate persistent directory is created. Include an offline mock contract.
+
 - Add a single-key invitation action menu (`a`) in agenda and reader: accept,
   tentative, decline, reschedule/propose, capture, chat, join, or Outlook.
   Keep `r` available directly from the agenda, including Evil normal/motion.

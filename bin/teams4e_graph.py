@@ -880,6 +880,49 @@ def list_members(chat_id: str, access_token: str) -> list[dict[str, Any]]:
   return graph_collection(f"/chats/{quoted_id(chat_id)}/members", access_token)
 
 
+def find_chats(query: str, access_token: str) -> dict[str, Any]:
+  """Find existing chats beyond recents by literal topic/member words.
+
+  Expand members on paginated metadata, not messages or calendar context.
+  Graph caps expanded membership at 25; resolve a possibly truncated list
+  only when it could hide a match. Never create a chat as a search fallback.
+  """
+  words = query.casefold().split()
+  if not words:
+    raise BackendError("Chat search query is empty")
+  chats = graph_collection(collection_path(
+      "/me/chats", [("$top", "50"), ("$expand", "members")]), access_token)
+  matches: dict[str, dict[str, Any]] = {}
+  member_errors = 0
+
+  def matches_query(chat: dict[str, Any]) -> bool:
+    text = " ".join(str(value or "") for value in (
+        [chat.get("topic"), chat.get("id"), chat.get("chatType")]
+        + [member.get(field) for member in chat.get("members", [])
+           for field in ("displayName", "email")])).casefold()
+    return all(word in text for word in words)
+
+  for chat in chats:
+    if not chat.get("id"):
+      continue
+    members = chat.get("members")
+    incomplete = (not isinstance(members, list) or len(members) >= 25
+                  or bool(chat.get("members@odata.nextLink")))
+    if not isinstance(members, list):
+      chat["members"] = []
+    if incomplete and not matches_query(chat):
+      try:
+        chat["members"] = list_members(str(chat["id"]), access_token)
+        incomplete = False
+      except BackendError:
+        member_errors += 1
+    chat["membersLoaded"] = not incomplete
+    if matches_query(chat):
+      matches[str(chat["id"])] = chat
+  return {"chats": list(matches.values()), "scanned": len(chats),
+          "memberErrors": member_errors, "complete": member_errors == 0}
+
+
 def get_calendar_event(event_id: str, access_token: str) -> dict[str, Any]:
   """Return schedule, location, response, and join metadata for EVENT_ID."""
   event_path = collection_path(
@@ -3624,6 +3667,8 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
     )
     with TeamsCache() as cache:
       cache.upsert_resources("chat", result)
+  elif args[:3] == ["teams", "chat", "find"]:
+    result = find_chats(str(option(args, "--query")), access_token)
   elif args[:3] == ["teams", "search", "messages"]:
     result = search_messages(
         str(option(args, "--query")),

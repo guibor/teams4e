@@ -37,6 +37,8 @@
 (add-hook 'teams4e-chat-mode-hook #'teams4e-evil-refresh-bookmark-bindings)
 
 (with-eval-after-load 'evil
+  (dolist (map (list teams4e-recent-mode-map teams4e-chat-mode-map))
+    (evil-define-key* '(normal motion) map (kbd "M-f") #'teams4e-find-chat))
   (dolist (map (list teams4e-chat-mode-map teams4e-channel-thread-mode-map))
     (evil-define-key* '(normal motion visual) map
       (kbd "M-w") #'kill-ring-save

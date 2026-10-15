@@ -331,6 +331,28 @@ Scheduled file attachments are not yet supported.
 See [scheduled sending](SCHEDULED-SEND.md) for setup, keymaps, DST behavior,
 recovery, and limitations.
 
+## Find Older Chats
+
+`M-x teams4e-find-chat` (default **`M-f`** in the inbox and reader) finds
+existing chats outside your recents. Enter a group name, participant name/email,
+or several words such as `launch ada`; all words must match across the chat's
+name and membership. Choose a result with completion and press `RET` to open it
+in the normal reader. One-to-one, group, and meeting chats are included.
+
+This explicitly scans all pages of your chat metadata, ignoring inbox filters
+and the recent-chat limit, without fetching messages or calendars. Large chat
+collections can take longer. It uses the documented
+[list-chats API](https://learn.microsoft.com/en-us/graph/api/chat-list?view=graph-rest-1.0)
+with expanded members; potentially truncated member lists are checked separately
+when needed. Failed membership lookups are reported as incomplete search rather
+than silently implying there is no matching group. It does not create chats,
+change the inbox snapshot, or add a separate persistent directory.
+
+Use `teams4e-server-search` for message contents and channel threads;
+`teams4e-search` searches only cached messages. Finding chats requires online
+mode and an updated backend as well as Lisp. `teams-find-chat` is an alias;
+the command is also available in the `H` command palette.
+
 ## History and Export
 
 Opening a chat fetches the **newest 100 messages, without a date cutoff**.
