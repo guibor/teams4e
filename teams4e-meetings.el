@@ -966,6 +966,8 @@
 (defun teams4e-availability--render ()
   "Render the singleton meeting availability workspace."
   (let ((inhibit-read-only t))
+    (setq-local truncate-lines (not teams4e-availability--review-slot)
+                word-wrap t)
     (erase-buffer)
     (teams4e-availability--insert-heading)
     (cond
