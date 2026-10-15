@@ -398,6 +398,10 @@ Teams meeting-chat view. Ordinary appointments, focus blocks, all-day events,
 and recurring occurrences appear even when there is no associated Teams chat.
 
 The day-grouped agenda centers on the current or nearest time on first load.
+By default it shows seven days from today, including next week's workdays even
+when opened on Thursday. `t` resets that window to today; `w` starts it on the
+selected date. Traditional calendar-week boundaries remain configurable with
+`teams4e-calendar-week-start`.
 Availability, not RSVP, drives the colors: busy, tentative, out of office,
 working elsewhere, and subdued free events. Free gaps within configurable
 working hours use the full snapshot, even when a text filter hides events;

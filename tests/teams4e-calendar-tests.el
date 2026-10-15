@@ -63,7 +63,8 @@
 
 (defmacro teams4e-calendar-test (&rest body)
   (declare (indent 0))
-  `(let ((process-environment (copy-sequence process-environment)))
+  `(let ((process-environment (copy-sequence process-environment))
+         (teams4e-calendar-week-start 'calendar-week))
      (setenv "TZ" "UTC")
      (set-time-zone-rule "UTC")
      (unwind-protect
@@ -89,6 +90,59 @@
           teams4e-calendar--date (date-to-time "2026-11-01T12:00:00-05:00"))
     (should (equal (cdr (teams4e-calendar--key))
                    '("2026-11-01T04:00:00Z" "2026-11-02T05:00:00Z")))))
+
+(ert-deftest teams4e-calendar-rolling-week-includes-next-workweek ()
+  (teams4e-calendar-test
+    (let ((teams4e-calendar-week-start 'selected-day))
+      (dolist (date '("2026-10-15T12:00:00Z" "2026-12-31T12:00:00Z"))
+        (setq teams4e-calendar--date (date-to-time date))
+        (let ((range (teams4e-calendar--range)))
+          (should (equal (car range) (teams4e-calendar--midnight teams4e-calendar--date)))
+          (should (= (* 7 86400) (float-time (time-subtract (cadr range) (car range)))))))
+      (setq teams4e-calendar--date (date-to-time "2026-10-15T12:00:00Z"))
+      (should (equal (cdr (teams4e-calendar--key))
+                     '("2026-10-15T00:00:00Z" "2026-10-22T00:00:00Z"))))))
+
+(ert-deftest teams4e-calendar-rolling-week-navigation-keeps-one-snapshot ()
+  (teams4e-calendar-test
+    (let ((teams4e-calendar-week-start 'selected-day) (calls 0))
+      (setq teams4e-calendar--date (date-to-time "2026-10-15T12:00:00Z"))
+      (cl-letf (((symbol-function 'teams4e--require-online) #'ignore)
+                ((symbol-function 'teams4e--run-json)
+                 (lambda (_args callback &optional _error)
+                   (cl-incf calls) (funcall callback '((events) (complete . t))) nil)))
+        (teams4e-calendar-refresh)
+        (let ((key teams4e-calendar--loaded-key))
+          (teams4e-calendar-week)
+          (teams4e-calendar-next-day 4)
+          (should (= 1 calls))
+          (should (equal key (teams4e-calendar--key)))
+          (should (equal "2026-10-19" (get-text-property (point) 'teams4e-calendar-day)))
+          (teams4e-calendar-next-day 3)
+          (should (= 2 calls))
+          (should (equal "2026-10-22T00:00:00Z" (nth 1 teams4e-calendar--loaded-key)))
+          (teams4e-calendar-previous-period)
+          (should (equal key teams4e-calendar--loaded-key)))))))
+
+(ert-deftest teams4e-calendar-rolling-week-today-reanchors ()
+  (teams4e-calendar-test
+    (let ((teams4e-calendar-week-start 'selected-day)
+          (now (date-to-time "2026-10-15T12:00:00Z")))
+      (setq teams4e-calendar--week-anchor (date-to-time "2026-10-12T00:00:00Z"))
+      (cl-letf (((symbol-function 'current-time) (lambda () now))
+                ((symbol-function 'teams4e-calendar--show-range) #'ignore))
+        (teams4e-calendar-today)
+        (should (equal (nth 1 (teams4e-calendar--key)) "2026-10-15T00:00:00Z"))))))
+
+(ert-deftest teams4e-calendar-rolling-week-crosses-dst ()
+  (teams4e-calendar-test
+    (set-time-zone-rule "America/New_York")
+    (let ((teams4e-calendar-week-start 'selected-day))
+      (dolist (entry '((5 3 167) (29 10 169)))
+        (setq teams4e-calendar--date (encode-time 0 0 12 (car entry) (cadr entry) 2026))
+        (let ((range (teams4e-calendar--range)))
+          (should (= (* (nth 2 entry) 3600)
+                     (float-time (time-subtract (cadr range) (car range))))))))))
 
 (ert-deftest teams4e-calendar-all-day-end-is-exclusive ()
   (teams4e-calendar-test

@@ -7,8 +7,13 @@ events, invitations, and each recurring occurrence in the displayed range.
 
 ## Daily Use
 
-The default is a chronological, day-grouped week agenda. Times use the Emacs
-machine's local timezone; week boundaries respect `calendar-week-start-day`.
+The default is a chronological, day-grouped agenda covering seven days from
+today, not the remainder of the calendar week. Thursday therefore includes the
+following Monday, Tuesday, and Wednesday. `t` starts a fresh seven-day window
+from today; `w` starts one from the selected date. Day navigation within the
+loaded window does not fetch again. Times and day boundaries use the Emacs
+machine's local timezone, including DST. Set `teams4e-calendar-week-start` to
+`calendar-week` to restore boundaries based on `calendar-week-start-day`.
 The time interval has its own fixed-width area, while titles and metadata wrap
 rather than being squeezed into narrow columns. Dates are local calendar dates,
 so moving by a day across DST does not assume every day has 24 hours.
@@ -84,7 +89,7 @@ the menu aborts rather than acting on a different meeting.
 These captures use synthetic appointments, Moe Dark, and ordinary Emacs
 completion. Your completion frontend and customized keys determine how the
 menu looks. The fixture uses a rolling week starting today and daily working
-hours so it remains illustrative on weekends; these are not package defaults.
+hours so it remains illustrative on weekends; those work hours are not package defaults.
 See [overview and menu capture provenance](assets/calendar-ui-capture.json).
 
 First load centers on the ongoing or nearest timed row. Explicit refreshes keep

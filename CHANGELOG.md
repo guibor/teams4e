@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Start the week agenda on the selected day (today on first open), showing
+  seven days ahead instead of stopping at the calendar-week boundary. Keep
+  day navigation within the snapshot local; preserve DST-aware boundaries.
+  Offer traditional boundaries through `teams4e-calendar-week-start`.
+
 - Add a compact participant day comparison (`D`), common-free stretches (`f`),
   and an old/new time review before rescheduling or proposing. `RET` stages,
   `C-c C-c` submits once, and `C-c C-k` returns; calendar context follows the

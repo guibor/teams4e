@@ -34,6 +34,13 @@
   :type '(choice (const day) (const week) (const month))
   :group 'teams4e-calendar)
 
+(defcustom teams4e-calendar-week-start 'selected-day
+  "Where the week agenda starts.
+`selected-day' shows seven days starting on the selected date (today on
+first open).  `calendar-week' uses `calendar-week-start-day' instead."
+  :type '(choice (const selected-day) (const calendar-week))
+  :group 'teams4e-calendar)
+
 (defcustom teams4e-calendar-id nil
   "Calendar ID to open by default, or nil for the primary calendar."
   :type '(choice (const :tag "Primary calendar" nil) string)
@@ -63,6 +70,8 @@ The URL is appended as one argument.  No background-tab guarantee is possible."
 (defconst teams4e-calendar--detail-name "*Teams Calendar Event*")
 (defvar-local teams4e-calendar--events nil)
 (defvar-local teams4e-calendar--date nil)
+(defvar-local teams4e-calendar--week-anchor nil
+  "Start of the rolling week, kept stable while navigating its days.")
 (defvar-local teams4e-calendar--view nil)
 (defvar-local teams4e-calendar--id nil)
 (defvar-local teams4e-calendar--name "Primary calendar")
@@ -95,8 +104,16 @@ The URL is appended as one argument.  No background-tab guarantee is possible."
       ('day (list day (teams4e-calendar--midnight day 1)))
       ('month (list (encode-time 0 0 0 1 (nth 4 parts) (nth 5 parts))
                     (encode-time 0 0 0 1 (1+ (nth 4 parts)) (nth 5 parts))))
-      (_ (let ((start (teams4e-calendar--midnight
-                       day (- (mod (- (nth 6 parts) calendar-week-start-day) 7)))))
+      (_ (let ((start
+                (if (eq teams4e-calendar-week-start 'calendar-week)
+                    (teams4e-calendar--midnight
+                     day (- (mod (- (nth 6 parts) calendar-week-start-day) 7)))
+                  (if (and teams4e-calendar--week-anchor
+                           (not (time-less-p day teams4e-calendar--week-anchor))
+                           (time-less-p day (teams4e-calendar--midnight
+                                             teams4e-calendar--week-anchor 7)))
+                      teams4e-calendar--week-anchor
+                    day))))
            (list start (teams4e-calendar--midnight start 7)))))))
 
 (defun teams4e-calendar--key ()
@@ -1038,6 +1055,8 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
   (interactive)
   (teams4e--require-online)
   (teams4e-calendar--cancel)
+  (when (eq teams4e-calendar--view 'week)
+    (setq teams4e-calendar--week-anchor (car (teams4e-calendar--range))))
   (let* ((buffer (current-buffer))
          (generation teams4e-calendar--generation)
          (key (teams4e-calendar--key))
@@ -1073,6 +1092,8 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
 
 (defun teams4e-calendar--show-range ()
   "Reuse the loaded range or request the newly selected one."
+  (when (eq teams4e-calendar--view 'week)
+    (setq teams4e-calendar--week-anchor (car (teams4e-calendar--range))))
   (if (equal (teams4e-calendar--key) teams4e-calendar--loaded-key)
       (progn
         (teams4e-calendar--cancel)
@@ -1084,6 +1105,7 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
   "Display a day, week or month agenda VIEW."
   (interactive (list (intern (completing-read "Calendar view: " '("day" "week" "month") nil t))))
   (setq teams4e-calendar--view view
+        teams4e-calendar--week-anchor nil
         teams4e-calendar--focus teams4e-calendar--date
         teams4e-calendar--focus-day-heading nil)
   (teams4e-calendar--show-range))
@@ -1092,7 +1114,7 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
   "Display the day agenda."
   (interactive) (teams4e-calendar-set-view 'day))
 (defun teams4e-calendar-week ()
-  "Display the week agenda."
+  "Display seven days from the selected date, unless configured otherwise."
   (interactive) (teams4e-calendar-set-view 'week))
 (defun teams4e-calendar-month ()
   "Display the month agenda."
@@ -1122,6 +1144,7 @@ When DAY-HEADING is `upcoming', exclude ended timed rows."
   "Center on now or the nearest timed row in today's agenda."
   (interactive)
   (setq teams4e-calendar--date (current-time)
+        teams4e-calendar--week-anchor nil
         teams4e-calendar--focus teams4e-calendar--date
         teams4e-calendar--focus-day-heading nil)
   (teams4e-calendar--show-range))
@@ -1154,6 +1177,7 @@ working hours start on tomorrow instead.  Empty days land on their heading."
   "Choose a date with Org's calendar date reader."
   (interactive)
   (setq teams4e-calendar--date (org-read-date nil t nil "Calendar date: ")
+        teams4e-calendar--week-anchor nil
         teams4e-calendar--focus teams4e-calendar--date
         teams4e-calendar--focus-day-heading nil)
   (teams4e-calendar--show-range))
@@ -1714,7 +1738,7 @@ Read the public mode map so user customizations remain authoritative."
 ;;;###autoload
 (defun teams4e-calendar (&optional refresh)
   "Resume the independent calendar; prefix REFRESH explicitly reloads it.
-The first invocation opens the current week by default, without loading chats."
+The first invocation opens seven days from today by default, without chats."
   (interactive "P")
   (let ((existing (get-buffer teams4e-calendar--buffer-name))
         (buffer (get-buffer-create teams4e-calendar--buffer-name)))
