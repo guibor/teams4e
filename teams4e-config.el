@@ -32,11 +32,19 @@ Disable this option to use the original process-per-command transport."
   :group 'teams4e)
 
 (defcustom teams4e-cache-first t
-  "Render cached chat metadata before refreshing the inbox from Graph.
+  "Show cached inbox and chat data while refreshing from Graph.
 
-This reuses `teams4e-cache-file'; it does not create another cache or
-change Graph's authority over live conversation state."
+This reuses `teams4e-cache-file' and bounded recent-chat memory snapshots;
+it does not change Graph's authority over live conversation state."
   :type 'boolean
+  :group 'teams4e)
+
+(defcustom teams4e-recent-chat-cache-size 8
+  "Number of recently read chats to retain in memory for immediate reopening.
+Live data still refreshes in the background.  Each entry retains at most
+`teams4e-message-limit' messages (300 when unbounded), not a reader buffer.
+Set to zero to disable.  Also disabled when `teams4e-cache-first' is nil."
+  :type 'natnum
   :group 'teams4e)
 
 (defcustom teams4e-token-command nil

@@ -356,12 +356,30 @@ the command is also available in the `H` command palette.
 ## History and Export
 
 Opening a chat fetches the **newest 100 messages, without a date cutoff**.
-Automatic previews remain limited to 50. The live request starts alongside
-the SQLite cache read; a late cache result cannot replace newer network data.
+Automatic previews remain limited to 50. With the bundled persistent backend,
+the first live page appears before older pages finish, without extra Graph
+requests. Full-history loads and exports still wait for complete results.
+
+The last eight opened chats retain bounded message snapshots in memory, so
+reopening shows cached content immediately while refreshing from Graph. This
+does not create extra reader buffers or another on-disk store. Customize
+`teams4e-recent-chat-cache-size` (zero disables it), or disable all initial
+cache display with `teams4e-cache-first`. For other chats, the live request
+starts alongside the SQLite cache read; a late cache result cannot replace
+live data. Unchanged live responses do not rebuild the transcript, preserving
+selection and loaded images. A failed refresh is shown in the header, never
+silently treated as fresh data.
+
 `teams4e-chat-load-more` (default `L`) loads more;
 `teams4e-chat-load-all` (default `G`) requests complete available history.
 Configure `teams4e-message-days` and `teams4e-message-limit` to change the
 initial bounds; `nil` removes the respective bound.
+
+`M-x teams4e-performance-report` separates backend round-trip time from
+transcript rendering and records time to the first live page when available.
+It contains timings and counts, not message contents. Update both Lisp and
+the backend to get progressive loading; older/custom backends continue to
+work with their usual single final response.
 
 Export and agent analysis make a separate request that follows every Graph
 pagination link, records counts and the date range, and rejects incomplete

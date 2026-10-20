@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Display the first live chat page while older pages load through the same
+  persistent request. Keep the 100-message default and complete exports;
+  do not add Graph calls or weaken pagination-error reporting. Ignore stale
+  progress/cache responses after switching chats.
+- Retain bounded raw-message snapshots for eight recent chats (configurable)
+  while continuing to refresh live data on explicit open. Skip unchanged
+  transcript rebuilds, preserving selection and images. Add first-live-page
+  timing to the content-free performance report.
+
 - Start the week agenda on the selected day (today on first open), showing
   seven days ahead instead of stopping at the calendar-week boundary. Keep
   day navigation within the snapshot local; preserve DST-aware boundaries.

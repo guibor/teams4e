@@ -210,6 +210,12 @@
 (defvar-local teams4e--loaded-at nil)
 (defvar-local teams4e--loaded-update nil)
 (defvar-local teams4e--loaded-all nil)
+(defvar-local teams4e--initial-messages-shown nil)
+(defvar-local teams4e--chat-render-state nil)
+(defvar teams4e--recent-chat-cache nil
+  "Bounded, disposable raw-message snapshots; live responses remain authoritative.")
+(defvar teams4e--request-progress-callback nil
+  "Dynamically bound optional callback for partial persistent responses.")
 (defvar-local teams4e--message-order nil)
 (defvar-local teams4e--request-id 0)
 (defvar-local teams4e--preview-timer nil)
@@ -737,9 +743,12 @@ suffix beginning with its top-level ID field."
                            (gethash id teams4e--server-pending))))
         (process-put server 'teams4e-stdout-noise-count 0)
         (when pending
-          (remhash id teams4e--server-pending)
+          (unless (teams4e--get response 'progress)
+            (remhash id teams4e--server-pending))
           (let ((request (plist-get pending :request))
-                (callback (plist-get pending :callback))
+                (callback (plist-get pending
+                                     (if (teams4e--get response 'progress)
+                                         :progress-callback :callback)))
                 (error-callback (plist-get pending :error-callback))
                 (args (plist-get pending :args)))
             (unless (teams4e-request-cancelled request)
@@ -829,13 +838,17 @@ suffix beginning with its top-level ID field."
          (request (teams4e--make-request id)))
     (puthash id
              (list :request request :server server :args args
+                   :progress-callback teams4e--request-progress-callback
                    :callback callback :error-callback error-callback)
              teams4e--server-pending)
     (condition-case send-error
         (process-send-string
          server
          (concat
-          (json-serialize `((id . ,id) (args . ,(vconcat args))))
+          (json-serialize
+           (append `((id . ,id) (args . ,(vconcat args)))
+                   (when teams4e--request-progress-callback
+                     '((progress . t)))))
           "\n"))
       (error
        (remhash id teams4e--server-pending)
@@ -1826,7 +1839,8 @@ and leave CALLBACK untouched."
     (with-current-buffer buffer
       (let ((inhibit-read-only t)) (erase-buffer)))
     (apply #'make-comint-in-buffer "M365 Login" buffer program nil args)
-    (setq teams4e--connected-as nil)
+    (setq teams4e--connected-as nil
+          teams4e--recent-chat-cache nil)
     (pop-to-buffer buffer)))
 
 ;;;###autoload
@@ -4079,6 +4093,31 @@ When DATE-ONLY is non-nil, omit the time of day."
           (set-window-point window (point))))
     (teams4e--goto-reader-bottom)))
 
+(defun teams4e--chat-render-key ()
+  "Return the inputs that affect the current transcript presentation."
+  (list teams4e--messages teams4e--chat teams4e--meeting-context
+        (teams4e--effective-message-order)
+        teams4e-display-images teams4e-message-renderer))
+
+(defun teams4e--chat-header ()
+  "Return the normal transcript header without rebuilding its body."
+  (format "%s - %d messages - %s%s"
+          (teams4e--chat-label teams4e--chat)
+          (length teams4e--messages)
+          (teams4e--message-order-label)
+          (if teams4e--loaded-all " - complete" "")))
+
+(defun teams4e--update-chat-transcript ()
+  "Rebuild only changed transcript content, preserving selection and images."
+  (if (and (equal teams4e--chat-render-state (teams4e--chat-render-key))
+           (not teams4e--pending-message-id))
+      (progn
+        (when teams4e--jump-to-bottom-on-render
+          (teams4e--goto-reader-latest))
+        (setq teams4e--jump-to-bottom-on-render nil
+              header-line-format (teams4e--chat-header)))
+    (teams4e--render-chat)))
+
 (defun teams4e--render-chat ()
   "Render the current chat and its cached messages."
   (let* ((inhibit-read-only t)
@@ -4131,12 +4170,8 @@ When DATE-ONLY is non-nil, omit the time of day."
       (goto-char (point-max))
       (teams4e-chat-previous-message)))
     (setq teams4e--jump-to-bottom-on-render nil
-          header-line-format
-          (format "%s - %d messages - %s%s"
-                  (teams4e--chat-label teams4e--chat)
-                  (length teams4e--messages)
-                  (teams4e--message-order-label)
-                  (if teams4e--loaded-all " - complete" "")))
+          teams4e--chat-render-state (teams4e--chat-render-key)
+          header-line-format (teams4e--chat-header))
     (teams4e--record-performance
      "Transcript render" (* 1000.0 (- (float-time) started))
      :transport "emacs" :items (length teams4e--messages))))
@@ -4279,6 +4314,26 @@ When DATE-ONLY is non-nil, omit the time of day."
        (equal teams4e--loaded-update
               (teams4e--get chat 'lastUpdatedDateTime))))
 
+(defun teams4e--recent-chat-key (chat)
+  "Identify CHAT within the configured account, backend and date window."
+  (list teams4e-backend-program teams4e-credentials-file teams4e-token-command
+        teams4e-bootstrap-program teams4e-cache-file
+        teams4e-mock-mode teams4e-mock-state-file
+        teams4e--connected-as teams4e--connected-user-id
+        teams4e-message-days (teams4e--chat-id chat)))
+
+(defun teams4e--remember-chat (&optional key)
+  "Retain a bounded live snapshot, using the request's account KEY if given."
+  (when (and teams4e-cache-first (> teams4e-recent-chat-cache-size 0)
+             teams4e--messages)
+    (let ((key (or key (teams4e--recent-chat-key teams4e--chat))))
+      (setq teams4e--recent-chat-cache
+            (seq-take
+             (cons (cons key (last teams4e--messages
+                                   (or teams4e-message-limit 300)))
+                   (assoc-delete-all key teams4e--recent-chat-cache))
+             teams4e-recent-chat-cache-size)))))
+
 (defun teams4e-open-chat (chat &optional preview all message-id)
   "Open native transcript buffer for CHAT.
 
@@ -4318,12 +4373,24 @@ complete history, and MESSAGE-ID is selected after that history renders."
                 teams4e--loaded-at nil
                 teams4e--loaded-update nil
                 teams4e--loaded-all nil
+                teams4e--initial-messages-shown nil
+                teams4e--chat-render-state nil
                 teams4e--meeting-context
                 (teams4e--get chat 'meetingContext))
           (let ((inhibit-read-only t))
             (erase-buffer)
             (insert (format "Loading %s...\n"
-                            (teams4e--chat-label chat)))))
+                            (teams4e--chat-label chat))))
+          (when (and teams4e-cache-first (> teams4e-recent-chat-cache-size 0)
+                     (not all) (not message-id))
+            (when-let ((messages
+                        (cdr (assoc (teams4e--recent-chat-key chat)
+                                    teams4e--recent-chat-cache))))
+              (setq teams4e--messages
+                    (last messages (or (and preview teams4e-preview-message-limit)
+                                       teams4e-message-limit 300))
+                    teams4e--initial-messages-shown t)
+              (teams4e--render-chat))))
         (unless (or reuse-preview same-request-running)
           (when (and same-chat (not preview) (not message-id)
                      teams4e--messages)
@@ -4379,7 +4446,7 @@ complete history, and MESSAGE-ID is selected after that history renders."
          (chat-id (teams4e--chat-id teams4e--chat))
          (limit (or request-limit teams4e-message-limit 300)))
     ;; A synchronous backend may already have delivered the live response.
-    (unless teams4e--loaded-at
+    (unless (or teams4e--loaded-at teams4e--initial-messages-shown)
       (teams4e--run-json
        (list "teams" "cache" "chat" "message" "list"
              "--chatId" chat-id "--limit" (number-to-string limit))
@@ -4389,7 +4456,8 @@ complete history, and MESSAGE-ID is selected after that history renders."
              (when (and (= request-id teams4e--request-id)
                         (derived-mode-p 'teams4e-chat-mode)
                         (equal chat-id (teams4e--chat-id teams4e--chat))
-                        (not teams4e--loaded-at))
+                        (not teams4e--loaded-at)
+                        (not teams4e--initial-messages-shown))
                (let ((messages (teams4e--normalize-messages
                                 (teams4e--payload-list payload)))
                      (status header-line-format))
@@ -4424,9 +4492,39 @@ date window while retaining that bound, which supports incremental loading."
       (teams4e--chat-refresh-cache-first all request-limit)
     (teams4e--cancel-process teams4e--process)
     (cl-incf teams4e--request-id)
-    (let ((buffer (current-buffer))
-          (request-id teams4e--request-id)
-          (chat teams4e--chat))
+    (let* ((buffer (current-buffer))
+           (request-id teams4e--request-id)
+           (chat teams4e--chat)
+           (cache-key (teams4e--recent-chat-key teams4e--chat))
+           (started (float-time))
+           (teams4e--request-progress-callback
+            (unless (or all ignore-date teams4e-offline-mode
+                        teams4e--pending-message-id)
+              (lambda (payload)
+                (when (buffer-live-p buffer)
+                  (with-current-buffer buffer
+                    (when (and (= request-id teams4e--request-id)
+                               (derived-mode-p 'teams4e-chat-mode)
+                               (equal (teams4e--chat-id chat)
+                                      (teams4e--chat-id teams4e--chat)))
+                      (let ((messages (teams4e--normalize-messages
+                                       (teams4e--payload-list payload))))
+                        ;; Do not discard already visible older messages just
+                        ;; because their unchanged newest page arrived first.
+                        (unless (equal messages
+                                       (last teams4e--messages (length messages)))
+                          (setq teams4e--messages messages)))
+                      (setq teams4e--initial-messages-shown t
+                            teams4e--loaded-all nil)
+                      (teams4e--update-chat-transcript)
+                      (setq header-line-format
+                            (format "%s - %d live messages; loading older messages..."
+                                    (teams4e--chat-label chat)
+                                    (length (teams4e--payload-list payload))))
+                      (teams4e--record-performance
+                       "First live messages" (* 1000.0 (- (float-time) started))
+                       :transport "persistent"
+                       :items (length (teams4e--payload-list payload))))))))))
       (setq header-line-format
             (if teams4e--messages
                 "Refreshing Teams messages..."
@@ -4468,7 +4566,13 @@ date window while retaining that bound, which supports incremental loading."
                         (or (not (null all))
                             (and ignore-date request-limit
                                  (< (length messages) request-limit))))
-                  (teams4e--render-chat))))))
+                  (unless (or all ignore-date teams4e-offline-mode)
+                    (if messages
+                        (teams4e--remember-chat cache-key)
+                      (setq teams4e--recent-chat-cache
+                            (assoc-delete-all cache-key
+                                              teams4e--recent-chat-cache))))
+                  (teams4e--update-chat-transcript))))))
         (lambda (status detail)
           (when (buffer-live-p buffer)
             (with-current-buffer buffer
@@ -4481,7 +4585,7 @@ date window while retaining that bound, which supports incremental loading."
                 (setq teams4e--process nil
                       header-line-format
                       (if teams4e--messages
-                          (concat "Showing cached Teams messages; live refresh "
+                          (concat "Showing available Teams messages; live refresh "
                                   "failed - see *M365 Errors*")
                         "Teams thread load failed - see *M365 Errors*")))))
           (teams4e--report-error

@@ -298,6 +298,69 @@ class GraphBackendTests(unittest.TestCase):
     query = urllib.parse.parse_qs(urllib.parse.urlparse(request.call_args.args[0]).query)
     self.assertEqual(["lastMessagePreview"], query["$expand"])
 
+  def test_message_first_page_arrives_before_second_request_without_extra_calls(self) -> None:
+    newest = [{"id": str(i)} for i in range(100, 50, -1)]
+    older = [{"id": str(i)} for i in range(50, 0, -1)]
+    progress = []
+
+    def request(path, token, **kwargs):
+      if path == "https://graph.microsoft.com/v1.0/page2":
+        self.assertEqual([newest], progress)
+        return {"value": older}
+      return {"value": newest, "@odata.nextLink": "https://graph.microsoft.com/v1.0/page2"}
+
+    with mock.patch.object(backend, "graph_json", side_effect=request) as calls:
+      result = backend.list_messages("chat", "token", limit=100, first_page=progress.append)
+    self.assertEqual(newest + older, result)
+    self.assertEqual([newest], progress)
+    self.assertEqual(2, calls.call_count)
+
+  def test_first_page_only_for_bounded_requests_that_need_another_page(self) -> None:
+    for limit in (None, 1, 50):
+      with self.subTest(limit=limit):
+        progress = []
+        pages = [
+            {"value": [{"id": str(i)} for i in range(50)], "@odata.nextLink": "page2"},
+            {"value": [{"id": "older"}]},
+        ]
+        with mock.patch.object(backend, "graph_json", side_effect=pages):
+          backend.list_messages("chat", "token", limit=limit, first_page=progress.append)
+        self.assertEqual([], progress)
+
+  def test_progress_does_not_hide_pagination_failure(self) -> None:
+    progress = []
+    with mock.patch.object(backend, "graph_json", side_effect=[
+        {"value": [{"id": "newest"}], "@odata.nextLink": "page2"},
+        backend.BackendError("page failed"),
+    ]):
+      with self.assertRaisesRegex(backend.BackendError, "page failed"):
+        backend.list_messages("chat", "token", limit=100, first_page=progress.append)
+    self.assertEqual([[{"id": "newest"}]], progress)
+
+  def test_execute_chat_list_delivers_progress_before_final_cache_write(self) -> None:
+    progress = []
+    with (
+        mock.patch.object(backend, "mock_enabled", return_value=False),
+        mock.patch.object(backend, "ensure_graph_token", return_value="fixture-token"),
+        mock.patch.object(backend, "TeamsCache") as cache,
+        mock.patch.object(backend, "graph_json", side_effect=[
+            {"value": [{"id": "new"}], "@odata.nextLink": "page2"},
+            {"value": [{"id": "old"}]},
+        ]),
+    ):
+      def first_page(rows):
+        cache.return_value.__enter__.return_value.upsert_messages.assert_not_called()
+        progress.append(rows)
+
+      result, _ = backend.execute(
+          ["teams", "chat", "message", "list", "--chatId", "fixture", "--limit", "100"],
+          progress=first_page,
+      )
+      cache.return_value.__enter__.return_value.upsert_messages.assert_called_once_with(
+          "chat", "fixture", result)
+    self.assertEqual([[{"id": "new"}]], progress)
+    self.assertEqual([{"id": "new"}, {"id": "old"}], result)
+
   def test_meeting_context_uses_linked_calendar_event_and_members(self) -> None:
     def request(path: str, token: str, **kwargs: object) -> dict[str, object]:
       self.assertEqual("token", token)
@@ -1364,6 +1427,33 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual(7, response["id"])
     self.assertTrue(response["ok"])
     self.assertEqual({"ready": True}, response["result"])
+
+  def test_persistent_progress_is_opt_in_and_keeps_final_result_or_error(self) -> None:
+    for fail in (False, True):
+      with self.subTest(fail=fail):
+        def execute(args, *, progress=None):
+          self.assertIsNotNone(progress)
+          progress([{"id": "newest"}])
+          if fail:
+            raise backend.BackendError("older page failed")
+          return [{"id": "newest"}, {"id": "older"}], "json"
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(backend.sys, "stdin", io.StringIO(
+                '{"id":7,"args":[],"progress":true}\n')),
+            mock.patch.object(backend, "execute", side_effect=execute),
+            contextlib.redirect_stdout(output),
+        ):
+          backend.serve()
+        first, final = map(json.loads, output.getvalue().splitlines())
+        self.assertEqual({"id": 7, "ok": True, "progress": True,
+                          "result": [{"id": "newest"}]}, first)
+        self.assertEqual(7, final["id"])
+        self.assertNotIn("progress", final)
+        self.assertEqual(not fail, final["ok"])
+        if not fail:
+          self.assertEqual(2, len(final["result"]))
 
   def test_status_command_outputs_cli_compatible_json_string(self) -> None:
     with tempfile.TemporaryDirectory() as directory:

@@ -19,7 +19,7 @@ import urllib.request
 from contextlib import nullcontext
 from contextvars import ContextVar
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -807,6 +807,7 @@ def graph_collection(
     *,
     limit: int | None = None,
     request_headers: dict[str, str] | None = None,
+    first_page: Callable[[list[dict[str, Any]]], None] | None = None,
 ) -> list[dict[str, Any]]:
   """Read Graph collection pages, stopping after optional LIMIT items."""
   items, _, _ = graph_collection_with_metadata(
@@ -814,6 +815,7 @@ def graph_collection(
       access_token,
       limit=limit,
       request_headers=request_headers,
+      first_page=first_page,
   )
   return items
 
@@ -824,6 +826,7 @@ def graph_collection_with_metadata(
     *,
     limit: int | None = None,
     request_headers: dict[str, str] | None = None,
+    first_page: Callable[[list[dict[str, Any]]], None] | None = None,
 ) -> tuple[list[dict[str, Any]], int, bool]:
   """Read Graph pages and return items, page count, and exhaustion state."""
   items: list[dict[str, Any]] = []
@@ -846,6 +849,8 @@ def graph_collection_with_metadata(
     items.extend(item for item in values if isinstance(item, dict))
     candidate = page.get("@odata.nextLink")
     next_url = candidate if isinstance(candidate, str) and candidate else None
+    if first_page and page_count == 1 and next_url and limit and len(items) < limit:
+      first_page(list(items))
   selected = items if limit is None else items[:limit]
   complete = next_url is None and len(selected) == len(items)
   return selected, page_count, complete
@@ -2563,6 +2568,7 @@ def list_messages(
     access_token: str,
     modified_start: str | None = None,
     limit: int | None = None,
+    first_page: Callable[[list[dict[str, Any]]], None] | None = None,
 ) -> list[dict[str, Any]]:
   """Read newest-created messages, or modified-date changes for sync/window queries."""
   parameters = [
@@ -2576,7 +2582,7 @@ def list_messages(
   path = collection_path(
       f"/chats/{quoted_id(chat_id)}/messages", parameters
   )
-  return graph_collection(path, access_token, limit=limit)
+  return graph_collection(path, access_token, limit=limit, first_page=first_page)
 
 
 def export_message_history(
@@ -3618,7 +3624,11 @@ def dispatch_outbox(args):
     raise BackendError(f"Outbox: {error}") from error
 
 
-def execute(raw_args: list[str]) -> tuple[Any, str]:
+def execute(
+    raw_args: list[str],
+    *,
+    progress: Callable[[list[dict[str, Any]]], None] | None = None,
+) -> tuple[Any, str]:
   """Execute RAW_ARGS and return its result plus requested output mode."""
   args, output = strip_output_option(raw_args)
   path = credentials_path()
@@ -3804,6 +3814,7 @@ def execute(raw_args: list[str]) -> tuple[Any, str]:
         access_token,
         option(args, "--modifiedStartDateTime", required=False),
         message_limit,
+        first_page=progress,
     )
     with TeamsCache() as cache:
       cache.upsert_messages("chat", chat_id, result)
@@ -3992,6 +4003,8 @@ def serve() -> int:
 
   Each input object contains an integer ``id`` and a string-array ``args``.
   Responses contain the same ID plus either ``result`` or a redacted error.
+  Opt-in ``progress: true`` allows an intermediate chat-page response with
+  that flag; the final response omits it and retains normal command semantics.
   The protocol is transport-only: command semantics and cache ownership remain
   in :func:`execute`.
   """
@@ -4012,7 +4025,15 @@ def serve() -> int:
       respond({"id": request_id, "ok": False, "error": "Invalid request"})
       return
     try:
-      result, _output = execute(args)
+      if request.get("progress") is True:
+        result, _output = execute(
+            args,
+            progress=lambda items: respond({
+                "id": request_id, "ok": True, "progress": True, "result": items,
+            }),
+        )
+      else:
+        result, _output = execute(args)
       respond({"id": request_id, "ok": True, "result": result})
     except BackendError as exception:
       respond({"id": request_id, "ok": False, "error": str(exception)})
