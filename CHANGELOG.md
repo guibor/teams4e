@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Apply bulk/deferred read-state changes to the entire inbox selection before
+  the first server response, with a pending-sync indicator and one initial
+  redraw. Keep server mutations serial and preserve existing API behavior.
+- Restore failed/unprocessed actions for review/retry while keeping confirmed
+  successes and their actual prior-state undo history. Guard duplicate applies
+  and conflicting in-flight actions; preserve newer overrides on rollback.
+  Single-chat confirmations update only status, without rebuilding inbox rows.
+
 - Display the first live chat page while older pages load through the same
   persistent request. Keep the 100-message default and complete exports;
   do not add Graph calls or weaken pagination-error reporting. Ignore stale

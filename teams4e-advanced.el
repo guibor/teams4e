@@ -60,6 +60,8 @@
 (defvar teams4e--selections (make-hash-table :test #'equal))
 (defvar teams4e--action-history nil)
 (defvar teams4e--undo-inflight nil)
+(defvar teams4e--mark-execution nil
+  "Frozen actions still awaiting completion in the active batch.")
 (defvar teams4e--background-timer nil)
 (defvar teams4e--background-failures 0)
 (defvar teams4e--background-process nil)
@@ -1277,6 +1279,8 @@ Use `teams4e-server-search' to find a channel thread by message contents."
   (unless (derived-mode-p 'teams4e-recent-mode)
     (user-error "Deferred actions work in the Teams inbox"))
   (let ((chat (teams4e--chat-at-point)))
+    (when (assoc (teams4e--chat-id chat) teams4e--mark-execution)
+      (user-error "This Teams action is already being applied"))
     (puthash (teams4e--chat-id chat) action teams4e--marks)
     (teams4e--render-recent)
     (teams4e-recent-next)))
@@ -1305,6 +1309,8 @@ Use `teams4e-server-search' to find a channel thread by message contents."
   "Remove the deferred action and bulk selection on the current chat."
   (interactive)
   (let ((chat (teams4e--chat-at-point)))
+    (when (assoc (teams4e--chat-id chat) teams4e--mark-execution)
+      (user-error "This Teams action is already being applied"))
     (remhash (teams4e--chat-id chat) teams4e--marks)
     (remhash (teams4e--chat-id chat) teams4e--selections)
     (teams4e--render-recent)))
@@ -1312,6 +1318,8 @@ Use `teams4e-server-search' to find a channel thread by message contents."
 (defun teams4e-unmark-all ()
   "Discard every deferred action and bulk selection in the Teams inbox."
   (interactive)
+  (when teams4e--mark-execution
+    (user-error "Wait for the active Teams actions before clearing marks"))
   (clrhash teams4e--marks)
   (clrhash teams4e--selections)
   (teams4e--refresh-visible-recent)
@@ -1339,66 +1347,120 @@ Use `teams4e-server-search' to find a channel thread by message contents."
           (append completed teams4e--action-history))))
 
 (defun teams4e--execute-mark-list (items completed)
-  "Execute deferred ITEMS serially, accumulating inverse COMPLETED actions."
+  "Show all read-state changes in ITEMS immediately, then confirm serially.
+COMPLETED holds inverse actions already confirmed by the server."
+  (when (or teams4e--mark-execution teams4e--undo-inflight)
+    (user-error "A Teams action batch or undo is already running"))
+  (dolist (item items)
+    (when (and (memq (cdr item) '(read unread))
+               (or teams4e-offline-mode
+                   (gethash (car item) teams4e--read-state-inflight)))
+      (user-error "Read state is offline or still syncing; try again when ready")))
+  (let (snapshots)
+    (setq teams4e--mark-execution items)
+    (condition-case error-data
+        (progn
+          (dolist (item items)
+            (when (memq (cdr item) '(read unread))
+              (let* ((id (car item))
+                     (chat (or (teams4e--find-chat id) `((id . ,id))))
+                     (snapshot (teams4e--optimistic-read-state chat (cdr item) t)))
+                (push (cons id snapshot) snapshots)
+                (puthash id snapshot teams4e--read-state-inflight))))
+          (teams4e--refresh-visible-recent)
+          (teams4e--execute-mark-step items completed snapshots))
+      (error
+       (teams4e--fail-mark-list items completed snapshots nil
+                                "apply" (error-message-string error-data))))))
+
+(defun teams4e--fail-mark-list (items completed snapshots args status detail)
+  "Restore unconfirmed ITEMS and SNAPSHOTS after a batch failure."
+  (setq teams4e--mark-execution nil)
+  (dolist (entry snapshots)
+    (remhash (car entry) teams4e--read-state-inflight)
+    (teams4e--rollback-read-state (cdr entry) t))
+  (dolist (item items)
+    (unless (gethash (car item) teams4e--marks)
+      (puthash (car item) (cdr item) teams4e--marks)))
+  (teams4e--record-completed-actions completed)
+  (teams4e--refresh-visible-recent)
+  (teams4e--report-error args status detail)
+  (message "Teams: %d confirmed; %d unconfirmed actions restored for review/retry"
+           (length completed) (length items)))
+
+(defun teams4e--execute-mark-step (items completed snapshots)
+  "Confirm ITEMS serially, retaining only unconfirmed rollback SNAPSHOTS."
+  (setq teams4e--mark-execution items)
   (if (null items)
       (progn
         (teams4e--record-completed-actions completed)
         (setq teams4e--chats
               (sort teams4e--chats #'teams4e--chat-updated-p))
-        (teams4e--refresh-visible-recent)
+        ;; A display error must not turn a confirmed mutation into a retry.
+        (condition-case render-error
+            (teams4e--refresh-visible-recent)
+          (error (teams4e--report-error nil "render"
+                                        (error-message-string render-error))))
         (message "Executed %d Teams action%s"
                  (length completed) (if (= (length completed) 1) "" "s")))
-    (pcase-let* ((`(,chat-id . ,action) (car items))
-                 (chat (or (teams4e--find-chat chat-id)
-                           `((id . ,chat-id))))
-                 (rest (cdr items)))
-      (pcase action
-        ((or 'favorite 'favorite-on 'favorite-off)
-         (remhash chat-id teams4e--marks)
-         (teams4e--execute-mark-list
-          rest
-          (cons
-           (if (eq action 'favorite)
-               (teams4e--apply-favorite chat)
-             (teams4e--set-favorite
-              chat (eq action 'favorite-on)))
-           completed)))
-        ('refile
-         (teams4e--load-state)
-         (let ((undo (list :kind 'triage
-                           :chat-id chat-id
-                           :handled (gethash chat-id teams4e--handled)
-                           :snoozed (gethash chat-id teams4e--snoozed))))
-           (teams4e--set-handled-local chat t)
-           (teams4e--save-state)
-           (remhash chat-id teams4e--marks)
-           (teams4e--execute-mark-list rest (cons undo completed))))
-        ((or 'read 'unread)
-         (let* ((args
-                 (list "teams" "chat" "mark" (symbol-name action)
-                       "--chatId" chat-id))
-                (snapshot (teams4e--optimistic-read-state chat action)))
-           (remhash chat-id teams4e--marks)
-           (teams4e--run-json
-            args
-            (lambda (_payload)
-              (teams4e--execute-mark-list
-               rest
-               (cons (list :kind (if (eq action 'read) 'unread 'read)
-                           :chat-id chat-id)
-                     completed)))
-            (lambda (status detail)
-              (puthash chat-id action teams4e--marks)
-              (teams4e--rollback-read-state snapshot)
-              (teams4e--record-completed-actions completed)
-              (teams4e--report-error args status detail)))))
-        (_
-         (remhash chat-id teams4e--marks)
-         (teams4e--execute-mark-list rest completed))))))
+    (condition-case error-data
+	(pcase-let* ((`(,chat-id . ,action) (car items))
+                     (chat (or (teams4e--find-chat chat-id)
+                               `((id . ,chat-id))))
+                     (rest (cdr items)))
+	  (pcase action
+            ((or 'favorite 'favorite-on 'favorite-off)
+             (remhash chat-id teams4e--marks)
+             (teams4e--execute-mark-step
+              rest
+              (cons
+               (if (eq action 'favorite)
+		   (teams4e--apply-favorite chat)
+		 (teams4e--set-favorite
+		  chat (eq action 'favorite-on)))
+               completed)
+              snapshots))
+            ('refile
+             (teams4e--load-state)
+             (let ((undo (list :kind 'triage
+                               :chat-id chat-id
+                               :handled (gethash chat-id teams4e--handled)
+                               :snoozed (gethash chat-id teams4e--snoozed))))
+               (teams4e--set-handled-local chat t)
+               (teams4e--save-state)
+               (remhash chat-id teams4e--marks)
+               (teams4e--execute-mark-step rest (cons undo completed) snapshots)))
+            ((or 'read 'unread)
+             (let* ((args
+                     (list "teams" "chat" "mark" (symbol-name action)
+			   "--chatId" chat-id))
+                    (snapshot (cdr (assoc chat-id snapshots))))
+               (remhash chat-id teams4e--marks)
+               (teams4e--run-json
+		args
+		(lambda (_payload)
+		  (remhash chat-id teams4e--read-state-inflight)
+		  (teams4e--execute-mark-step
+		   rest
+		   (cons (list :kind (plist-get snapshot :undo-state)
+                               :chat-id chat-id)
+			 completed)
+		   (assoc-delete-all chat-id snapshots)))
+		(lambda (status detail)
+		  (teams4e--fail-mark-list
+		   items completed snapshots args status detail)))))
+            (_
+             (remhash chat-id teams4e--marks)
+             (teams4e--execute-mark-step rest completed snapshots))))
+      (error
+       (teams4e--fail-mark-list items completed snapshots nil
+                                "apply" (error-message-string error-data))))))
 
 (defun teams4e-execute-marks ()
   "Execute all deferred inbox actions serially and make them undoable."
   (interactive)
+  (when (or teams4e--mark-execution teams4e--undo-inflight)
+    (user-error "A Teams action batch or undo is already running"))
   (let (items)
     (maphash (lambda (chat-id action) (push (cons chat-id action) items))
              teams4e--marks)
@@ -1417,6 +1479,8 @@ Use `teams4e-server-search' to find a channel thread by message contents."
 (defun teams4e-bulk-action ()
   "Choose and execute one action for every bulk-selected inbox chat."
   (interactive)
+  (when (or teams4e--mark-execution teams4e--undo-inflight)
+    (user-error "A Teams action batch or undo is already running"))
   (unless (derived-mode-p 'teams4e-recent-mode)
     (user-error "Bulk actions work in the Teams inbox"))
   (let* ((chats (teams4e--selected-chats))
@@ -1463,13 +1527,13 @@ Use `teams4e-server-search' to find a channel thread by message contents."
         (dolist (item items)
           (remhash (car item) teams4e--selections)
           (puthash (car item) action teams4e--marks))
-        (teams4e--render-recent)
         (teams4e--execute-mark-list items nil)))))
 
 (defun teams4e-undo-action ()
   "Undo the most recently completed read/favorite/triage/message action."
   (interactive)
-  (when teams4e--undo-inflight
+  (when (or teams4e--undo-inflight teams4e--mark-execution
+            (> (hash-table-count teams4e--read-state-inflight) 0))
     (user-error "A Teams undo operation is already running"))
   (let ((item (car teams4e--action-history)))
     (unless item (user-error "No Teams action to undo"))

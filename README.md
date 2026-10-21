@@ -234,6 +234,13 @@ The full [usage reference](USAGE.md) covers reader navigation, bulk actions,
 snooze choices, message selection, and channel-specific commands.
 See [changing bindings](#changing-bindings) for examples.
 
+Applying read marks (`x`) or bulk "Mark read" updates the whole selection
+immediately. Chats disappear from unread-only views while the header shows
+that read state is syncing. Server confirmations continue in the background;
+failed and unprocessed actions return for review/retry without replaying
+confirmed successes. This marks conversations read, not archived or deleted
+in Teams. See [read-state actions](USAGE.md#read-state-actions).
+
 ## Org Capture and Conversation Actions
 
 `teams4e-capture-current-summary` starts an editable `org-capture` entry

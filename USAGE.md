@@ -39,6 +39,29 @@ turn the reader into a separate mini-application.
 | `M-w` | Copy the selected region (ordinary Emacs behavior) |
 | `q` | Close the reader or restore the previous layout |
 
+### Read-State Actions
+
+Queue read marks with `r` or `i`, then apply with `x`. Alternatively, select
+visible chats with `T`, press `X`, and choose "Mark read". All selected chats
+update immediately, including disappearance from an unread-only view. Other
+views retain the rows with read styling. These bindings are configurable.
+
+The header shows "syncing read state" until confirmations finish. Requests
+remain serial; this change adds no API calls, new durable queue, or parallel
+request burst. One initial redraw replaces the old per-chat redraws.
+
+On failure, confirmed successes stay completed and undoable. Failed and
+not-yet-sent actions return with their marks for review; `x` retries those
+marks. A lost response can be ambiguous: refresh/review the server state
+before retrying when needed. Failure restores local state, not a server-side
+undo. New message markers invalidate old local read overrides as usual.
+
+Applying again, undoing, or changing an in-flight action is blocked until it
+finishes. You can still navigate and queue actions on other conversations.
+Pending state is memory-only; restarting Emacs does not resume this batch.
+
+### Composition
+
 In a chat compose buffer, type `@` to choose one of the conversation's
 participants and insert a real Teams mention. `C-c C-m` invokes the same
 command. Use `C-q @` when you need a literal at-sign instead.

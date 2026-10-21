@@ -161,6 +161,8 @@
 (defconst teams4e--captured-chat-check-seconds 5.0
   "Minimum interval between capture-file metadata checks during redraws.")
 (defvar teams4e--read-overrides (make-hash-table :test #'equal))
+(defvar teams4e--read-state-inflight (make-hash-table :test #'equal)
+  "Read-state rollback snapshots awaiting server confirmation, keyed by chat ID.")
 (defvar teams4e--pending-send-read-states (make-hash-table :test #'equal)
   "Pre-send read states awaiting the outgoing chat-list marker.")
 (defvar teams4e--state-loaded nil)
@@ -1945,10 +1947,14 @@ normal online/offline command, principally for cache-first inbox opening."
 
 (defun teams4e--inbox-source-suffix ()
   "Return the transient cache/refresh label for the current inbox buffer."
-  (if (and (stringp teams4e--inbox-source-label)
-           (not (string-empty-p teams4e--inbox-source-label)))
-      (concat " - " teams4e--inbox-source-label)
-    ""))
+  (concat
+   (if (and (stringp teams4e--inbox-source-label)
+            (not (string-empty-p teams4e--inbox-source-label)))
+       (concat " - " teams4e--inbox-source-label)
+     "")
+   (if (> (hash-table-count teams4e--read-state-inflight) 0)
+       " - syncing read state..."
+     "")))
 
 (defun teams4e--recent-buffer ()
   "Return the recent-chat buffer when it is live."
@@ -2988,29 +2994,44 @@ document a chat mute mutation, so the private state only controls the Emacs
              (if enabled "Muted" "Unmuted")
              (teams4e--chat-label chat))))
 
-(defun teams4e--optimistic-read-state (chat state)
-  "Apply CHAT read STATE locally and return a rollback snapshot."
+(defun teams4e--optimistic-read-state (chat state &optional defer-redraw)
+  "Apply CHAT read STATE locally and return a rollback snapshot.
+DEFER-REDRAW lets a batch update every override before rendering once."
   (let* ((chat-id (teams4e--chat-id chat))
          (missing (make-symbol "missing"))
          (previous (gethash chat-id teams4e--read-overrides missing))
+         (undo-state (if (teams4e--unread-p chat) 'unread 'read))
          (optimistic (cons state (teams4e--last-message-marker chat))))
     (puthash chat-id optimistic teams4e--read-overrides)
-    (teams4e--refresh-visible-recent)
+    (unless defer-redraw (teams4e--refresh-visible-recent))
     (list :chat-id chat-id
+          :undo-state undo-state
           :had-previous (not (eq previous missing))
           :previous (unless (eq previous missing) previous)
           :optimistic optimistic)))
 
-(defun teams4e--rollback-read-state (snapshot)
+(defun teams4e--rollback-read-state (snapshot &optional defer-redraw)
   "Restore the read override in SNAPSHOT when it is still current."
   (let ((chat-id (plist-get snapshot :chat-id))
         (optimistic (plist-get snapshot :optimistic)))
-    (when (equal optimistic (gethash chat-id teams4e--read-overrides))
+    (when (eq optimistic (gethash chat-id teams4e--read-overrides))
       (if (plist-get snapshot :had-previous)
           (puthash chat-id (plist-get snapshot :previous)
                    teams4e--read-overrides)
         (remhash chat-id teams4e--read-overrides))
-      (teams4e--refresh-visible-recent))))
+      (unless defer-redraw (teams4e--refresh-visible-recent)))))
+
+(defun teams4e--update-read-sync-label ()
+  "Update pending read-state status without rebuilding inbox rows."
+  (when-let ((buffer (teams4e--recent-buffer)))
+    (with-current-buffer buffer
+      (when (stringp header-line-format)
+        (setq header-line-format
+              (concat
+               (replace-regexp-in-string " - syncing read state\\.\\.\\." ""
+                                         header-line-format t t)
+               (if (> (hash-table-count teams4e--read-state-inflight) 0)
+                   " - syncing read state..." "")))))))
 
 (defun teams4e--set-read-state (state &optional quiet)
   "Set the current chat read STATE optimistically, then reconcile with Graph.
@@ -3022,15 +3043,28 @@ STATE is the symbol `read' or `unread'.  QUIET suppresses success messages."
          (chat-id (teams4e--chat-id chat))
          (label (teams4e--chat-label chat))
          (args (list "teams" "chat" "mark" (symbol-name state)
-                     "--chatId" chat-id))
-         (snapshot (teams4e--optimistic-read-state chat state)))
-    (teams4e--run-json
-     args
-     (lambda (_payload)
-       (unless quiet (message "Marked %s %s" label state)))
-     (lambda (status detail)
-       (teams4e--rollback-read-state snapshot)
-       (teams4e--report-error args status detail)))))
+                     "--chatId" chat-id)))
+    (if (or (gethash chat-id teams4e--read-state-inflight)
+            (bound-and-true-p teams4e--undo-inflight))
+        (unless quiet (user-error "Teams read state is still syncing; wait before changing it again"))
+      (let* ((snapshot (teams4e--optimistic-read-state chat state t))
+             (failure
+              (lambda (status detail)
+                (remhash chat-id teams4e--read-state-inflight)
+                (teams4e--rollback-read-state snapshot t)
+                (teams4e--refresh-visible-recent)
+                (teams4e--report-error args status detail))))
+        (puthash chat-id snapshot teams4e--read-state-inflight)
+        (teams4e--refresh-visible-recent)
+        (condition-case error-data
+            (teams4e--run-json
+             args
+             (lambda (_payload)
+               (remhash chat-id teams4e--read-state-inflight)
+               (teams4e--update-read-sync-label)
+               (unless quiet (message "Marked %s %s" label state)))
+             failure)
+          (error (funcall failure "start" (error-message-string error-data))))))))
 
 (defun teams4e-mark-read ()
   "Explicitly mark the current chat read."
