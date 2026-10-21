@@ -1369,7 +1369,7 @@ COMPLETED holds inverse actions already confirmed by the server."
                 (puthash id snapshot teams4e--read-state-inflight))))
           (teams4e--refresh-visible-recent)
           (teams4e--execute-mark-step items completed snapshots))
-      (error
+      ((error quit)
        (teams4e--fail-mark-list items completed snapshots nil
                                 "apply" (error-message-string error-data))))))
 
@@ -1399,8 +1399,8 @@ COMPLETED holds inverse actions already confirmed by the server."
         ;; A display error must not turn a confirmed mutation into a retry.
         (condition-case render-error
             (teams4e--refresh-visible-recent)
-          (error (teams4e--report-error nil "render"
-                                        (error-message-string render-error))))
+          ((error quit) (teams4e--report-error nil "render"
+                                              (error-message-string render-error))))
         (message "Executed %d Teams action%s"
                  (length completed) (if (= (length completed) 1) "" "s")))
     (condition-case error-data
@@ -1439,20 +1439,22 @@ COMPLETED holds inverse actions already confirmed by the server."
                (teams4e--run-json
 		args
 		(lambda (_payload)
-		  (remhash chat-id teams4e--read-state-inflight)
-		  (teams4e--execute-mark-step
-		   rest
-		   (cons (list :kind (plist-get snapshot :undo-state)
-                               :chat-id chat-id)
-			 completed)
-		   (assoc-delete-all chat-id snapshots)))
+                  (when (eq snapshot (gethash chat-id teams4e--read-state-inflight))
+                    (remhash chat-id teams4e--read-state-inflight)
+                    (teams4e--execute-mark-step
+                     rest
+                     (cons (list :kind (plist-get snapshot :undo-state)
+                                 :chat-id chat-id)
+                           completed)
+                     (assoc-delete-all chat-id snapshots))))
 		(lambda (status detail)
-		  (teams4e--fail-mark-list
-		   items completed snapshots args status detail)))))
+                  (when (eq snapshot (gethash chat-id teams4e--read-state-inflight))
+                    (teams4e--fail-mark-list
+                     items completed snapshots args status detail))))))
             (_
              (remhash chat-id teams4e--marks)
              (teams4e--execute-mark-step rest completed snapshots))))
-      (error
+      ((error quit)
        (teams4e--fail-mark-list items completed snapshots nil
                                 "apply" (error-message-string error-data))))))
 

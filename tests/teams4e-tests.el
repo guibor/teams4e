@@ -2143,6 +2143,11 @@
     (should-not teams4e--mark-execution)
     (teams4e-execute-marks)
     (should-not (teams4e--visible-chats))
+    ;; Late callbacks from the failed attempt cannot touch the retry job.
+    (funcall (nth 1 (cadr requests)) nil)
+    (funcall (nth 2 (cadr requests)) "server" "late failure")
+    (should (= 3 (length requests)))
+    (should (= 2 (hash-table-count teams4e--read-state-inflight)))
     (funcall (nth 1 (nth 2 requests)) nil)
     (funcall (nth 1 (nth 3 requests)) nil)
     (should (= 4 (length requests)))
@@ -2215,6 +2220,28 @@
       (teams4e-mark-read))
     (should (= 0 (hash-table-count teams4e--read-state-inflight)))
     (should (teams4e--unread-p (car teams4e--chats)))))
+
+(ert-deftest teams4e-single-read-initial-render-error-releases-pending-state ()
+  (teams4e-test-with-read-batch
+    (cl-letf (((symbol-function 'teams4e--chat-at-point) (lambda () (car teams4e--chats)))
+              ((symbol-function 'teams4e--refresh-visible-recent)
+               (lambda ()
+                 (cl-incf redraws)
+                 (when (= redraws 1) (error "Initial display failed")))))
+      (teams4e-mark-read))
+    (should-not requests)
+    (should (= 0 (hash-table-count teams4e--read-state-inflight)))
+    (should (teams4e--unread-p (car teams4e--chats)))))
+
+(ert-deftest teams4e-bulk-read-startup-quit-releases-pending-state ()
+  (teams4e-test-with-read-batch
+    (cl-letf (((symbol-function 'teams4e--run-json)
+               (lambda (&rest _) (signal 'quit nil))))
+      (teams4e-execute-marks))
+    (should (= 3 (length (teams4e--visible-chats))))
+    (should (= 3 (hash-table-count teams4e--marks)))
+    (should (= 0 (hash-table-count teams4e--read-state-inflight)))
+    (should-not teams4e--mark-execution)))
 
 (ert-deftest teams4e-bulk-read-large-batch-only-renders-twice ()
   (teams4e-test-with-read-batch

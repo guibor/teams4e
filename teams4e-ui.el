@@ -3050,21 +3050,25 @@ STATE is the symbol `read' or `unread'.  QUIET suppresses success messages."
       (let* ((snapshot (teams4e--optimistic-read-state chat state t))
              (failure
               (lambda (status detail)
-                (remhash chat-id teams4e--read-state-inflight)
-                (teams4e--rollback-read-state snapshot t)
-                (teams4e--refresh-visible-recent)
-                (teams4e--report-error args status detail))))
+                (when (eq snapshot (gethash chat-id teams4e--read-state-inflight))
+                  (remhash chat-id teams4e--read-state-inflight)
+                  (teams4e--rollback-read-state snapshot t)
+                  (teams4e--refresh-visible-recent)
+                  (teams4e--report-error args status detail)))))
         (puthash chat-id snapshot teams4e--read-state-inflight)
-        (teams4e--refresh-visible-recent)
         (condition-case error-data
-            (teams4e--run-json
-             args
-             (lambda (_payload)
-               (remhash chat-id teams4e--read-state-inflight)
-               (teams4e--update-read-sync-label)
-               (unless quiet (message "Marked %s %s" label state)))
-             failure)
-          (error (funcall failure "start" (error-message-string error-data))))))))
+            (progn
+              (teams4e--refresh-visible-recent)
+              (teams4e--run-json
+               args
+               (lambda (_payload)
+                 (when (eq snapshot (gethash chat-id teams4e--read-state-inflight))
+                   (remhash chat-id teams4e--read-state-inflight)
+                   (teams4e--update-read-sync-label)
+                   (unless quiet (message "Marked %s %s" label state))))
+               failure))
+          ((error quit)
+           (funcall failure "start" (error-message-string error-data))))))))
 
 (defun teams4e-mark-read ()
   "Explicitly mark the current chat read."
