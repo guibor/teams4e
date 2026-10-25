@@ -322,6 +322,17 @@ For rich incoming-message rendering, install [Agent Shell](https://github.com/xe
 its renderer runs locally without starting an agent. Otherwise, reading falls
 back to plain text. [Composition details](USAGE.md#writing-messages).
 
+Readers use Emacs's Unicode bidirectional display: Hebrew and English lines,
+including quoted replies, choose their direction independently of the sender
+label. Direction follows the first strong character, rather than reversing an
+English sentence just because it contains Hebrew. Links and copied/exported
+text retain their original logical order. Declared participant mentions use the
+customizable `teams4e-mention` face.
+
+Background transcript updates preserve the message-relative cursor, selection,
+and scroll position. Opening a chat still selects the latest message; live
+updates follow new arrivals only while you remain at the latest boundary.
+
 ## Scheduled Sending
 
 In a composer, `C-c C-s` queues the message for the **next configured workday**

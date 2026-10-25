@@ -1959,15 +1959,13 @@ COMPLETED holds inverse actions already confirmed by the server."
 (defun teams4e--render-channel-thread ()
   "Render current channel root and replies with stable message properties."
   (let* ((inhibit-read-only t)
+         (view (teams4e--reader-view-state))
          (pending-message-id teams4e-channel--pending-message-id)
          (jump-to-bottom
           (and (not pending-message-id)
                (or teams4e--jump-to-bottom-on-render
-                   (and (> (buffer-size) 0) (= (point) (point-max))))))
-         (message-id
-          (or pending-message-id
-              (unless jump-to-bottom
-                (teams4e--get (teams4e-message-at-point) 'id))))
+                   (teams4e--reader-at-latest-p))))
+         (message-id pending-message-id)
          last-day)
     (teams4e--cancel-image-loads)
     (erase-buffer)
@@ -1995,13 +1993,9 @@ COMPLETED holds inverse actions already confirmed by the server."
       (goto-char (point-min))
       (teams4e--goto-message-id message-id))
      (jump-to-bottom
-      (teams4e--goto-reader-bottom))
-     ((eq (teams4e--effective-message-order) 'newest-first)
-      (goto-char (point-min))
-      (teams4e-chat-next-message))
+      (teams4e--goto-reader-latest))
      (t
-      (goto-char (point-max))
-      (teams4e-chat-previous-message)))
+      (teams4e--restore-reader-view view)))
     (setq teams4e-channel--pending-message-id nil
           teams4e--jump-to-bottom-on-render nil
           header-line-format

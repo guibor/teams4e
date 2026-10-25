@@ -3678,6 +3678,23 @@ authenticated Graph image downloads and inserts those separately."
       (goto-char end)
       (set-marker end nil))))
 
+(defface teams4e-mention
+  '((t (:inherit font-lock-keyword-face :weight bold)))
+  "Face for participant mentions in received messages."
+  :group 'teams4e)
+
+(defun teams4e--highlight-message-mentions (message start end)
+  "Highlight MESSAGE's declared mention labels between START and END.
+Do not infer mentions from arbitrary names or @ characters."
+  (save-excursion
+    (dolist (mention (teams4e--get message 'mentions))
+      (when-let ((label (teams4e--get mention 'mentionText)))
+        (when (and (stringp label) (not (string-empty-p label)))
+          (goto-char start)
+          (while (search-forward label end t)
+            (add-face-text-property (- (point) (length label)) (point)
+                                    'teams4e-mention t)))))))
+
 (defun teams4e--insert-message (message)
   "Insert one Teams MESSAGE into the current transcript."
   (let ((start (point))
@@ -3701,20 +3718,22 @@ authenticated Graph image downloads and inserts those separately."
       (insert (propertize "  edited" 'face 'shadow)))
     (insert "\n")
     (teams4e--insert-message-reference message rich)
-    (cond
-     ((and rich (not (string-empty-p body)))
-      (teams4e--insert-rendered-markdown
-       (teams4e--message-markdown-body message t)))
-     ((not (string-empty-p body))
-      (teams4e--insert-indented-message-body
-       body (and (teams4e--system-event-p message) 'teams4e-event)))
-     ((and (null images)
-           (not (seq-some #'teams4e--reference-attachment-p
-                          (teams4e--get message 'attachments)))
-           (null (seq-remove
-                  #'teams4e--reference-attachment-p
-                  (teams4e--get message 'attachments))))
-      (insert (propertize "  [Empty message]\n" 'face 'shadow))))
+    (let ((body-start (point)))
+      (cond
+       ((and rich (not (string-empty-p body)))
+        (teams4e--insert-rendered-markdown
+         (teams4e--message-markdown-body message t)))
+       ((not (string-empty-p body))
+        (teams4e--insert-indented-message-body
+         body (and (teams4e--system-event-p message) 'teams4e-event)))
+       ((and (null images)
+             (not (seq-some #'teams4e--reference-attachment-p
+                            (teams4e--get message 'attachments)))
+             (null (seq-remove
+                    #'teams4e--reference-attachment-p
+                    (teams4e--get message 'attachments))))
+        (insert (propertize "  [Empty message]\n" 'face 'shadow))))
+      (teams4e--highlight-message-mentions message body-start (point)))
     (teams4e--insert-message-images message images)
     (teams4e--insert-attachments message)
     (when (and reactions (not (string-empty-p reactions)))
@@ -4137,6 +4156,71 @@ When DATE-ONLY is non-nil, omit the time of day."
         (teams4e--effective-message-order)
         teams4e-display-images teams4e-message-renderer))
 
+(defun teams4e--reader-anchor (position)
+  "Describe POSITION by message identity and offset, with an absolute fallback."
+  (save-excursion
+    (goto-char position)
+    (let* ((bounds (teams4e-message-bounds))
+           ;; Separators belong to the following message for anchoring only.
+           (start (or (car bounds)
+                      (seq-find (lambda (pos) (> pos position))
+                                (teams4e--message-positions)))))
+      (list (and start (teams4e--get
+                        (get-text-property start 'teams4e-message) 'id))
+            (and start (- position start)) position))))
+
+(defun teams4e--reader-anchor-position (anchor)
+  "Resolve ANCHOR in the rebuilt transcript without changing point."
+  (save-excursion
+    (let ((position (if (and (car anchor)
+                             (teams4e--goto-message-id (car anchor)))
+                        (min (+ (point) (nth 1 anchor))
+                             (cdr (teams4e-message-bounds)))
+                      (nth 2 anchor))))
+      (max (point-min) (min (point-max) position)))))
+
+(defun teams4e--reader-view-state ()
+  "Capture selection and window positions before rebuilding a transcript."
+  (list (teams4e--reader-anchor (point))
+        (when (mark t) (teams4e--reader-anchor (mark t))) mark-active
+        (mapcar
+         (lambda (window)
+           (list window (teams4e--reader-anchor (window-point window))
+                 (teams4e--reader-anchor (window-start window))
+                 (window-vscroll window t)))
+         (get-buffer-window-list (current-buffer) nil t))))
+
+(defun teams4e--restore-reader-view (state)
+  "Restore selection and visible windows from STATE after a rebuild."
+  (goto-char (teams4e--reader-anchor-position (car state)))
+  (when (nth 1 state)
+    (set-mark (teams4e--reader-anchor-position (nth 1 state))))
+  (setq mark-active (nth 2 state))
+  (when mark-active (setq deactivate-mark nil))
+  (dolist (entry (nth 3 state))
+    (let ((window (car entry)))
+      (when (and (window-live-p window)
+                 (eq (window-buffer window) (current-buffer)))
+        (set-window-point window (teams4e--reader-anchor-position (nth 1 entry)))
+        (set-window-start window (teams4e--reader-anchor-position (nth 2 entry)) t)
+        (set-window-vscroll window (nth 3 entry) t)))))
+
+(defun teams4e--reader-at-latest-p ()
+  "Return non-nil only at the latest boundary, without a scrolled-away window."
+  (let* ((newest-first (eq (teams4e--effective-message-order) 'newest-first))
+         (boundary (if newest-first
+                       (car (teams4e--message-positions))
+                     (point-max))))
+    (and boundary (> (buffer-size) 0) (= (point) boundary)
+         (not (use-region-p))
+         (seq-every-p
+          (lambda (window)
+            (and (= (window-point window) boundary)
+                 (if newest-first
+                     (<= (window-start window) boundary)
+                   (>= (or (window-end window t) 0) boundary))))
+          (get-buffer-window-list (current-buffer) nil t)))))
+
 (defun teams4e--chat-header ()
   "Return the normal transcript header without rebuilding its body."
   (format "%s - %d messages - %s%s"
@@ -4160,15 +4244,12 @@ When DATE-ONLY is non-nil, omit the time of day."
   "Render the current chat and its cached messages."
   (let* ((inhibit-read-only t)
          (started (float-time))
+         (view (teams4e--reader-view-state))
          (jump-to-bottom
           (and (not teams4e--pending-message-id)
                (or teams4e--jump-to-bottom-on-render
-                   (and (> (buffer-size) 0)
-                        (= (point) (point-max))))))
-         (message-id
-          (or teams4e--pending-message-id
-              (unless jump-to-bottom
-                (teams4e--get (teams4e-message-at-point) 'id))))
+                   (teams4e--reader-at-latest-p))))
+         (message-id teams4e--pending-message-id)
          last-day)
     (teams4e--cancel-image-loads)
     (erase-buffer)
@@ -4201,12 +4282,8 @@ When DATE-ONLY is non-nil, omit the time of day."
       (teams4e--goto-message-id message-id))
      (jump-to-bottom
       (teams4e--goto-reader-latest))
-     ((eq (teams4e--effective-message-order) 'newest-first)
-      (goto-char (point-min))
-      (teams4e-chat-next-message))
      (t
-      (goto-char (point-max))
-      (teams4e-chat-previous-message)))
+      (teams4e--restore-reader-view view)))
     (setq teams4e--jump-to-bottom-on-render nil
           teams4e--chat-render-state (teams4e--chat-render-key)
           header-line-format (teams4e--chat-header))
@@ -4217,6 +4294,12 @@ When DATE-ONLY is non-nil, omit the time of day."
 (define-derived-mode teams4e-read-mode special-mode "Teams-Read"
   "Base mode for the singleton mu4e-style Teams message reader."
   (visual-line-mode 1)
+  ;; Sender labels and quoted attribution must not determine body direction.
+  ;; Each hard line is independent; visual wrapping stays in that paragraph.
+  (setq-local bidi-display-reordering t)
+  (setq-local bidi-paragraph-direction nil)
+  (setq-local bidi-paragraph-start-re "^")
+  (setq-local bidi-paragraph-separate-re "^")
   (add-hook 'kill-buffer-hook #'teams4e--cancel-buffer-process nil t)
   (setq-local truncate-lines nil))
 
@@ -4551,7 +4634,11 @@ date window while retaining that bound, which supports incremental loading."
                         ;; because their unchanged newest page arrived first.
                         (unless (equal messages
                                        (last teams4e--messages (length messages)))
-                          (setq teams4e--messages messages)))
+                          ;; A partial response must not evict the message
+                          ;; being read.  The final response remains authoritative.
+                          (setq teams4e--messages
+                                (teams4e--normalize-messages
+                                 (append messages teams4e--messages)))))
                       (setq teams4e--initial-messages-shown t
                             teams4e--loaded-all nil)
                       (teams4e--update-chat-transcript)
@@ -4588,13 +4675,6 @@ date window while retaining that bound, which supports incremental loading."
                                        teams4e-message-limit))))
                   (when (and limit (> (length messages) limit))
                     (setq messages (last messages limit)))
-                  (when (and (eq (teams4e--effective-message-order) 'newest-first)
-                             teams4e--messages
-                             (equal (teams4e--get (teams4e-message-at-point) 'id)
-                                    (teams4e--get
-                                     (car (teams4e--messages-for-display
-                                           teams4e--messages)) 'id)))
-                    (setq teams4e--jump-to-bottom-on-render t))
                   (setq teams4e--messages messages
                         teams4e--process nil
                         teams4e--loaded-at (float-time)

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Give Hebrew/English message lines and quoted replies independent Unicode
+  paragraph direction, unaffected by sender labels. Highlight declared
+  participant mentions with the customizable `teams4e-mention` face.
+- Preserve cursor offsets, selections, and visible window positions across
+  chat/channel redraws. Follow arrivals only at the latest boundary, not from
+  anywhere inside the newest message. Retain older visible messages during
+  progressive first-page updates until the authoritative response arrives.
+
 - Apply bulk/deferred read-state changes to the entire inbox selection before
   the first server response, with a pending-sync indicator and one initial
   redraw. Keep server mutations serial and preserve existing API behavior.
