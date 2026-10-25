@@ -4616,6 +4616,111 @@
             (should-not teams4e--jump-to-bottom-on-render)))
       (kill-buffer buffer))))
 
+(ert-deftest teams4e-contextual-bidi-handles-mixed-lines-and-copy ()
+  (dolist (example '(("Ada, שלום לך מה שלומך (Teams 123)?" . right-to-left)
+                     ("https://example.test/long-path שלום לכולם היום" . right-to-left)
+                     ("English sentence with שלום and more English." . left-to-right)
+                     ("> Ada, שלום לך מה שלומך?" . right-to-left)))
+    (with-temp-buffer
+      (teams4e-chat-mode)
+      (let ((inhibit-read-only t)
+            (teams4e-message-direction 'contextual))
+        (insert (teams4e--directional-message-text (car example))))
+      (goto-char (point-min))
+      (should (eq (cdr example) (current-bidi-paragraph-direction)))
+      (should (equal (car example)
+                     (substring-no-properties (filter-buffer-substring (point-min) (point-max)))))
+      (let ((kill-ring nil))
+        (kill-ring-save (point-min) (point-max))
+        (should (equal (car example) (substring-no-properties (car kill-ring))))))))
+
+(ert-deftest teams4e-contextual-bidi-preserves-controls-code-and-markup ()
+  (let ((teams4e-message-direction 'contextual))
+    (dolist (text '("\u200eAda, שלום לך מה שלומך?"
+                    "```\nAda, שלום לך מה שלומך?\n```"
+                    "    Ada, שלום לך מה שלומך?"))
+      (should (equal text (teams4e--directional-message-text text))))
+    (let ((quote (teams4e--directional-message-text "> Ada, שלום לך מה שלומך?")))
+      (should (string-prefix-p "> " quote))
+      (should (get-text-property 2 'teams4e-direction-hint quote)))
+    (should (equal "\u200fSource control"
+                   (teams4e--strip-direction-hints "\u200fSource control"))))
+  (let ((teams4e-message-direction 'unicode))
+    (should (equal "Ada, שלום לך מה שלומך?"
+                   (teams4e--directional-message-text "Ada, שלום לך מה שלומך?"))))
+  (let ((teams4e-message-direction 'hebrew))
+    (should (string-prefix-p "\u200f"
+                             (teams4e--directional-message-text "Long English שלום")))))
+
+(ert-deftest teams4e-forward-picker-searches-typed-names-and-disambiguates ()
+  (let ((users '(((id . "one") (displayName . "Alex") (mail . "one@example.test"))
+                 ((id . "two") (displayName . "Alex") (mail . "two@example.test"))))
+        result query)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt choices &rest _)
+                 (let ((people (seq-filter (lambda (x) (string-prefix-p "Person:" x)) choices)))
+                   (should (= 2 (length people)))
+                   (cadr people)))))
+      (teams4e--choose-forward-target nil users (lambda (target) (setq result target))))
+    (should (equal "two@example.test" (plist-get result :user-emails)))
+    (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "Alex missing"))
+              ((symbol-function 'teams4e--search-user)
+               (lambda (value callback) (setq query value) (funcall callback (car users)))))
+      (teams4e--choose-forward-target nil nil (lambda (target) (setq result target))))
+    (should (equal query "Alex missing"))
+    (should (equal "one@example.test" (plist-get result :user-emails)))))
+
+(ert-deftest teams4e-forward-picker-cached-direct-target-needs-no-network ()
+  (let (result)
+    (cl-letf (((symbol-function 'teams4e--run-json)
+               (lambda (&rest _) (ert-fail "Cached direct chat needs no server lookup"))))
+      (teams4e--forward-person-target
+       '((id . "person") (chatId . "older-chat") (displayName . "Alex"))
+       (lambda (target) (setq result target))))
+    (should (equal "older-chat" (teams4e--chat-id result)))))
+
+(ert-deftest teams4e-forward-picker-async-directory-retains-source-buffer ()
+  (let (cached searched result origin)
+    (with-temp-buffer
+      (setq origin (current-buffer))
+      (cl-letf (((symbol-function 'teams4e--run-json)
+                 (lambda (_args success &rest _) (setq cached success)))
+                ((symbol-function 'completing-read) (lambda (&rest _) "Missing person"))
+                ((symbol-function 'teams4e--search-user)
+                 (lambda (_query success) (setq searched success))))
+        (teams4e--select-forward-target
+         (lambda (target) (setq result (cons (current-buffer) target))))
+        (with-temp-buffer
+          (funcall cached '((chats . nil) (users . nil)))
+          (funcall searched '((id . "person") (mail . "person@example.test")))))
+      (should (eq origin (car result)))
+      (should (equal "person@example.test" (plist-get (cdr result) :user-emails))))))
+
+(ert-deftest teams4e-forward-picker-cache-fallback-and-cancellation ()
+  (let ((teams4e--chats '(((id . "local")))) called)
+    (cl-letf (((symbol-function 'teams4e--run-json)
+               (lambda (args _success failure)
+                 (should (equal args '("teams" "cache" "recipient" "list")))
+                 (funcall failure "unsupported" "Older adapter")))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt choices &rest _)
+                 (should (seq-some (lambda (x) (string-prefix-p "Chat:" x)) choices))
+                 (signal 'quit nil))))
+      (condition-case nil
+          (teams4e--select-forward-target (lambda (_) (setq called t)))
+        (quit nil)))
+    (should-not called)))
+
+(ert-deftest teams4e-forward-picker-fetches-profile-for-name-only-identity ()
+  (let ((teams4e-offline-mode nil) result)
+    (cl-letf (((symbol-function 'teams4e--run-json)
+               (lambda (args callback &rest _)
+                 (should (equal args '("teams" "user" "profile" "--userId" "one")))
+                 (funcall callback '((id . "one") (mail . "one@example.test"))))))
+      (teams4e--forward-person-target '((id . "one") (displayName . "Alex"))
+                                       (lambda (target) (setq result target))))
+    (should (equal "one@example.test" (plist-get result :user-emails)))))
+
 (ert-deftest teams4e-reader-bidi-separates-sender-body-and-quoted-replies ()
   (dolist (mode '(teams4e-chat-mode teams4e-channel-thread-mode))
     (with-temp-buffer
@@ -5399,7 +5504,7 @@
                       ((symbol-function 'teams4e-current-message) (lambda () source))
                       ((symbol-function 'teams4e--current-web-url)
                        (lambda () "https://example.invalid/source"))
-                      ((symbol-function 'teams4e--select-chat)
+                      ((symbol-function 'teams4e--select-forward-target)
                        (lambda (callback) (funcall callback target)))
                       ((symbol-function 'teams4e--run)
                        (lambda (&rest _) (ert-fail "Must not send before review"))))
@@ -5456,6 +5561,7 @@
   (should (eq #'teams4e-forward-message
               (lookup-key teams4e-action-map (kbd "f"))))
   (dolist (map (list teams4e-chat-mode-map teams4e-channel-thread-mode-map))
+    (should (eq #'teams4e-forward-message (lookup-key map (kbd "f"))))
     (should (eq #'kill-ring-save (lookup-key map (kbd "M-w"))))
     (should (eq #'teams4e-mark-message (lookup-key map (kbd "M-h")))))
   (should (eq #'teams-unread-filter

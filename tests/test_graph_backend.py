@@ -60,6 +60,42 @@ def write_credentials(
 
 class GraphBackendTests(unittest.TestCase):
 
+  def test_cached_recipients_survive_reopen_and_keep_direct_chat_identity(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      path = Path(directory) / "teams.sqlite3"
+      with TeamsCache(path) as cache:
+        cache.upsert_resources("chat", [{"id": "old-direct", "chatType": "oneOnOne",
+            "lastMessagePreview": {"from": {"user": {"id": "ada", "displayName": "Ada"}}}}])
+        cache.upsert_resources("member", [{"id": "opaque-member-id", "userId": "ada",
+            "email": "ada@example.test", "displayName": "Ada"}], parent_id="old-direct")
+        cache.upsert_resources("user", [{"id": "grace", "displayName": "Grace",
+            "mail": "grace@example.test"}])
+      with TeamsCache(path) as cache:
+        result = cache.recipient_candidates()
+        users = {user["id"]: user for user in result["users"]}
+        self.assertEqual({"ada", "grace"}, set(users))
+        self.assertEqual("old-direct", users["ada"]["chatId"])
+        self.assertEqual("ada@example.test", users["ada"]["mail"])
+        cache.clear()
+        self.assertEqual({"chats": [], "users": []}, cache.recipient_candidates())
+
+  def test_cached_recipient_dispatch_is_credential_free(self) -> None:
+    with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+        os.environ, {"TEAMS4E_CACHE": str(Path(directory) / "teams.sqlite3")}
+    ), mock.patch.object(backend, "ensure_graph_token", side_effect=AssertionError("No login")):
+      result, output = backend.execute(["teams", "cache", "recipient", "list"])
+      self.assertEqual({"chats": [], "users": []}, result)
+      self.assertEqual("json", output)
+
+  def test_directory_search_populates_existing_private_resource_cache(self) -> None:
+    user = {"id": "ada", "displayName": "Ada", "mail": "ada@example.test"}
+    with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+        os.environ, {"TEAMS4E_CACHE": str(Path(directory) / "teams.sqlite3")}
+    ), mock.patch.object(backend, "ensure_graph_token", return_value="synthetic"), \
+        mock.patch.object(backend, "search_users", return_value=[user]):
+      backend.execute(["teams", "user", "search", "--query", "Ada"])
+      self.assertEqual([user], backend.dispatch_cache(["teams", "cache", "recipient", "list"])["users"])
+
   def setUp(self) -> None:
     backend.TOKEN_COMMAND_CACHE = None
 

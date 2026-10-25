@@ -322,12 +322,21 @@ For rich incoming-message rendering, install [Agent Shell](https://github.com/xe
 its renderer runs locally without starting an agent. Otherwise, reading falls
 back to plain text. [Composition details](USAGE.md#writing-messages).
 
-Readers use Emacs's Unicode bidirectional display: Hebrew and English lines,
-including quoted replies, choose their direction independently of the sender
-label. Direction follows the first strong character, rather than reversing an
-English sentence just because it contains Hebrew. Links and copied/exported
-text retain their original logical order. Declared participant mentions use the
-customizable `teams4e-mention` face.
+Readers use Emacs's Unicode bidirectional display, independently of sender
+labels. The default `teams4e-message-direction` is `contextual`: Hebrew-dominant
+prose can start RTL even when an English name or URL comes first. URLs and
+inline code do not count toward language dominance; fenced code and explicit
+direction controls are left alone. This is a heuristic, not language parsing.
+Set it to `unicode` for first-strong-character direction, or `hebrew` to prefer
+RTL whenever a prose line contains Hebrew. English runs are never reversed.
+Generated display hints are stripped by ordinary region copying; source text
+and exports are unchanged. Mention styling uses the `teams4e-mention` face.
+
+Press `f` on a message to forward it. The recipient picker includes cached
+people and chats beyond the visible inbox; enter an unmatched name to search
+the server. Explicit directory search, older-chat search, and email entry are
+also available. Forwarding opens an editable draft and never sends immediately.
+See [forwarding and recipient lookup](USAGE.md#composition).
 
 Background transcript updates preserve the message-relative cursor, selection,
 and scroll position. Opening a chat still selects the latest message; live

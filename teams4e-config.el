@@ -228,6 +228,16 @@ Shell's renderer."
           (const :tag "Plain text" plain))
   :group 'teams4e)
 
+(defcustom teams4e-message-direction 'contextual
+  "Base direction for mixed Hebrew/English message lines.
+`contextual' prefers RTL when Hebrew letters outnumber LTR letters after
+excluding URLs and inline code.  Otherwise use Unicode's first strong
+character.  `unicode' always uses that standard rule.  `hebrew' prefers RTL
+for any prose line containing Hebrew.  Explicit direction controls and
+Markdown fenced code are left alone.  These settings affect reading only."
+  :type '(choice (const contextual) (const unicode) (const hebrew))
+  :group 'teams4e)
+
 (defcustom teams4e-highlight-code-blocks t
   "Whether the rich transcript renderer syntax-highlights fenced code."
   :type 'boolean

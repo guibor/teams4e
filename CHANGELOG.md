@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Prefer RTL for Hebrew-dominant mixed-language prose even with a leading
+  English name/URL. Add configurable contextual, Unicode, and Hebrew-preferring
+  direction policies; preserve code, explicit controls, and ordinary copied text.
+- Bind `f` in chat/channel readers (including Evil) to forwarding. Add a
+  cache-first people/chat picker with explicit directory search, older-chat
+  search, and email entry. Reuse private SQLite resources and persist directory
+  results; keep draft review and explicit send, with no automatic chat creation.
+
 - Give Hebrew/English message lines and quoted replies independent Unicode
   paragraph direction, unaffected by sender labels. Highlight declared
   participant mentions with the customizable `teams4e-mention` face.

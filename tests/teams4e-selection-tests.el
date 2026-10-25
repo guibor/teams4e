@@ -5,6 +5,16 @@
 (require 'expand-region)
 (require 'evil)
 
+(ert-deftest teams4e-evil-forward-key-works-in-readers ()
+  (dolist (mode '(teams4e-chat-mode teams4e-channel-thread-mode))
+    (with-temp-buffer
+      (funcall mode)
+      (evil-local-mode 1)
+      (dolist (state '(normal motion))
+        (evil-change-state state)
+        (evil-normalize-keymaps)
+        (should (eq #'teams4e-forward-message (key-binding (kbd "f"))))))))
+
 (ert-deftest teams4e-expand-region-stops-at-message-before-buffer ()
   (dolist (mode '(teams4e-chat-mode teams4e-channel-thread-mode))
     (with-temp-buffer

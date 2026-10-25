@@ -209,6 +209,41 @@ class TeamsCache:
     ).fetchall()
     return [json.loads(str(row["payload"])) for row in rows]
 
+  def recipient_candidates(self) -> dict[str, Any]:
+    """Project people from existing cached resources, without a second address book."""
+    chats = self.list_resources("chat")
+    users: dict[str, dict[str, Any]] = {}
+
+    def add(value: Any, *, member: bool = False, chat_id: str | None = None) -> None:
+      if not isinstance(value, dict):
+        return
+      identity = value.get("userId") if member else value.get("id")
+      email = value.get("mail") or value.get("email") or value.get("userPrincipalName")
+      key = identity or (str(email).casefold() if email else None)
+      if not key:
+        return
+      person = users.setdefault(str(key), {})
+      for field, item in (("id", identity), ("displayName", value.get("displayName")),
+                          ("mail", email), ("chatId", chat_id)):
+        if item and not person.get(field):
+          person[field] = item
+
+    for user in self.list_resources("user"):
+      add(user)
+    for chat in chats:
+      direct_id = chat.get("id") if chat.get("chatType") == "oneOnOne" else None
+      for member in chat.get("members", []) or []:
+        add(member, member=True, chat_id=direct_id)
+      preview = chat.get("lastMessagePreview") or {}
+      add((preview.get("from") or {}).get("user"), chat_id=direct_id)
+    direct_ids = {c["id"] for c in chats if c.get("chatType") == "oneOnOne"}
+    for row in self.connection.execute(
+        "SELECT parent_id, payload FROM resources WHERE kind = 'member' ORDER BY cached_at DESC"
+    ):
+      add(json.loads(row["payload"]), member=True,
+          chat_id=row["parent_id"] if row["parent_id"] in direct_ids else None)
+    return {"chats": chats, "users": list(users.values())}
+
   def upsert_messages(
       self,
       scope_kind: str,

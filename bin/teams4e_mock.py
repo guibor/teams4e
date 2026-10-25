@@ -1589,6 +1589,9 @@ class MockTenant:
     if args == ["teams", "cache", "status"]:
       with TeamsCache() as cache:
         return cache.status()
+    if args == ["teams", "cache", "recipient", "list"]:
+      with TeamsCache() as cache:
+        return cache.recipient_candidates()
     if args == ["teams", "cache", "clear"]:
       with TeamsCache() as cache:
         cache.clear()

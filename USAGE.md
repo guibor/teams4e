@@ -27,7 +27,7 @@ turn the reader into a separate mini-application.
 | `X` | Run a bulk action |
 | `a` | Current-conversation action prefix |
 | `a a` / `a A` | Capture a summary / complete thread to Org |
-| `a f` | Forward the message at point to another chat for review |
+| `f` / `a f` | Forward the message at point to a person or chat for review |
 | `a e` / `a y` | Export / copy complete Markdown |
 | `a g` | Export and analyze with Agent Shell |
 | `a p` | Open participant availability |
@@ -66,13 +66,30 @@ In a chat compose buffer, type `@` to choose one of the conversation's
 participants and insert a real Teams mention. `C-c C-m` invokes the same
 command. Use `C-q @` when you need a literal at-sign instead.
 
-Forward from a chat or channel reader with `a f` (or
-`M-x teams4e-forward-message`). Choose a destination chat, review the editable
+Forward from a chat or channel reader with `f`, `a f`, or
+`M-x teams4e-forward-message`. Choose a person or destination chat, review the editable
 text, then send. This is a readable text forward like the TUI workflow, not a
 native Teams forwarding badge: it includes sender, date, available source URL,
 forwarded/quoted content, and attachment links. It does not reupload files or
 grant access to protected links. An existing destination draft is preserved
 and the forward is appended.
+
+The forwarding picker uses people and conversations from the existing private
+SQLite cache, not only the current inbox or bookmark. Member records and past
+directory results remain available after restarting Emacs. Duplicate names
+show addresses and IDs. Type a missing name and press `RET` to search the
+directory, or choose **Search people on server...**, **Find older chat on
+server...**, or **Enter recipient email...**. Directory access still depends on
+your tenant permissions; no new permissions are requested. An older/custom
+backend without recipient-cache support falls back to loaded chats and search.
+
+Selecting a recipient never sends a message or creates a conversation. Known
+direct chats use their cached chat ID; other people use the existing email-based
+send path, which requires an existing direct chat. Create a new conversation
+with `teams4e-create-chat` first when needed. Cache identities are suggestions,
+not proof of current membership or delivery permission: review the destination
+shown in the draft. `teams4e-graph teams cache clear` also removes cached people; separate
+accounts should use separate `TEAMS4E_CACHE` files.
 
 With expand-region installed, your existing `er/expand-region` binding includes
 a complete message as an expansion step in chat and channel readers. `M-h`

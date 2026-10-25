@@ -72,6 +72,17 @@ jobs:
             -l tests/teams4e-outbox-tests.el \
             -f ert-run-tests-batch-and-exit
       - name: Run tests
+        # Test the optional incoming-message renderer separately from pure ERT.
         run: |
           make test
           make compile
+      - name: Check out Agent Shell renderer dependency
+        uses: actions/checkout@v4
+        with:
+          repository: xenodium/agent-shell
+          ref: aeadc345254a1c5277095227d23631ca0a6da61a
+          path: .tmp/agent-shell
+      - name: Test mixed-language rendering
+        run: |
+          emacs -Q --batch -L . -L .tmp/agent-shell \
+            -l tests/teams4e-bidi-renderer-tests.el -f ert-run-tests-batch-and-exit

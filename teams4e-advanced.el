@@ -3042,7 +3042,7 @@ Attachment links are included; this does not copy protected attachment bytes."
 
 ;;;###autoload
 (defun teams4e-forward-message ()
-  "Choose a chat and compose an editable forward of the message at point.
+  "Choose a person or chat and compose an editable forward at point.
 Sending remains explicit with C-c C-c.  Any existing draft for the
 destination is preserved, with the forward appended."
   (interactive)
@@ -3050,7 +3050,7 @@ destination is preserved, with the forward appended."
          (text (teams4e--forward-text source (teams4e--current-web-url))))
     (when (teams4e--get source 'deletedDateTime)
       (user-error "Cannot forward a deleted message"))
-    (teams4e--select-chat
+    (teams4e--select-forward-target
      (lambda (target)
        (teams4e--open-compose target)
        (goto-char (point-max))
@@ -3069,6 +3069,104 @@ destination is preserved, with the forward appended."
             (insert text))))
        (teams4e-compose--save-draft)
        (message "Forward added to draft; review and send with C-c C-c")))))
+
+(defun teams4e--forward-person-target (person callback)
+  "Resolve PERSON's identity and pass a draft target to CALLBACK, without sending."
+  (let ((chat-id (teams4e--get person 'chatId))
+        (email (or (teams4e--get person 'mail)
+                   (teams4e--get person 'userPrincipalName)))
+        (user-id (teams4e--get person 'id)))
+    (cond
+     (chat-id
+      (funcall callback `((id . ,chat-id) (topic . ,(teams4e--user-choice person)))))
+     ((and (stringp email) (not (string-empty-p email)))
+      (funcall callback (list :user-emails email :label (teams4e--user-choice person))))
+     (user-id
+      (teams4e--require-online)
+      (teams4e--run-json
+       (list "teams" "user" "profile" "--userId" user-id)
+       (lambda (profile)
+         (unless (or (teams4e--get profile 'mail) (teams4e--get profile 'userPrincipalName))
+           (user-error "No email/UPN for this person; search by their email instead"))
+         (teams4e--forward-person-target profile callback))))
+     (t (user-error "No usable identity for this person; use directory search")))))
+
+(defun teams4e--choose-forward-target (chats users callback)
+  "Choose from CHATS and USERS, or explicitly search the server for CALLBACK."
+  (let* ((search "Search people on server...")
+         (older "Find older chat on server...")
+         (email "Enter recipient email...")
+         (seen (make-hash-table :test #'equal)) pairs)
+    (dolist (person users)
+      (let ((id (or (teams4e--get person 'id) (teams4e--get person 'mail))))
+        (when (and id (not (equal id teams4e--connected-user-id))
+                   (not (gethash id seen)))
+          (puthash id t seen)
+          (push (cons (format "Person: %s [%s]" (teams4e--user-choice person) id)
+                      (cons 'person person)) pairs))))
+    (clrhash seen)
+    (dolist (chat chats)
+      (when-let ((id (teams4e--chat-id chat)))
+        (unless (gethash id seen)
+          (puthash id t seen)
+          (push (cons (concat "Chat: " (teams4e--chat-choice chat)) (cons 'chat chat)) pairs))))
+    (setq pairs (nreverse pairs))
+    (let* ((choice (string-trim (completing-read
+                                 "Forward to (name, chat, or search): "
+                                 (append (mapcar #'car pairs) (list search older email)) nil nil)))
+           (target (cdr (assoc choice pairs))))
+      (cond
+       ((eq (car target) 'chat) (funcall callback (cdr target)))
+       ((eq (car target) 'person) (teams4e--forward-person-target (cdr target) callback))
+       ((equal choice older)
+        (teams4e--require-online)
+        (let ((query (string-trim (read-string "Find chat by name or participant: "))))
+          (when (string-empty-p query) (user-error "Enter a chat or participant name"))
+          (teams4e--run-json
+           (list "teams" "chat" "find" "--query" query)
+           (lambda (payload)
+             (when (teams4e--get payload 'memberErrors)
+               (when (> (teams4e--get payload 'memberErrors) 0)
+                 (message "Some chat memberships were unavailable; results may be incomplete")))
+             (unless (teams4e--get payload 'chats) (user-error "No matching chats"))
+             (teams4e--choose-forward-target (teams4e--get payload 'chats) nil callback)))))
+       ((equal choice email)
+        (let ((address (string-trim (read-string "Recipient email: "))))
+          (unless (string-match-p "\\`[^ ,;@]+@[^ ,;@]+\\'" address)
+            (user-error "Enter one recipient email"))
+          (teams4e--forward-person-target `((mail . ,address)) callback)))
+       (t
+        (let ((query (if (equal choice search)
+                         (string-trim (read-string "Search people by name or email: ")) choice)))
+          (when (string-empty-p query) (user-error "Enter a name or email"))
+          (teams4e--search-user query
+                                (lambda (person) (teams4e--forward-person-target person callback)))))))))
+
+(defun teams4e--select-forward-target (callback)
+  "Select a forwarding target using cached identities before explicit server search."
+  (let* ((origin (current-buffer))
+         (deliver (lambda (target)
+                    (when (buffer-live-p origin)
+                      (with-current-buffer origin (funcall callback target))))))
+    (teams4e--run-json
+     '("teams" "cache" "recipient" "list")
+     (lambda (payload)
+       (when (buffer-live-p origin)
+         (with-current-buffer origin
+           (teams4e--choose-forward-target
+            (append teams4e--chats (teams4e--get payload 'chats))
+            (append (teams4e--get payload 'users)
+                    (delq nil (mapcar (lambda (msg) (teams4e--dig msg 'from 'user))
+                                      (if (derived-mode-p 'teams4e-channel-thread-mode)
+                                          teams4e-channel--messages teams4e--messages)))) deliver))))
+     (lambda (_status _detail)
+       ;; Older/custom adapters need not implement the optional cache command.
+       (when (buffer-live-p origin)
+         (with-current-buffer origin
+           (teams4e--choose-forward-target teams4e--chats nil deliver)))))))
+
+(dolist (map (list teams4e-chat-mode-map teams4e-channel-thread-mode-map))
+  (define-key map (kbd "f") #'teams4e-forward-message))
 
 (defun teams4e-attachment-preview ()
   "Download and visit an attachment, displaying images in `image-mode'."

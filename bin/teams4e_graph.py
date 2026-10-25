@@ -3476,6 +3476,8 @@ def dispatch_cache(args: list[str]) -> Any:
       )
     if args == ["teams", "cache", "chat", "list"]:
       return cache.list_resources("chat")
+    if args == ["teams", "cache", "recipient", "list"]:
+      return cache.recipient_candidates()
     if args[:5] == ["teams", "cache", "chat", "message", "list"]:
       return cache.list_messages(
           "chat",
@@ -3680,6 +3682,9 @@ def execute(
       cache.upsert_resources("chat", result)
   elif args[:3] == ["teams", "chat", "find"]:
     result = find_chats(str(option(args, "--query")), access_token)
+    with TeamsCache() as cache:
+      for chat in result["chats"]:
+        cache.upsert_resources("member", chat.get("members", []), parent_id=chat["id"])
   elif args[:3] == ["teams", "search", "messages"]:
     result = search_messages(
         str(option(args, "--query")),
@@ -3965,8 +3970,12 @@ def execute(
     )
   elif args[:3] == ["teams", "user", "search"]:
     result = search_users(str(option(args, "--query")), access_token)
+    with TeamsCache() as cache:
+      cache.upsert_resources("user", result)
   elif args[:3] == ["teams", "user", "profile"]:
     result = graph_user(str(option(args, "--userId")), access_token)
+    with TeamsCache() as cache:
+      cache.upsert_resources("user", [result])
   elif args[:3] == ["teams", "user", "presence"]:
     result = get_presence(str(option(args, "--userId")), access_token)
   elif args[:3] == ["teams", "attachment", "download"]:

@@ -3623,9 +3623,59 @@ When RICH is non-nil, use the Markdown renderer."
              'face 'teams4e-day-separator)
             "\n\n")))
 
+(defun teams4e--directional-message-text (text)
+  "Return TEXT with display-only RTL hints for Hebrew-dominant prose.
+Never reverse characters or apply bidi overrides to English runs."
+  (let (fence)
+    (mapconcat
+     (lambda (line)
+       (cond
+        ((eq teams4e-message-direction 'unicode) line)
+        ((string-match "^[ \t>]*\\(```+\\|~~~+\\)" line)
+         (let ((kind (substring (match-string 1 line) 0 1)))
+           (setq fence (unless (equal fence kind) (or fence kind))))
+         line)
+        ((or fence (string-match-p "\\`    \\|[\u200e\u200f\u202a-\u202e\u2066-\u2069]" line)) line)
+        (t
+         (let ((prose (replace-regexp-in-string
+                       "https?://[^ \t<>]+\\|`[^`]*`" "" line))
+               (hebrew 0) (ltr 0) first)
+           (cl-loop for char across line do
+                    (let ((class (get-char-code-property char 'bidi-class)))
+                      (when (and (not first) (memq class '(L R AL)))
+                        (setq first class))))
+           (dolist (char (string-to-list prose))
+             (cond
+              ((and (<= #x590 char #x5ff)
+                    (eq (get-char-code-property char 'bidi-class) 'R))
+               (cl-incf hebrew))
+              ((eq (get-char-code-property char 'bidi-class) 'L) (cl-incf ltr))))
+           (if (and (eq first 'L) (> hebrew 0)
+                    (or (eq teams4e-message-direction 'hebrew) (> hebrew ltr)))
+               (let ((prefix (if (string-match
+                                  "\\`[ \t>]*\\(?:[-+*] \\|[0-9]+[.)] \\|#+ \\)?" line)
+                                 (match-end 0) 0)))
+                 (concat (substring line 0 prefix)
+                         (propertize "\u200f" 'invisible t
+                                     'teams4e-direction-hint t
+                                     'rear-nonsticky t)
+                         (substring line prefix)))
+             line)))))
+     (split-string text "\n" nil) "\n")))
+
+(defun teams4e--strip-direction-hints (text)
+  "Remove only generated display hints from copied TEXT, retaining source marks."
+  (let ((pos 0) parts)
+    (while (< pos (length text))
+      (let ((next (next-single-property-change pos 'teams4e-direction-hint text (length text))))
+        (unless (get-text-property pos 'teams4e-direction-hint text)
+          (push (substring text pos next) parts))
+        (setq pos next)))
+    (apply #'concat (nreverse parts))))
+
 (defun teams4e--insert-indented-message-body (body &optional face)
   "Insert multiline message BODY with a quiet two-column inset and FACE."
-  (dolist (line (split-string body "\n" nil))
+  (dolist (line (split-string (teams4e--directional-message-text body) "\n" nil))
     (unless (string-empty-p line) (insert "  "))
     (insert (if face (propertize line 'face face) line) "\n")))
 
@@ -3659,7 +3709,8 @@ by SHR and link-hint.  Older Agent Shell versions store URLs in help-echo."
 Agent Shell does not fetch images here.  Teams4e keeps responsibility for
 authenticated Graph image downloads and inserts those separately."
   (let ((start (point))
-        (source (string-trim-right (or markdown ""))))
+        (source (teams4e--directional-message-text
+                 (string-trim-right (or markdown "")))))
     (insert source "\n")
     (let ((end (copy-marker (point) t)))
       (condition-case nil
@@ -4154,7 +4205,7 @@ When DATE-ONLY is non-nil, omit the time of day."
   "Return the inputs that affect the current transcript presentation."
   (list teams4e--messages teams4e--chat teams4e--meeting-context
         (teams4e--effective-message-order)
-        teams4e-display-images teams4e-message-renderer))
+        teams4e-display-images teams4e-message-renderer teams4e-message-direction))
 
 (defun teams4e--reader-anchor (position)
   "Describe POSITION by message identity and offset, with an absolute fallback."
@@ -4299,9 +4350,12 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
   ;; Sender labels and quoted attribution must not determine body direction.
   ;; Each hard line is independent; visual wrapping stays in that paragraph.
   (setq-local bidi-display-reordering t)
+  (setq-local bidi-inhibit-bpa nil)
   (setq-local bidi-paragraph-direction nil)
   (setq-local bidi-paragraph-start-re "^")
   (setq-local bidi-paragraph-separate-re "^")
+  (add-function :filter-return (local 'filter-buffer-substring-function)
+                #'teams4e--strip-direction-hints)
   (add-hook 'kill-buffer-hook #'teams4e--cancel-buffer-process nil t)
   (setq-local truncate-lines nil))
 
