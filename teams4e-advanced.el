@@ -1956,14 +1956,16 @@ COMPLETED holds inverse actions already confirmed by the server."
       (teams4e--display-channel-thread buffer preview))
     (teams4e--close-other-readers buffer)))
 
-(defun teams4e--render-channel-thread ()
-  "Render current channel root and replies with stable message properties."
+(defun teams4e--render-channel-thread (&optional preserve-position)
+  "Render current channel root and replies with stable message properties.
+PRESERVE-POSITION suppresses following the latest boundary when reordering."
   (let* ((inhibit-read-only t)
          (view (teams4e--reader-view-state))
          (pending-message-id teams4e-channel--pending-message-id)
          (jump-to-bottom
-          (and (not pending-message-id)
+          (and (not preserve-position) (not pending-message-id)
                (or teams4e--jump-to-bottom-on-render
+                   (zerop (buffer-size))
                    (teams4e--reader-at-latest-p))))
          (message-id pending-message-id)
          last-day)

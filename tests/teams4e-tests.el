@@ -4746,6 +4746,24 @@
         (funcall finish teams4e--messages)
         (should (= (point) (teams4e--reader-anchor-position anchor)))))))
 
+(ert-deftest teams4e-reader-reordering-preserves-offset-in-chat-and-channel ()
+  (dolist (channel '(nil t))
+    (with-temp-buffer
+      (funcall (if channel #'teams4e-channel-thread-mode #'teams4e-chat-mode))
+      (let ((teams4e-message-order 'oldest-first)
+            (messages (teams4e-test-read-json "messages-chat-1.json")))
+        (setq teams4e--chat '((id . "chat-1"))
+              teams4e--messages messages teams4e-channel--messages messages)
+        (funcall (if channel #'teams4e--render-channel-thread #'teams4e--render-chat))
+        (teams4e--goto-message-id "message-1")
+        (let ((anchor (teams4e--reader-anchor (point))))
+          (teams4e-toggle-message-order)
+          (should (= (point) (teams4e--reader-anchor-position anchor)))
+          (forward-char 5)
+          (setq anchor (teams4e--reader-anchor (point)))
+          (teams4e-toggle-message-order)
+          (should (= (point) (teams4e--reader-anchor-position anchor))))))))
+
 (ert-deftest teams4e-reader-scrolled-away-window-disables-tail-follow ()
   (with-temp-buffer
     (teams4e-chat-mode)

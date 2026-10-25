@@ -1709,8 +1709,8 @@ chronological input."
        'newest-first
      'oldest-first))
   (if (derived-mode-p 'teams4e-chat-mode)
-      (teams4e--render-chat)
-    (teams4e--render-channel-thread))
+      (teams4e--render-chat t)
+    (teams4e--render-channel-thread t))
   (message "Teams transcript order: %s"
            (teams4e--message-order-label)))
 
@@ -4240,14 +4240,16 @@ When DATE-ONLY is non-nil, omit the time of day."
               header-line-format (teams4e--chat-header)))
     (teams4e--render-chat)))
 
-(defun teams4e--render-chat ()
-  "Render the current chat and its cached messages."
+(defun teams4e--render-chat (&optional preserve-position)
+  "Render the current chat and its cached messages.
+PRESERVE-POSITION suppresses following the latest boundary when reordering."
   (let* ((inhibit-read-only t)
          (started (float-time))
          (view (teams4e--reader-view-state))
          (jump-to-bottom
-          (and (not teams4e--pending-message-id)
+          (and (not preserve-position) (not teams4e--pending-message-id)
                (or teams4e--jump-to-bottom-on-render
+                   (zerop (buffer-size))
                    (teams4e--reader-at-latest-p))))
          (message-id teams4e--pending-message-id)
          last-day)
