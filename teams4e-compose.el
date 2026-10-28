@@ -13,6 +13,7 @@
 (declare-function markdown-mode "markdown-mode" ())
 (declare-function evil-insert-state "evil-states" (&optional arg))
 (defvar evil-local-mode)
+(defvar teams4e-compose-edit-mode)
 
 (defcustom teams4e-compose-editor 'org
   "Editor for new Teams drafts.
@@ -40,8 +41,44 @@ display if there is insufficient room to split."
 (defvar-local teams4e-compose--command-maps nil
   "Compose commands above Org/Evil emulation maps in this draft only.")
 
+;; A draft belongs to its buffer, not to one initialization of its editor.
+;; In particular, losing schedule/reply metadata must never change delivery.
+(dolist (variable '(teams4e-compose-edit-mode
+                    teams4e-compose--target teams4e-compose--origin
+                    teams4e-compose--reply-to teams4e-compose--attachments
+                    teams4e-compose--mentions teams4e-compose--content-type
+                    teams4e-compose--editor teams4e-compose--draft-file
+                    teams4e-compose--draft-timer teams4e-compose--discarded
+                    teams4e-compose--schedule teams4e-compose--outbox-id
+                    teams4e-compose--outbox-revision teams4e-compose--outbox-busy
+                    teams4e-compose--window))
+  (put variable 'permanent-local t))
+
+(defun teams4e-compose--current-editor ()
+  "Return the supported authoring format of the current major mode."
+  (cond ((derived-mode-p 'org-mode) 'org)
+        ((derived-mode-p 'markdown-mode) 'markdown)
+        ((derived-mode-p 'text-mode) 'text)))
+
+(defun teams4e-compose--after-major-mode ()
+  "Restore draft commands and hooks after the authoring mode is reinitialized."
+  (when teams4e-compose-edit-mode
+    (when-let ((editor (teams4e-compose--current-editor)))
+      (setq teams4e-compose--editor editor))
+    (teams4e-compose-edit-mode 1)
+    (setq-local require-final-newline nil
+                buffer-file-coding-system 'utf-8-unix)
+    (visual-line-mode 1)
+    (add-hook 'kill-buffer-hook #'teams4e-compose--close-window nil t)
+    (when teams4e-compose--target
+      (teams4e-compose--update-header))))
+
+(put 'teams4e-compose--after-major-mode 'permanent-local-hook t)
+
 (defun teams4e-compose--install-bindings ()
   "Install draft commands without shadowing the authoring mode's other keys."
+  (add-hook 'after-change-major-mode-hook
+            #'teams4e-compose--after-major-mode t t)
   (let ((map (copy-keymap teams4e-compose-mode-map))
         (commands (make-sparse-keymap)))
     (set-keymap-parent map nil)
@@ -73,20 +110,75 @@ display if there is insufficient room to split."
     (setq-local teams4e-compose--command-maps nil
                 emulation-mode-map-alists
                 (remq 'teams4e-compose--command-maps emulation-mode-map-alists))
+    (remove-hook 'after-change-major-mode-hook
+                 #'teams4e-compose--after-major-mode t)
+    (remove-hook 'after-change-functions #'teams4e-compose--schedule-draft t)
+    (remove-hook 'kill-buffer-hook #'teams4e-compose--save-draft t)
     (setq minor-mode-overriding-map-alist
           (assq-delete-all 'teams4e-compose-edit-mode
                            minor-mode-overriding-map-alist))))
 
 ;;;###autoload
 (defun teams4e-compose-repair ()
-  "Restore send keys in the current draft without changing its text or target.
-Use after a live package update or another mode intercepts compose commands.
-This never sends, discards, reopens or changes the major mode of a draft."
+  "Restore Teams state and keys without changing the current draft's text.
+If a mode reset erased the target, offer metadata recovery from exactly one
+matching saved draft, with explicit confirmation.  Never guess a recipient,
+send, replace the text, reopen the buffer, or change its major mode."
   (interactive)
   (unless teams4e-compose--target
-    (user-error "No Teams draft target in this buffer; open a draft with teams4e-send"))
+    (teams4e-compose--recover-metadata))
   (teams4e-compose-edit-mode 1)
+  (teams4e-compose--update-header)
   (message "Teams draft keys restored: C-c C-c or C-RET sends; C-c C-k aborts"))
+
+(defun teams4e-compose--recover-metadata ()
+  "Recover lost draft metadata only after matching and confirming a saved draft.
+The buffer name is a lookup hint, never authority to send to a recipient.
+Scheduled drafts need a fresh outbox hold and are deliberately not recovered
+through this synchronous command."
+  (let (matches)
+    (when (and (string-prefix-p "*Teams Compose: " (buffer-name))
+               (file-directory-p teams4e-draft-directory))
+      (dolist (file (directory-files teams4e-draft-directory t
+                                     "\\`[[:xdigit:]]\\{32\\}\\.json\\'"))
+        (when-let* ((payload (teams4e-compose--read-draft file))
+                    (target (teams4e-compose--record-target
+                             (teams4e--get payload 'target))))
+          (let ((reply (teams4e--get payload 'replyTo)))
+            (when (and (equal (buffer-name)
+                              (teams4e--compose-buffer-name target reply))
+                       (equal (file-name-nondirectory file)
+                              (concat (md5 (teams4e--compose-target-key target reply))
+                                      ".json")))
+              (push (list file payload target reply) matches))))))
+    (unless (= (length matches) 1)
+      (user-error "No unique saved Teams draft matches this buffer; text retained, no recipient guessed"))
+    (pcase-let* ((`(,file ,payload ,target ,reply) (car matches))
+                 (editor (pcase (teams4e--get payload 'editor)
+                           ("org" 'org) ("markdown" 'markdown) (_ 'text))))
+      (when (or (teams4e--get payload 'schedule)
+                (teams4e--get payload 'outboxId))
+        (user-error "Scheduled draft needs an outbox hold; text retained, recovery cannot enable immediate send"))
+      (unless (eq editor (teams4e-compose--current-editor))
+        (user-error "Saved draft uses %s; switch to that authoring mode before repair" editor))
+      ;; Validate the complete destination and reply ID without sending.
+      (teams4e--send-args target "" reply)
+      (unless (yes-or-no-p
+               (format "Restore saved destination %s [%s]%s and %d attachment(s), keeping this text? "
+                       (teams4e--target-label target)
+                       (teams4e--compose-target-key target)
+                       (if reply (format " (reply %s)" (teams4e--get reply 'id)) "")
+                       (length (teams4e--get payload 'attachments))))
+        (user-error "Recovery canceled; draft unchanged"))
+      (setq-local teams4e-compose--target target
+                  teams4e-compose--reply-to reply
+                  teams4e-compose--attachments (teams4e--get payload 'attachments)
+                  teams4e-compose--mentions (teams4e--get payload 'mentions)
+                  teams4e-compose--content-type
+                  (or (teams4e--get payload 'contentType) "text")
+                  teams4e-compose--editor editor
+                  teams4e-compose--draft-file file
+                  teams4e-compose--discarded nil))))
 
 (defun teams4e-compose--start-editor (target reply-to)
   "Start the appropriate editor for TARGET and REPLY-TO, including drafts."
@@ -173,6 +265,9 @@ or evaluating content pasted into a draft."
 
 (defun teams4e-compose--render-body (source)
   "Return (CONTENT-TYPE . BODY) for SOURCE in the current Teams editor."
+  (when (and teams4e-compose-edit-mode
+             (not (teams4e-compose--current-editor)))
+    (user-error "Switch this draft back to Org, Markdown or Text mode before sending"))
   (pcase teams4e-compose--editor
     ('org (cons "html" (if (string-empty-p source) ""
                         (teams4e-compose--org-html source))))

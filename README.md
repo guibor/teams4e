@@ -310,6 +310,20 @@ text, recipient, attachments or reply target. Reloading `teams4e-compose.el`
 also repairs already-open draft bindings without sending anything; avoid a
 full package unload while working on unsent drafts.
 
+Draft identity, reply/attachment metadata, and scheduling state now survive
+reinitializing the authoring major mode. Compose keys, autosave hooks, and the
+header are restored afterward. Explicitly disabling the compose minor mode
+still disables it; ordinary Org buffers are unaffected.
+
+If an **older version already lost the destination**, keep the draft open and
+run `M-x teams4e-compose-repair` after updating and loading the compose module.
+It can recover metadata from a uniquely matching saved draft, after you confirm
+the destination and reply. It keeps your current text, not the older saved body,
+and does not send. Attachments and mentions come from the last saved metadata.
+If no match exists, it refuses to guess; keep the text and restore it manually
+in a new draft for the correct conversation. Lost scheduled drafts are refused
+rather than being converted into immediate messages.
+
 The reply buffer opens below the reader, keeping recent exchanges visible
 while you write. Recoverable drafts retain their source and editor choice.
 Real Teams `@` mentions and attachments work in all three editors.

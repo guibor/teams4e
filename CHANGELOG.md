@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Preserve Teams draft identity, reply/attachment metadata, and outbox guards
+  across authoring-mode reinitialization; restore send bindings and autosave
+  hooks afterward. Fix the recurrence where Org reports that `C-c C-c` can do
+  nothing and direct send reports "Not in a Teams compose buffer".
+  `teams4e-compose-repair` can recover already-lost metadata from a unique saved
+  draft with destination confirmation, without replacing newer text or sending.
+
 - Keep Teams compose commands above Org/Evil emulation keymaps. `C-c C-c`
   submits the written draft, with `C-RET` as an alternative; Org remains the
   authoring major mode. Add `teams4e-compose-repair` and repair existing draft
