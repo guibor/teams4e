@@ -37,25 +37,56 @@ display if there is insufficient room to split."
 (defvar-local teams4e-compose--window nil
   "Window created for this composer, if any.")
 
+(defvar-local teams4e-compose--command-maps nil
+  "Compose commands above Org/Evil emulation maps in this draft only.")
+
+(defun teams4e-compose--install-bindings ()
+  "Install draft commands without shadowing the authoring mode's other keys."
+  (let ((map (copy-keymap teams4e-compose-mode-map))
+        (commands (make-sparse-keymap)))
+    (set-keymap-parent map nil)
+    (define-key map (kbd "C-<return>") #'teams4e-compose-send)
+    (setq-local minor-mode-overriding-map-alist
+                (cons (cons 'teams4e-compose-edit-mode map)
+                      (assq-delete-all 'teams4e-compose-edit-mode
+                                       minor-mode-overriding-map-alist)))
+    ;; Ordinary minor-mode overrides lose to Org/Evil emulation bindings.
+    ;; Elevate only the draft command prefix, not text entry or Vim keys.
+    (define-key commands (kbd "C-c") (lookup-key map (kbd "C-c")))
+    (define-key commands (kbd "C-<return>") #'teams4e-compose-send)
+    (define-key commands [remap org-ctrl-c-ctrl-c] #'teams4e-compose-send)
+    (setq-local teams4e-compose--command-maps
+                (list (cons 'teams4e-compose-edit-mode commands)))
+    (setq-local emulation-mode-map-alists
+                (cons 'teams4e-compose--command-maps
+                      (remq 'teams4e-compose--command-maps emulation-mode-map-alists)))))
+
 (define-minor-mode teams4e-compose-edit-mode
   "Teams send, draft and attachment commands over an authoring major mode."
   :lighter " Teams"
   :keymap (make-sparse-keymap)
   (if teams4e-compose-edit-mode
-      (let ((map (copy-keymap teams4e-compose-mode-map)))
-        ;; Do not shadow the author's Org/Markdown major-mode bindings with
-        ;; text-mode's inherited bindings.
-        (set-keymap-parent map nil)
-        (setq-local minor-mode-overriding-map-alist
-                    (cons (cons 'teams4e-compose-edit-mode map)
-                          (assq-delete-all
-                           'teams4e-compose-edit-mode
-                           minor-mode-overriding-map-alist)))
+      (progn
+        (teams4e-compose--install-bindings)
         (unless (derived-mode-p 'teams4e-compose-mode)
           (run-hooks 'teams4e-compose-mode-hook)))
+    (setq-local teams4e-compose--command-maps nil
+                emulation-mode-map-alists
+                (remq 'teams4e-compose--command-maps emulation-mode-map-alists))
     (setq minor-mode-overriding-map-alist
           (assq-delete-all 'teams4e-compose-edit-mode
                            minor-mode-overriding-map-alist))))
+
+;;;###autoload
+(defun teams4e-compose-repair ()
+  "Restore send keys in the current draft without changing its text or target.
+Use after a live package update or another mode intercepts compose commands.
+This never sends, discards, reopens or changes the major mode of a draft."
+  (interactive)
+  (unless teams4e-compose--target
+    (user-error "No Teams draft target in this buffer; open a draft with teams4e-send"))
+  (teams4e-compose-edit-mode 1)
+  (message "Teams draft keys restored: C-c C-c or C-RET sends; C-c C-k aborts"))
 
 (defun teams4e-compose--start-editor (target reply-to)
   "Start the appropriate editor for TARGET and REPLY-TO, including drafts."
@@ -195,6 +226,12 @@ or evaluating content pasted into a draft."
             (setq teams4e-compose--window editor-window)
             (add-hook 'kill-buffer-hook #'teams4e-compose--close-window nil t)))))
      (t (pop-to-buffer buffer)))))
+
+;; Reloading this file repairs already-open Org/Markdown drafts too.
+(dolist (buffer (buffer-list))
+  (with-current-buffer buffer
+    (when (bound-and-true-p teams4e-compose-edit-mode)
+      (teams4e-compose--install-bindings))))
 
 (provide 'teams4e-compose)
 ;;; teams4e-compose.el ends here

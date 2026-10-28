@@ -10,7 +10,7 @@ test-elisp:
 		-l tests/teams4e-tests.el -l tests/teams4e-companion-tests.el \
 		-l tests/teams4e-compose-tests.el -l tests/teams4e-availability-tests.el \
 		-l tests/teams4e-navigation-tests.el -l tests/teams4e-calendar-tests.el \
-		-l tests/teams4e-outbox-tests.el \
+		-l tests/teams4e-outbox-tests.el -l tests/teams4e-compose-keys-tests.el \
 		-f ert-run-tests-batch-and-exit
 
 test-python:

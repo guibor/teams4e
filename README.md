@@ -295,10 +295,20 @@ For example:
 - *Next:* review [[https://example.org/review][the notes]].
 ```
 
-`teams4e-compose-send` (default `C-c C-c`) exports an HTML fragment, so people
+`teams4e-compose-send` (`C-c C-c`, or `C-RET`) **submits the draft you have written**;
+`teams4e-send` only opens the composer. Sending exports an HTML fragment, so people
 in Teams receive formatted text and clickable links, **not raw Org syntax**.
 Recipients do not need Emacs or Org. Org composition uses Emacs's built-in
 exporter; it does not require Pandoc or an AI service.
+
+The major mode is intentionally `org-mode` (or `markdown-mode`):
+`teams4e-compose-edit-mode` supplies the Teams commands on top. Its command
+keys take precedence over Org/Evil bindings only in the draft, leaving normal
+Org buffers and ordinary editing keys unchanged. If another mode takes over,
+`M-x teams4e-compose-repair` restores the bindings without changing the draft
+text, recipient, attachments or reply target. Reloading `teams4e-compose.el`
+also repairs already-open draft bindings without sending anything; avoid a
+full package unload while working on unsent drafts.
 
 The reply buffer opens below the reader, keeping recent exchanges visible
 while you write. Recoverable drafts retain their source and editor choice.

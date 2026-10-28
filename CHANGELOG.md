@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep Teams compose commands above Org/Evil emulation keymaps. `C-c C-c`
+  submits the written draft, with `C-RET` as an alternative; Org remains the
+  authoring major mode. Add `teams4e-compose-repair` and repair existing draft
+  bindings when the compose module is reloaded, without sending or resetting
+  draft content, recipients or attachments.
+
 - Prefer RTL for Hebrew-dominant mixed-language prose even with a leading
   English name/URL. Add configurable contextual, Unicode, and Hebrew-preferring
   direction policies; preserve code, explicit controls, and ordinary copied text.
