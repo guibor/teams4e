@@ -122,63 +122,198 @@ display if there is insufficient room to split."
 (defun teams4e-compose-repair ()
   "Restore Teams state and keys without changing the current draft's text.
 If a mode reset erased the target, offer metadata recovery from exactly one
-matching saved draft, with explicit confirmation.  Never guess a recipient,
+matching saved draft, or ask which recovery to use.  Never guess a recipient,
 send, replace the text, reopen the buffer, or change its major mode."
   (interactive)
-  (unless teams4e-compose--target
-    (teams4e-compose--recover-metadata))
-  (teams4e-compose-edit-mode 1)
-  (teams4e-compose--update-header)
-  (message "Teams draft keys restored: C-c C-c or C-RET sends; C-c C-k aborts"))
+  (when (or teams4e-compose--target
+            (teams4e-compose--recover-metadata))
+    (teams4e-compose-edit-mode 1)
+    (teams4e-compose--update-header)
+    (message "Teams draft keys restored: C-c C-c or C-RET sends; C-c C-k aborts")))
 
-(defun teams4e-compose--recover-metadata ()
-  "Recover lost draft metadata only after matching and confirming a saved draft.
-The buffer name is a lookup hint, never authority to send to a recipient.
-Scheduled drafts need a fresh outbox hold and are deliberately not recovered
-through this synchronous command."
-  (let (matches)
-    (when (and (string-prefix-p "*Teams Compose: " (buffer-name))
-               (file-directory-p teams4e-draft-directory))
+(defun teams4e-compose--saved-metadata ()
+  "Return saved (FILE PAYLOAD TARGET REPLY) records with consistent identities."
+  (let (records)
+    (when (file-directory-p teams4e-draft-directory)
       (dolist (file (directory-files teams4e-draft-directory t
                                      "\\`[[:xdigit:]]\\{32\\}\\.json\\'"))
         (when-let* ((payload (teams4e-compose--read-draft file))
                     (target (teams4e-compose--record-target
                              (teams4e--get payload 'target))))
           (let ((reply (teams4e--get payload 'replyTo)))
-            (when (and (equal (buffer-name)
-                              (teams4e--compose-buffer-name target reply))
-                       (equal (file-name-nondirectory file)
-                              (concat (md5 (teams4e--compose-target-key target reply))
-                                      ".json")))
-              (push (list file payload target reply) matches))))))
-    (unless (= (length matches) 1)
-      (user-error "No unique saved Teams draft matches this buffer; text retained, no recipient guessed"))
-    (pcase-let* ((`(,file ,payload ,target ,reply) (car matches))
-                 (editor (pcase (teams4e--get payload 'editor)
-                           ("org" 'org) ("markdown" 'markdown) (_ 'text))))
-      (when (or (teams4e--get payload 'schedule)
-                (teams4e--get payload 'outboxId))
-        (user-error "Scheduled draft needs an outbox hold; text retained, recovery cannot enable immediate send"))
-      (unless (eq editor (teams4e-compose--current-editor))
-        (user-error "Saved draft uses %s; switch to that authoring mode before repair" editor))
-      ;; Validate the complete destination and reply ID without sending.
-      (teams4e--send-args target "" reply)
-      (unless (yes-or-no-p
-               (format "Restore saved destination %s [%s]%s and %d attachment(s), keeping this text? "
-                       (teams4e--target-label target)
-                       (teams4e--compose-target-key target)
-                       (if reply (format " (reply %s)" (teams4e--get reply 'id)) "")
-                       (length (teams4e--get payload 'attachments))))
-        (user-error "Recovery canceled; draft unchanged"))
-      (setq-local teams4e-compose--target target
-                  teams4e-compose--reply-to reply
-                  teams4e-compose--attachments (teams4e--get payload 'attachments)
-                  teams4e-compose--mentions (teams4e--get payload 'mentions)
-                  teams4e-compose--content-type
-                  (or (teams4e--get payload 'contentType) "text")
-                  teams4e-compose--editor editor
-                  teams4e-compose--draft-file file
-                  teams4e-compose--discarded nil))))
+            (when (equal (file-name-nondirectory file)
+                         (concat (md5 (teams4e--compose-target-key target reply)) ".json"))
+              (push (list file payload target reply) records))))))
+    records))
+
+(defun teams4e-compose--matching-metadata (records)
+  "Find RECORDS matching the stable draft hash, independent of display names."
+  (when (string-match "\\`\\*Teams Compose: .* \\[\\([[:xdigit:]]\\{6\\}\\)\\]\\*\\(?:<[0-9]+>\\)?\\'"
+                      (buffer-name))
+    (let ((hash (match-string 1 (buffer-name))))
+      (cl-remove-if-not
+       (lambda (record)
+         (string-prefix-p hash (file-name-nondirectory (car record))))
+       records))))
+
+(defun teams4e-compose--recover-metadata ()
+  "Recover lost draft metadata only after matching and confirming a saved draft.
+The buffer name is a lookup hint, never authority to send to a recipient.
+Scheduled drafts need a fresh outbox hold and are deliberately not recovered
+through this synchronous command."
+  (unless (string-prefix-p "*Teams Compose: " (buffer-name))
+    (user-error "Not a recognized draft; teams4e-compose-recover offers explicit recovery"))
+  (let* ((records (teams4e-compose--saved-metadata))
+         (matches (teams4e-compose--matching-metadata records)))
+    (if (= (length matches) 1)
+        (teams4e-compose--restore-metadata (car matches))
+      (teams4e-compose--choose-recovery records))))
+
+(defun teams4e-compose--other-draft-buffer (target &optional reply)
+  "Return another live buffer owning TARGET and REPLY, if any."
+  (let ((here (current-buffer))
+        (key (teams4e--compose-target-key target reply)))
+    (cl-find-if
+     (lambda (buffer)
+       (and (not (eq buffer here))
+            (with-current-buffer buffer
+              (and teams4e-compose--target
+                   (equal key (teams4e-compose--target-key))))))
+     (buffer-list))))
+
+(defun teams4e-compose--restore-metadata (record)
+  "Confirm and restore RECORD's metadata, never its saved body; return t."
+  (pcase-let* ((`(,file ,payload ,target ,reply) record)
+               (editor (pcase (teams4e--get payload 'editor)
+                         ("org" 'org) ("markdown" 'markdown) (_ 'text))))
+    (when (or (teams4e--get payload 'schedule)
+              (teams4e--get payload 'outboxId))
+      (user-error "Scheduled draft needs an outbox hold; text retained, recovery cannot enable immediate send"))
+    (unless (eq editor (teams4e-compose--current-editor))
+      (user-error "Saved draft uses %s; switch to that authoring mode before repair" editor))
+    (when (teams4e-compose--other-draft-buffer target reply)
+      (user-error "That draft is already open in another buffer; no metadata replaced"))
+    ;; Validate the complete destination and reply ID without sending.
+    (teams4e--send-args target "" reply)
+    (unless (yes-or-no-p
+             (format "Restore saved destination %s [%s]%s and %d attachment(s), keeping this text? "
+                     (teams4e--target-label target)
+                     (teams4e--compose-target-key target)
+                     (if reply (format " (reply %s)" (teams4e--get reply 'id)) "")
+                     (length (teams4e--get payload 'attachments))))
+      (user-error "Recovery canceled; draft unchanged"))
+    (when (or teams4e-compose--target
+              (teams4e-compose--other-draft-buffer target reply))
+      (user-error "Draft ownership changed during confirmation; nothing replaced"))
+    (setq-local teams4e-compose--target target
+                teams4e-compose--reply-to reply
+                teams4e-compose--attachments (teams4e--get payload 'attachments)
+                teams4e-compose--mentions (teams4e--get payload 'mentions)
+                teams4e-compose--content-type
+                (or (teams4e--get payload 'contentType) "text")
+                teams4e-compose--editor editor
+                teams4e-compose--draft-file file
+                teams4e-compose--discarded nil)
+    t))
+
+;;;###autoload
+(defun teams4e-compose-recover ()
+  "Explicitly recover this buffer's Teams destination, without sending.
+Choose saved metadata or explicitly start a NEW message to a selected chat.
+The latter cannot recover old reply, attachment, mention or scheduling data."
+  (interactive)
+  (when (or teams4e-compose--target
+            (teams4e-compose--choose-recovery (teams4e-compose--saved-metadata)))
+    (teams4e-compose-repair)))
+
+(defun teams4e-compose--choose-recovery (records)
+  "Ask which of RECORDS to restore, or offer explicit new-message recovery."
+  (unless (teams4e-compose--current-editor)
+    (user-error "Recovery requires an Org, Markdown or Text buffer"))
+  (when buffer-file-name
+    (user-error "Recovery is for draft buffers, not files; no destination attached"))
+  (when (or teams4e-compose--schedule teams4e-compose--outbox-id
+            teams4e-compose--outbox-revision teams4e-compose--outbox-busy
+            (string-prefix-p "*Teams scheduled:" (buffer-name))
+            (cl-some (lambda (record)
+                       (or (teams4e--get (nth 1 record) 'schedule)
+                           (teams4e--get (nth 1 record) 'outboxId)))
+                     (teams4e-compose--matching-metadata records)))
+    (user-error "Scheduled draft needs an outbox hold; recovery cannot enable immediate send"))
+  (let* ((cancel "Cancel; keep this buffer unchanged")
+         (new "NEW message: choose conversation; old reply/attachments not restored")
+         (pairs (mapcar
+                 (lambda (record)
+                   (list (format "Saved: %s%s [%s]"
+                                 (teams4e--target-label (nth 2 record))
+                                 (if (nth 3 record)
+                                     (format " / reply %s" (teams4e--get (nth 3 record) 'id)) "")
+                                 (file-name-base (car record)))
+                         record)) records))
+         (choice (completing-read "Recover Teams destination: "
+                                  (append (list cancel new) (mapcar #'car pairs))
+                                  nil t nil nil cancel)))
+    (cond ((equal choice new) (teams4e-compose--recover-new-message) nil)
+          ((assoc choice pairs)
+           (teams4e-compose--restore-metadata (cadr (assoc choice pairs))))
+          (t (user-error "Recovery canceled; draft unchanged")))))
+
+(defun teams4e-compose--recover-new-message ()
+  "Select and confirm a new chat destination without replacing current text."
+  (let ((buffer (current-buffer))
+        (name (buffer-name))
+        (editor (teams4e-compose--current-editor)))
+    (teams4e--select-chat
+     (lambda (target)
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (unless (and (not teams4e-compose--target)
+                        (not teams4e-compose--schedule)
+                        (not teams4e-compose--outbox-id)
+                        (not teams4e-compose--outbox-revision)
+                        (not teams4e-compose--outbox-busy)
+                        (equal name (buffer-name))
+                        (eq editor (teams4e-compose--current-editor)))
+             (user-error "Draft changed while choosing its destination; nothing replaced"))
+           (teams4e--send-args target "")
+           (let* ((destination (teams4e--compose-buffer-name target))
+                  (existing (get-buffer destination))
+                  (file (expand-file-name
+                         (concat (md5 (teams4e--compose-target-key target)) ".json")
+                         teams4e-draft-directory)))
+             (when (or (and existing (not (eq existing buffer)))
+                       (teams4e-compose--other-draft-buffer target)
+                       (file-exists-p file))
+               (user-error "A draft for that chat already exists; choose saved metadata or keep both drafts separate"))
+             (unless (yes-or-no-p
+                      (format "Use this text as a NEW message to %s [%s], WITHOUT the old reply/attachments/mentions/schedule? "
+                              (teams4e--target-label target)
+                              (teams4e--compose-target-key target)))
+               (user-error "Recovery canceled; draft unchanged"))
+             ;; Minibuffer confirmation can dispatch asynchronous callbacks.
+             (when (or teams4e-compose--target
+                       (not (equal name (buffer-name)))
+                       (not (eq editor (teams4e-compose--current-editor)))
+                       teams4e-compose--schedule teams4e-compose--outbox-id
+                       teams4e-compose--outbox-revision teams4e-compose--outbox-busy
+                       (teams4e-compose--other-draft-buffer target)
+                       (let ((other (get-buffer destination)))
+                         (and other (not (eq other buffer))))
+                       (file-exists-p file))
+               (user-error "Draft ownership changed during confirmation; nothing replaced"))
+             (setq-local teams4e-compose--target target
+                         teams4e-compose--reply-to nil
+                         teams4e-compose--attachments nil
+                         teams4e-compose--mentions nil
+                         teams4e-compose--origin nil
+                         teams4e-compose--editor editor
+                         teams4e-compose--content-type teams4e-default-content-type
+                         teams4e-compose--draft-file file
+                         teams4e-compose--discarded nil)
+             (rename-buffer destination)
+             (teams4e-compose-repair)
+             (teams4e-compose--save-draft)
+             (message "NEW Teams draft recovered; review destination before C-c C-c. Old reply/attachments were not restored."))))))))
 
 (defun teams4e-compose--start-editor (target reply-to)
   "Start the appropriate editor for TARGET and REPLY-TO, including drafts."

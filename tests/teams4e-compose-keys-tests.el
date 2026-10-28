@@ -229,7 +229,9 @@
   (teams4e-test-with-orphan-draft
     (rename-buffer "*Teams Compose: other [123456]*")
     (cl-letf (((symbol-function 'yes-or-no-p)
-               (lambda (&rest _) (ert-fail "No matching target to confirm"))))
+               (lambda (&rest _) (ert-fail "No matching target to confirm")))
+              ((symbol-function 'completing-read)
+               (lambda (_ collection &rest _) (car collection))))
       (should-error (teams4e-compose-repair) :type 'user-error))
     (should-not teams4e-compose--target)
     (should (equal (buffer-string) "Newer *unsent* body"))))
@@ -239,7 +241,9 @@
     (rename-file (car (directory-files teams4e-draft-directory t "\\.json\\'"))
                  (expand-file-name "00000000000000000000000000000000.json"
                                    teams4e-draft-directory))
-    (should-error (teams4e-compose-repair) :type 'user-error)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_ collection &rest _) (car collection))))
+      (should-error (teams4e-compose-repair) :type 'user-error))
     (should-not teams4e-compose--target)))
 
 (ert-deftest teams4e-compose-repair-does-not-turn-a-schedule-into-send-now ()
@@ -279,3 +283,136 @@
     (should (equal teams4e-compose--target '((id . "synthetic-chat"))))
     (should (eq (key-binding (kbd "C-c C-c")) #'teams4e-compose-send))
     (should (equal (buffer-string) "**Keep Markdown**"))))
+
+(ert-deftest teams4e-compose-repair-matches-hash-despite-changed-chat-label ()
+  (teams4e-test-with-orphan-draft
+    (rename-buffer (replace-regexp-in-string "Compose: .* \\[" "Compose: new label ["
+                                             (buffer-name)))
+    (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t))
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) (ert-fail "Hash already identifies the draft"))))
+      (teams4e-compose-repair))
+    (should (equal (teams4e--chat-id teams4e-compose--target) "synthetic-chat"))
+    (should (equal (buffer-string) "Newer *unsent* body"))))
+
+(ert-deftest teams4e-compose-recover-explicitly-selects-saved-metadata ()
+  (teams4e-test-with-orphan-draft
+    (rename-buffer "*Orphaned Teams draft*")
+    (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t))
+              ((symbol-function 'completing-read)
+               (lambda (_ collection &rest _)
+                 (cl-find-if (lambda (item) (string-prefix-p "Saved: " item)) collection)))
+              ((symbol-function 'teams4e--run)
+               (lambda (&rest _) (ert-fail "Recovery never sends"))))
+      (teams4e-compose-recover))
+    (should (equal (buffer-string) "Newer *unsent* body"))
+    (should (equal teams4e-compose--attachments '("/tmp/synthetic.pdf")))
+    (should (equal (teams4e--get teams4e-compose--reply-to 'id) "parent-message"))))
+
+(defmacro teams4e-test-with-unsaved-orphan (&rest body)
+  (declare (indent 0))
+  `(let ((teams4e-draft-directory (make-temp-file "teams4e-unsaved-recovery-" t)))
+     (unwind-protect
+         (with-temp-buffer
+           (org-mode)
+           (rename-buffer "*Teams Compose: lost [123456]*")
+           (insert "Keep this unsaved *text*")
+           (cl-letf (((symbol-function 'completing-read)
+                      (lambda (_ collection &rest _)
+                        (cl-find-if (lambda (item) (string-prefix-p "NEW message:" item)) collection)))
+                     ((symbol-function 'teams4e--run)
+                      (lambda (&rest _) (ert-fail "Recovery must never send"))))
+             ,@body))
+       (delete-directory teams4e-draft-directory t))))
+
+(ert-deftest teams4e-compose-repair-without-autosave-chooses-and-confirms-new-chat ()
+  (teams4e-test-with-unsaved-orphan
+    (let (confirmation)
+      (cl-letf (((symbol-function 'teams4e--select-chat)
+                 (lambda (callback) (funcall callback '((id . "chosen-chat")))))
+                ((symbol-function 'yes-or-no-p)
+                 (lambda (prompt) (setq confirmation prompt) t)))
+        (teams4e-compose-repair))
+      (should (string-match-p "NEW message" confirmation))
+      (should (string-match-p "chosen-chat" confirmation))
+      (should (string-match-p "WITHOUT the old reply/attachments" confirmation))
+      (should (equal (buffer-string) "Keep this unsaved *text*"))
+      (should (equal (teams4e--chat-id teams4e-compose--target) "chosen-chat"))
+      (should-not teams4e-compose--reply-to)
+      (should-not teams4e-compose--attachments)
+      (should (file-exists-p teams4e-compose--draft-file))
+      (should (eq (key-binding (kbd "C-c C-c")) #'teams4e-compose-send)))))
+
+(ert-deftest teams4e-compose-new-destination-cancel-does-not-attach-or-send ()
+  (teams4e-test-with-unsaved-orphan
+    (cl-letf (((symbol-function 'teams4e--select-chat)
+               (lambda (callback) (funcall callback '((id . "chosen-chat")))))
+              ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil)))
+      (should-error (teams4e-compose-repair) :type 'user-error))
+    (should-not teams4e-compose--target)
+    (should-not teams4e-compose-edit-mode)
+    (should (equal (buffer-string) "Keep this unsaved *text*"))
+    (should-not (directory-files teams4e-draft-directory nil "\\.json\\'"))))
+
+(ert-deftest teams4e-compose-new-destination-never-overwrites-another-saved-draft ()
+  (teams4e-test-with-unsaved-orphan
+    (let ((file (expand-file-name (concat (md5 "chosen-chat") ".json")
+                                 teams4e-draft-directory)))
+      (with-temp-file file (insert "Other draft must survive"))
+      (cl-letf (((symbol-function 'teams4e--select-chat)
+                 (lambda (callback) (funcall callback '((id . "chosen-chat")))))
+                ((symbol-function 'yes-or-no-p)
+                 (lambda (&rest _) (ert-fail "Existing draft must block recovery"))))
+        (should-error (teams4e-compose-repair) :type 'user-error))
+      (should (equal (with-temp-buffer (insert-file-contents file) (buffer-string))
+                     "Other draft must survive"))
+      (should-not teams4e-compose--target))))
+
+(ert-deftest teams4e-compose-new-destination-ignores-stale-selection ()
+  (teams4e-test-with-unsaved-orphan
+    (let (callback)
+      (cl-letf (((symbol-function 'teams4e--select-chat)
+                 (lambda (fn) (setq callback fn))))
+        (teams4e-compose-repair))
+      (should-not teams4e-compose-edit-mode)
+      (setq teams4e-compose--target '((id . "repaired-elsewhere")))
+      (should-error (funcall callback '((id . "chosen-chat"))) :type 'user-error)
+      (should (equal (teams4e--chat-id teams4e-compose--target) "repaired-elsewhere")))))
+
+(ert-deftest teams4e-compose-recover-refuses-file-buffers-and-lost-scheduled-drafts ()
+  (teams4e-test-with-unsaved-orphan
+    (setq buffer-file-name "/tmp/synthetic-note.org")
+    (should-error (teams4e-compose-recover) :type 'user-error)
+    (setq buffer-file-name nil)
+    (rename-buffer "*Teams scheduled: synthetic*")
+    (should-error (teams4e-compose-recover) :type 'user-error)
+    (should-not teams4e-compose--target)))
+
+(ert-deftest teams4e-compose-recovery-will-not-take-over-another-live-draft ()
+  (teams4e-test-with-orphan-draft
+    (let ((other (generate-new-buffer " *Other Teams draft*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer other
+              (setq teams4e-compose--target '((id . "synthetic-chat"))
+                    teams4e-compose--reply-to '((id . "parent-message"))))
+            (cl-letf (((symbol-function 'yes-or-no-p)
+                       (lambda (&rest _) (ert-fail "Another buffer owns this draft"))))
+              (should-error (teams4e-compose-repair) :type 'user-error))
+            (should-not teams4e-compose--target)
+            (should (equal (buffer-string) "Newer *unsent* body")))
+        (kill-buffer other)))))
+
+(ert-deftest teams4e-compose-new-recovery-rechecks-conflicts-after-confirmation ()
+  (teams4e-test-with-unsaved-orphan
+    (let ((file (expand-file-name (concat (md5 "chosen-chat") ".json")
+                                 teams4e-draft-directory)))
+      (cl-letf (((symbol-function 'teams4e--select-chat)
+                 (lambda (callback) (funcall callback '((id . "chosen-chat")))))
+                ((symbol-function 'yes-or-no-p)
+                 (lambda (&rest _) (with-temp-file file (insert "Concurrent draft")) t)))
+        (should-error (teams4e-compose-repair) :type 'user-error))
+      (should-not teams4e-compose--target)
+      (should (equal (buffer-string) "Keep this unsaved *text*"))
+      (should (equal (with-temp-buffer (insert-file-contents file) (buffer-string))
+                     "Concurrent draft")))))

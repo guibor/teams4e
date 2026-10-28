@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Offer explicit recovery when an orphaned compose buffer has no matching
+  autosave. Restore chosen saved metadata, or retain the text as a new message
+  to a user-selected and confirmed chat. Match existing drafts by stable hash
+  instead of mutable chat labels. Never send during recovery, overwrite another
+  draft, or silently drop a quoted reply/schedule. Add `teams4e-compose-recover`.
+
 - Preserve Teams draft identity, reply/attachment metadata, and outbox guards
   across authoring-mode reinitialization; restore send bindings and autosave
   hooks afterward. Fix the recurrence where Org reports that `C-c C-c` can do

@@ -317,12 +317,19 @@ still disables it; ordinary Org buffers are unaffected.
 
 If an **older version already lost the destination**, keep the draft open and
 run `M-x teams4e-compose-repair` after updating and loading the compose module.
-It can recover metadata from a uniquely matching saved draft, after you confirm
-the destination and reply. It keeps your current text, not the older saved body,
-and does not send. Attachments and mentions come from the last saved metadata.
-If no match exists, it refuses to guess; keep the text and restore it manually
-in a new draft for the correct conversation. Lost scheduled drafts are refused
-rather than being converted into immediate messages.
+It matches the stable draft hash even if the chat label changed, then asks you
+to confirm the destination and reply. It keeps your current text, not the older
+saved body, and does not send. Attachments and mentions come from saved metadata.
+If no match exists, it offers an explicit recovery choice; you can also run
+`M-x teams4e-compose-recover` directly if the buffer was renamed:
+
+- Select saved metadata, then confirm the destination and reply.
+- Choose **NEW message**, select a chat, and confirm. Your text stays intact,
+  but old reply, attachment, mention and scheduling metadata are **not** restored.
+- Cancel and leave the buffer untouched.
+
+Recovery refuses to overwrite another draft or turn a lost scheduled draft into
+an immediate message. Review the restored destination before `C-c C-c` sends.
 
 The reply buffer opens below the reader, keeping recent exchanges visible
 while you write. Recoverable drafts retain their source and editor choice.
