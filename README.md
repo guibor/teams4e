@@ -187,6 +187,8 @@ Update the installation Emacs actually loads:
 - **Manual:** `git -C ~/src/teams4e pull --ff-only`, with your checkout path.
 
 Restart Emacs so its Lisp and persistent backend use the same version.
+The persistent worker also detects changes to its installed Python modules on
+the next request, instead of silently continuing to run an older backend.
 `M-x find-library RET teams4e RET` identifies the loaded installation.
 Pulling an unrelated checkout does not update your installed package.
 
@@ -436,6 +438,13 @@ immediately when revisiting a chat, even before older history finishes loading.
 Moving or scrolling away from cached content prevents a later live response
 from pulling you to the end.
 
+Existing-cache reads no longer take a SQLite write lock, and every bounded
+first page is displayed before cache persistence, including single-page previews.
+Direct Graph GETs reuse verified HTTPS connections in the persistent backend;
+configured HTTP(S) proxies retain the previous proxy-aware transport. No new
+Python dependency is required. Sends and other mutations retain their existing
+transport and retry behavior.
+
 `teams4e-chat-load-more` (default `L`) loads more;
 `teams4e-chat-load-all` (default `G`) requests complete available history.
 Configure `teams4e-message-days` and `teams4e-message-limit` to change the
@@ -446,6 +455,8 @@ With no item limit, fetching remains unbounded; keep an item limit for fast open
 
 `M-x teams4e-performance-report` separates backend round-trip time from
 transcript rendering and records time to the first live page when available.
+Persistent responses additionally break out worker queueing, authentication,
+Graph throttling waits, HTTP time/request count, and chat cache-write time.
 It contains timings and counts, not message contents. Update both Lisp and
 the backend to get progressive loading; older/custom backends continue to
 work with their usual single final response.

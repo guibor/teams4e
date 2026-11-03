@@ -450,3 +450,40 @@ last-message marker. It is local and undoable. When the marker changes, the
 handled state expires, so no duplicate folder or server-side representation is
 required. The function remains available to callers, but the main keymaps bind
 lowercase `r` to mark-read.
+
+## Thread Latency
+
+The first live page is the useful result, not completion of local persistence.
+Bounded reads emit that page even when it is the only page. The final response
+still reports completion/failure, and unchanged content avoids a second render.
+Opening a current-schema SQLite cache performs no writes: WAL readers must not
+wait for another operation's writer merely to update schema metadata.
+
+The persistent worker uses a worker-local `http.client.HTTPSConnection` for
+direct Graph GETs. Python's previous `urllib.request` path sends
+`Connection: close` ([Python documentation](https://docs.python.org/3/library/urllib.request.html));
+the terminal client's shared Go HTTP client reuses connections. Requests retain
+certificate and hostname verification, response bodies are consumed completely,
+and stale connections return to the existing paced retry loop. Proxies use the
+original urllib path; mutations do not enter the new transport. No token is
+stored as a connection default, and direct reads never follow redirects.
+
+Offline regression evidence:
+
+- A held SQLite write transaction previously blocked an existing-cache reader
+  for the entire two-second fixture hold. The reader now completes while the
+  writer still holds its transaction.
+- Single-page messages are delivered before the cache is opened for persistence.
+- A loopback HTTP/1.1 fixture verifies reuse and recovery after server-requested
+  connection closure; separate tests cover TLS settings, proxy fallback, stale
+  sockets, worker isolation and mutation exclusion.
+- A synthetic 100-message rich transcript, rendered three times with the pinned
+  Agent Shell renderer, took 1.059 s before removing redundant SHR plain-text
+  rendering and 0.691 s afterward on the test host. These are local rendering
+  measurements, not work-tenant round-trip measurements.
+
+Persistent replies expose only numeric queue/auth/throttle/HTTP/cache timings.
+Emacs whitelists those fields in the performance report. This distinguishes
+network latency from cache contention and rendering without collecting message
+content, identities or credentials. Installed module timestamps/sizes enter the
+worker fingerprint so an in-place backend update cannot leave old code running.

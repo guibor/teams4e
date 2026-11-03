@@ -57,7 +57,8 @@ class TeamsCache:
     self.connection = sqlite3.connect(self.path)
     self.connection.row_factory = sqlite3.Row
     self.connection.execute("PRAGMA busy_timeout=5000")
-    self.connection.execute("PRAGMA journal_mode=WAL")
+    if self.connection.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+      self.connection.execute("PRAGMA journal_mode=WAL")
     self.connection.execute("PRAGMA foreign_keys=ON")
     self._create_schema()
     try:
@@ -75,6 +76,13 @@ class TeamsCache:
     self.close()
 
   def _create_schema(self) -> None:
+    # Existing-cache reads must remain reads. Rewriting schema_version on every
+    # connection made even a local preview wait behind unrelated cache writers.
+    metadata = self.connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'metadata'"
+    ).fetchone()
+    if metadata and self.get_meta("schema_version") == SCHEMA_VERSION:
+      return
     self.connection.executescript(
         """
         CREATE TABLE IF NOT EXISTS metadata (

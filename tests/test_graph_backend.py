@@ -351,7 +351,7 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual([newest], progress)
     self.assertEqual(2, calls.call_count)
 
-  def test_first_page_only_for_bounded_requests_that_need_another_page(self) -> None:
+  def test_first_page_for_every_bounded_request_including_single_page(self) -> None:
     for limit in (None, 1, 50):
       with self.subTest(limit=limit):
         progress = []
@@ -361,7 +361,7 @@ class GraphBackendTests(unittest.TestCase):
         ]
         with mock.patch.object(backend, "graph_json", side_effect=pages):
           backend.list_messages("chat", "token", limit=limit, first_page=progress.append)
-        self.assertEqual([], progress)
+        self.assertEqual([] if limit is None else [pages[0]["value"][:limit]], progress)
 
   def test_progress_does_not_hide_pagination_failure(self) -> None:
     progress = []

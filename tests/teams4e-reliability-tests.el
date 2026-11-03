@@ -3,6 +3,45 @@
 (require 'ert)
 (require 'teams4e)
 
+(ert-deftest teams4e-backend-fingerprint-detects-in-place-module-updates ()
+  (let* ((directory (make-temp-file "teams4e-backend-version-" t))
+         (program (expand-file-name "teams4e-graph" directory))
+         (module (expand-file-name "teams4e_http.py" directory)))
+    (unwind-protect
+        (progn
+          (with-temp-file program (insert "fixture launcher"))
+          (with-temp-file module (insert "fixture version one"))
+          (let ((before (teams4e--current-server-fingerprint program)))
+            (should (equal before (teams4e--current-server-fingerprint program)))
+            (with-temp-file module (insert "fixture version two, updated"))
+            (should-not (equal before (teams4e--current-server-fingerprint program)))))
+      (delete-directory directory t))))
+
+(ert-deftest teams4e-backend-timings-accept-only-known-numeric-stages ()
+  (let ((teams4e--performance-events nil))
+    (teams4e--record-backend-timings
+     '("teams" "chat" "message" "list" "--chatId" "private-id")
+     '((httpMs . 123.0) (httpCalls . 2) (queueMs . 5) (authMs . "private-token")
+       (cacheMs . -1) (unexpected . "private-message")))
+    (should (= 2 (length teams4e--performance-events)))
+    (should-not (string-match-p "private" (prin1-to-string teams4e--performance-events)))
+    (should (= 2 (plist-get (car teams4e--performance-events) :items)))
+    (should (= 123.0 (plist-get (car teams4e--performance-events) :duration-ms)))))
+
+(ert-deftest teams4e-rich-reader-does-not-render-discarded-plain-text ()
+  (with-temp-buffer
+    (teams4e-chat-mode)
+    (cl-letf (((symbol-function 'teams4e--agent-shell-markdown-available-p) (lambda () t))
+              ((symbol-function 'teams4e--html-to-text)
+               (lambda (&rest _) (ert-fail "Rich rendering performed redundant SHR conversion")))
+              ((symbol-function 'teams4e--insert-rendered-markdown)
+               (lambda (text) (insert text "\n"))))
+      (let ((teams4e-display-images nil)
+            (inhibit-read-only t))
+        (teams4e--insert-message
+         '((id . "fixture") (body . ((content . "<p>Plain <b>and bold</b></p>")))))))
+    (should (string-match-p "Plain.*and bold" (buffer-string)))))
+
 (ert-deftest teams4e-cancel-notifies-backend-and-discards-callback ()
   (let* ((teams4e--server-pending (make-hash-table :test #'eql))
          (request (teams4e--make-request 12))

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Remove SQLite writes from existing-cache opening, so previews do not wait
+  behind unrelated writers. Deliver single-page live results before caching.
+- Reuse verified HTTPS connections for direct persistent Graph GETs, with
+  proxy fallback and unchanged mutation/retry behavior. Detect installed backend
+  module updates rather than keeping an older worker alive after a live update.
+- Avoid redundant plain-text rendering before rich Markdown rendering. Extend
+  the content-free performance report with queue, auth, throttle, HTTP and cache
+  timings to distinguish network delays from local work.
+
 - Cancel obsolete transcript pagination and retry waits on chat switches;
   keep local cache reads independent of occupied network workers. Retain first
   live pages for immediate revisits, guard generations across reader mode changes,

@@ -4357,7 +4357,7 @@
           (should (= 1 (length teams4e--messages)))
           (should-not teams4e--loaded-at)
           (should-not teams4e--loaded-all)
-          (should (string-match-p "loading older" header-line-format))
+          (should (string-match-p "finishing refresh" header-line-format))
           (funcall cached '(((id . "stale-cache"))))
           (should (equal (last messages 1) teams4e--messages))
           (pcase ending
@@ -4365,7 +4365,7 @@
              (funcall final messages)
              (should teams4e--loaded-at)
              (should (equal (teams4e--normalize-messages messages) teams4e--messages))
-             (should-not (string-match-p "loading older" header-line-format)))
+             (should-not (string-match-p "finishing refresh" header-line-format)))
             ('failure
              (funcall failure "server" "older page failed")
              (should (equal (last messages 1) teams4e--messages))

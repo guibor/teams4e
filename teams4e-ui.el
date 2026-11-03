@@ -661,8 +661,21 @@ when non-nil, receives the exit status and combined diagnostic text."
 (defun teams4e--current-server-fingerprint (program)
   "Return the non-secret configuration fingerprint for PROGRAM."
   (list (file-truename program)
+        ;; A staged executable keeps the same path across updates. Include its
+        ;; modules so live reload cannot silently keep running old Python code.
+        (mapcar
+         (lambda (file)
+           (let ((attrs (file-attributes file)))
+             (list file (file-attribute-modification-time attrs)
+                   (file-attribute-size attrs))))
+         (cons program
+               (directory-files (file-name-directory program) t
+                                "\\`teams4e_.*\\.py\\'")))
         (expand-file-name teams4e-credentials-file)
         teams4e-bootstrap-program
+        teams4e-token-command
+        teams4e-credential-server-name
+        teams4e-credential-server-url
         (expand-file-name teams4e-cache-file)
         teams4e-mock-mode
         (and teams4e-mock-mode
@@ -770,6 +783,8 @@ suffix beginning with its top-level ID field."
                 (error-callback (plist-get pending :error-callback))
                 (args (plist-get pending :args)))
             (unless (teams4e-request-cancelled request)
+              (unless (teams4e--get response 'progress)
+                (teams4e--record-backend-timings args (teams4e--get response 'timings)))
               (condition-case callback-error
                   (if (teams4e--get response 'ok)
                       (when callback
@@ -787,6 +802,18 @@ suffix beginning with its top-level ID field."
       (format "Invalid persistent backend JSON %s: %s"
               (teams4e--server-line-preview line)
               (error-message-string parse-error))))))
+
+(defun teams4e--record-backend-timings (args timings)
+  "Record only known numeric stage TIMINGS, never backend content or IDs."
+  (dolist (stage '((queueMs . "queue") (authMs . "auth")
+                   (throttleMs . "throttle") (httpMs . "HTTP") (cacheMs . "cache")))
+    (let ((value (teams4e--get timings (car stage)))
+          (calls (teams4e--get timings 'httpCalls)))
+      (when (and (numberp value) (>= value 0))
+        (teams4e--record-performance
+         (concat (teams4e--performance-operation args) " / " (cdr stage))
+         value :transport "backend"
+         :items (and (eq (car stage) 'httpMs) (integerp calls) calls))))))
 
 (defun teams4e--server-filter (server chunk)
   "Accumulate and dispatch newline-delimited responses from SERVER CHUNK."
@@ -825,7 +852,7 @@ suffix beginning with its top-level ID field."
     (unless (and (processp teams4e--server-process)
                  (process-live-p teams4e--server-process)
                  (equal fingerprint teams4e--server-fingerprint))
-      (teams4e--stop-server)
+      (teams4e--stop-server "Backend updated or reconfigured; retry interrupted reads")
       (let* ((process-environment (copy-sequence process-environment))
              (program-dir (file-name-directory program))
              (stderr (generate-new-buffer " *m365-server-errors*")))
@@ -3824,16 +3851,17 @@ Do not infer mentions from arbitrary names or @ characters."
 
 (defun teams4e--insert-message (message)
   "Insert one Teams MESSAGE into the current transcript."
-  (let ((start (point))
-        (sender (teams4e--message-sender message))
-        (created (teams4e--get message 'createdDateTime))
-        (body (teams4e--message-body message))
-        (images (teams4e--message-images message))
-        (reactions (teams4e--reaction-summary message))
-        (own (teams4e--message-own-p message))
-        (rich (and (not (teams4e--get message 'deletedDateTime))
-                   (not (teams4e--system-event-p message))
-                   (teams4e--agent-shell-markdown-available-p))))
+  (let* ((rich (and (not (teams4e--get message 'deletedDateTime))
+                    (not (teams4e--system-event-p message))
+                    (teams4e--agent-shell-markdown-available-p)))
+         (start (point))
+         (sender (teams4e--message-sender message))
+         (created (teams4e--get message 'createdDateTime))
+         (body (if rich (teams4e--message-markdown-body message t)
+                 (teams4e--message-body message)))
+         (images (teams4e--message-images message))
+         (reactions (teams4e--reaction-summary message))
+         (own (teams4e--message-own-p message)))
     (insert (propertize (if own "You" sender)
                         'face (if own
                                   'teams4e-own-sender
@@ -3848,8 +3876,7 @@ Do not infer mentions from arbitrary names or @ characters."
     (let ((body-start (point)))
       (cond
        ((and rich (not (string-empty-p body)))
-        (teams4e--insert-rendered-markdown
-         (teams4e--message-markdown-body message t)))
+        (teams4e--insert-rendered-markdown body))
        ((not (string-empty-p body))
         (teams4e--insert-indented-message-body
          body (and (teams4e--system-event-p message) 'teams4e-event)))
@@ -4789,7 +4816,7 @@ date window while retaining that bound, which supports incremental loading."
                       (teams4e--remember-chat cache-key)
                       (teams4e--update-chat-transcript)
                       (setq header-line-format
-                            (format "%s - %d live messages; loading older messages..."
+                            (format "%s - %d live messages; finishing refresh..."
                                     (teams4e--chat-label chat)
                                     (length (teams4e--payload-list payload))))
                       (teams4e--record-performance

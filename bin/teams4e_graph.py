@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from collections import deque
 from collections.abc import Callable, Iterator
@@ -28,6 +28,7 @@ from typing import Any
 
 from teams4e_cache import TeamsCache
 from teams4e_calendar import calendar_draft_payload
+from teams4e_http import GraphReadTransport
 from teams4e_mock import MockTenant, mock_enabled
 from teams4e_outbox import Outbox, RetryLater, Rejected, schedule_time
 
@@ -45,6 +46,9 @@ TOKEN_REFRESH_LOCK = threading.Lock()
 TOKEN_COMMAND_CACHE: tuple[str, int] | None = None
 OUTBOX_SEND = ContextVar("outbox_send", default=False)
 READ_CANCEL = ContextVar("read_cancel", default=None)
+REQUEST_TIMINGS = ContextVar("request_timings", default=None)
+KEEP_ALIVE = ContextVar("keep_alive", default=False)
+GRAPH_READ_TRANSPORT = GraphReadTransport(GRAPH_HOST)
 MEETING_EVENT_SELECT = (
     "id,subject,start,end,isAllDay,isCancelled,showAs,responseStatus,"
     "location,locations,organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink,"
@@ -83,6 +87,17 @@ def read_wait(seconds: float) -> None:
     time.sleep(seconds)
   elif event.wait(seconds):
     raise ReadCancelled()
+
+
+@contextmanager
+def timed_stage(name: str):
+  """Record content-free milliseconds for one stage of a persistent request."""
+  started = time.monotonic()
+  try:
+    yield
+  finally:
+    if (timings := REQUEST_TIMINGS.get()) is not None:
+      timings[name] = timings.get(name, 0.0) + (time.monotonic() - started) * 1000
 
 
 class GraphRequestBudget:
@@ -535,10 +550,17 @@ def graph_json(
       guard = OUTLOOK_REQUEST_LOCK if outlook_envelope(url, payload) else nullcontext()
       with guard:
         # Reserve at dispatch, not before waiting for another mailbox worker.
-        GRAPH_REQUEST_BUDGET.acquire(max(1, cost))
+        with timed_stage("throttleMs"):
+          GRAPH_REQUEST_BUDGET.acquire(max(1, cost))
         check_read_cancelled()
-        with urllib.request.urlopen(request, timeout=60) as response:
-          response_body = response.read().decode("utf-8")
+        with timed_stage("httpMs"):
+          opener = (GRAPH_READ_TRANSPORT.open
+                    if KEEP_ALIVE.get() and method == "GET"
+                    else urllib.request.urlopen)
+          if (timings := REQUEST_TIMINGS.get()) is not None:
+            timings["httpCalls"] = timings.get("httpCalls", 0) + 1
+          with opener(request, timeout=60) as response:
+            response_body = response.read().decode("utf-8")
       break
     except urllib.error.HTTPError as exception:
       detail = exception.read().decode("utf-8", errors="replace")
@@ -874,8 +896,9 @@ def graph_collection_with_metadata(
     items.extend(item for item in values if isinstance(item, dict))
     candidate = page.get("@odata.nextLink")
     next_url = candidate if isinstance(candidate, str) and candidate else None
-    if first_page and page_count == 1 and next_url and limit and len(items) < limit:
-      first_page(list(items))
+    if first_page and page_count == 1 and limit:
+      # A one-page preview must also be visible before SQLite persistence.
+      first_page(list(items[:limit]))
   selected = items if limit is None else items[:limit]
   complete = next_url is None and len(selected) == len(items)
   return selected, page_count, complete
@@ -3695,8 +3718,9 @@ def execute(
       )
     return "The shared Microsoft Graph credential is ready.", "text"
 
-  with TOKEN_REFRESH_LOCK:
-    access_token = ensure_graph_token(path)
+  with timed_stage("authMs"):
+    with TOKEN_REFRESH_LOCK:
+      access_token = ensure_graph_token(path)
   result: Any
   if args[:3] == ["teams", "chat", "list"]:
     result = list_chats(
@@ -3846,8 +3870,9 @@ def execute(
         message_limit,
         first_page=progress,
     )
-    with TeamsCache() as cache:
-      cache.upsert_messages("chat", chat_id, result)
+    with timed_stage("cacheMs"):
+      with TeamsCache() as cache:
+        cache.upsert_messages("chat", chat_id, result)
   elif args[:3] == ["teams", "chat", "get"]:
     chat_id = option(args, "--chatId", required=False)
     if chat_id:
@@ -4056,7 +4081,8 @@ def serve() -> int:
       emit_json(payload)
       sys.stdout.flush()
 
-  def handle(request: dict[str, Any], cancel: threading.Event | None) -> None:
+  def handle(request: dict[str, Any], cancel: threading.Event | None,
+             queued_at: float) -> None:
     request_id = request.get("id")
     args = request.get("args")
     if not isinstance(request_id, int) or not (
@@ -4065,6 +4091,9 @@ def serve() -> int:
       respond({"id": request_id, "ok": False, "error": "Invalid request"})
       return
     context = READ_CANCEL.set(cancel)
+    timings = {"queueMs": (time.monotonic() - queued_at) * 1000}
+    timing_context = REQUEST_TIMINGS.set(timings)
+    transport_context = KEEP_ALIVE.set(True)
     try:
       check_read_cancelled()
       if request.get("progress") is True:
@@ -4077,11 +4106,11 @@ def serve() -> int:
       else:
         result, _output = execute(args)
       check_read_cancelled()
-      respond({"id": request_id, "ok": True, "result": result})
+      respond({"id": request_id, "ok": True, "result": result, "timings": timings})
     except ReadCancelled:
       pass  # The client already discarded this read; mutations never enter here.
     except BackendError as exception:
-      respond({"id": request_id, "ok": False, "error": str(exception)})
+      respond({"id": request_id, "ok": False, "error": str(exception), "timings": timings})
     except Exception as exception:  # pragma: no cover - defensive process guard
       respond({
           "id": request_id,
@@ -4089,6 +4118,8 @@ def serve() -> int:
           "error": f"Unexpected backend failure: {exception}",
       })
     finally:
+      KEEP_ALIVE.reset(transport_context)
+      REQUEST_TIMINGS.reset(timing_context)
       READ_CANCEL.reset(context)
       with pending_lock:
         if pending.get(request_id) is cancel:
@@ -4128,7 +4159,7 @@ def serve() -> int:
       pool = (cache_workers
               if isinstance(args, list) and args[:2] == ["teams", "cache"]
               else workers)
-      pool.submit(handle, request, cancel)
+      pool.submit(handle, request, cancel, time.monotonic())
   finally:
     workers.shutdown(wait=True)
     cache_workers.shutdown(wait=True)
