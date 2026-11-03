@@ -44,6 +44,7 @@ GRAPH_JSON_BATCH_LIMIT = 20
 TOKEN_REFRESH_LOCK = threading.Lock()
 TOKEN_COMMAND_CACHE: tuple[str, int] | None = None
 OUTBOX_SEND = ContextVar("outbox_send", default=False)
+READ_CANCEL = ContextVar("read_cancel", default=None)
 MEETING_EVENT_SELECT = (
     "id,subject,start,end,isAllDay,isCancelled,showAs,responseStatus,"
     "location,locations,organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink,"
@@ -65,6 +66,25 @@ class BackendError(RuntimeError):
   """A user-facing backend failure."""
 
 
+class ReadCancelled(Exception):
+  """An obsolete, read-only request was cancelled by the client."""
+
+
+def check_read_cancelled() -> None:
+  event = READ_CANCEL.get()
+  if event is not None and event.is_set():
+    raise ReadCancelled()
+
+
+def read_wait(seconds: float) -> None:
+  """Allow cancelled reads to leave throttling/retry waits promptly."""
+  event = READ_CANCEL.get()
+  if event is None:
+    time.sleep(seconds)
+  elif event.wait(seconds):
+    raise ReadCancelled()
+
+
 class GraphRequestBudget:
   """Shared rolling-window budget and server-directed cooldown for one process."""
 
@@ -72,7 +92,7 @@ class GraphRequestBudget:
     self.limit = limit
     self.window = window
     self.clock = clock or time.monotonic
-    self.sleep = sleep or time.sleep
+    self.sleep = sleep or read_wait
     self.lock = threading.Lock()
     self.requests = deque()
     self.blocked_until = 0.0
@@ -81,6 +101,7 @@ class GraphRequestBudget:
     if not 1 <= cost <= self.limit:
       raise ValueError("Graph request cost exceeds the budget")
     while True:
+      check_read_cancelled()
       with self.lock:
         now = self.clock()
         while self.requests and self.requests[0] <= now - self.window:
@@ -507,6 +528,7 @@ def graph_json(
     headers["Content-Type"] = "application/json"
   response_body = ""
   for attempt in range(GRAPH_RETRY_ATTEMPTS):
+    check_read_cancelled()
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     cost = len(payload["requests"]) if url == GRAPH_ROOT + "/$batch" and payload else 1
     try:
@@ -514,6 +536,7 @@ def graph_json(
       with guard:
         # Reserve at dispatch, not before waiting for another mailbox worker.
         GRAPH_REQUEST_BUDGET.acquire(max(1, cost))
+        check_read_cancelled()
         with urllib.request.urlopen(request, timeout=60) as response:
           response_body = response.read().decode("utf-8")
       break
@@ -533,7 +556,7 @@ def graph_json(
         raise BackendError("Scheduled send outcome unknown") from exception
       if retryable and attempt + 1 < GRAPH_RETRY_ATTEMPTS:
         if exception.code != 429:
-          time.sleep(delay)
+          read_wait(delay)
         continue
       try:
         error_payload = json.loads(detail)
@@ -551,7 +574,7 @@ def graph_json(
       ) from exception
     except (OSError, urllib.error.URLError) as exception:
       if attempt + 1 < GRAPH_RETRY_ATTEMPTS:
-        time.sleep(float(2**attempt))
+        read_wait(float(2**attempt))
         continue
       raise BackendError(
           f"Microsoft Graph request failed after {GRAPH_RETRY_ATTEMPTS} attempts: "
@@ -834,6 +857,7 @@ def graph_collection_with_metadata(
   seen_urls: set[str] = set()
   page_count = 0
   while next_url and (limit is None or len(items) < limit):
+    check_read_cancelled()
     if next_url in seen_urls:
       raise BackendError("Microsoft Graph pagination repeated a page URL")
     seen_urls.add(next_url)
@@ -843,6 +867,7 @@ def graph_collection_with_metadata(
         request_headers=request_headers,
     )
     page_count += 1
+    check_read_cancelled()
     values = page.get("value", [])
     if not isinstance(values, list):
       raise BackendError("Microsoft Graph collection has no value array")
@@ -4014,18 +4039,24 @@ def serve() -> int:
   Responses contain the same ID plus either ``result`` or a redacted error.
   Opt-in ``progress: true`` allows an intermediate chat-page response with
   that flag; the final response omits it and retains normal command semantics.
+  ``cancel: id`` stops obsolete transcript reads between HTTP calls and during
+  retry waits. It never cancels mutations or claims to interrupt in-flight HTTP.
   The protocol is transport-only: command semantics and cache ownership remain
   in :func:`execute`.
   """
   write_lock = threading.Lock()
   workers = ThreadPoolExecutor(max_workers=8)
+  # Local cache reads must not queue behind slow HTTP calls or throttled history.
+  cache_workers = ThreadPoolExecutor(max_workers=1)
+  pending_lock = threading.Lock()
+  pending: dict[int, threading.Event] = {}
 
   def respond(payload: dict[str, Any]) -> None:
     with write_lock:
       emit_json(payload)
       sys.stdout.flush()
 
-  def handle(request: dict[str, Any]) -> None:
+  def handle(request: dict[str, Any], cancel: threading.Event | None) -> None:
     request_id = request.get("id")
     args = request.get("args")
     if not isinstance(request_id, int) or not (
@@ -4033,7 +4064,9 @@ def serve() -> int:
     ):
       respond({"id": request_id, "ok": False, "error": "Invalid request"})
       return
+    context = READ_CANCEL.set(cancel)
     try:
+      check_read_cancelled()
       if request.get("progress") is True:
         result, _output = execute(
             args,
@@ -4043,7 +4076,10 @@ def serve() -> int:
         )
       else:
         result, _output = execute(args)
+      check_read_cancelled()
       respond({"id": request_id, "ok": True, "result": result})
+    except ReadCancelled:
+      pass  # The client already discarded this read; mutations never enter here.
     except BackendError as exception:
       respond({"id": request_id, "ok": False, "error": str(exception)})
     except Exception as exception:  # pragma: no cover - defensive process guard
@@ -4052,6 +4088,11 @@ def serve() -> int:
           "ok": False,
           "error": f"Unexpected backend failure: {exception}",
       })
+    finally:
+      READ_CANCEL.reset(context)
+      with pending_lock:
+        if pending.get(request_id) is cancel:
+          pending.pop(request_id, None)
 
   try:
     for line in sys.stdin:
@@ -4065,9 +4106,32 @@ def serve() -> int:
       if not isinstance(request, dict):
         respond({"id": None, "ok": False, "error": "Invalid request"})
         continue
-      workers.submit(handle, request)
+      if isinstance(request.get("cancel"), int):
+        with pending_lock:
+          event = pending.get(request["cancel"])
+          if event is not None:
+            event.set()
+        continue
+      args = request.get("args")
+      request_id = request.get("id")
+      # Only transcript reads are cancellable. Never abort sends, read-state
+      # changes, exports, or any other side-effecting command.
+      cancellable = (
+          isinstance(args, list) and all(isinstance(arg, str) for arg in args)
+          and (args[:4] == ["teams", "chat", "message", "list"]
+               or args[:5] == ["teams", "cache", "chat", "message", "list"])
+      )
+      cancel = threading.Event() if cancellable and isinstance(request_id, int) else None
+      if cancel is not None:
+        with pending_lock:
+          pending[request_id] = cancel
+      pool = (cache_workers
+              if isinstance(args, list) and args[:2] == ["teams", "cache"]
+              else workers)
+      pool.submit(handle, request, cancel)
   finally:
     workers.shutdown(wait=True)
+    cache_workers.shutdown(wait=True)
   return 0
 
 

@@ -428,10 +428,21 @@ live data. Unchanged live responses do not rebuild the transcript, preserving
 selection and loaded images. A failed refresh is shown in the header, never
 silently treated as fresh data.
 
+Switching away cancels obsolete transcript pagination and retry waits in the
+bundled backend. An HTTP request already in flight may finish, but its result
+cannot replace the selected chat. Local cache reads have their own worker, so
+they do not queue behind slow network requests. The first live page is reusable
+immediately when revisiting a chat, even before older history finishes loading.
+Moving or scrolling away from cached content prevents a later live response
+from pulling you to the end.
+
 `teams4e-chat-load-more` (default `L`) loads more;
 `teams4e-chat-load-all` (default `G`) requests complete available history.
 Configure `teams4e-message-days` and `teams4e-message-limit` to change the
 initial bounds; `nil` removes the respective bound.
+The optional day cutoff is applied to creation dates after fetching newest-first,
+so reactions or edits to old messages cannot displace the latest exchange.
+With no item limit, fetching remains unbounded; keep an item limit for fast opens.
 
 `M-x teams4e-performance-report` separates backend round-trip time from
 transcript rendering and records time to the first live page when available.
@@ -635,6 +646,11 @@ See [query syntax](USAGE.md#views-that-compose) for combinations and predicates.
 its query; invoke it again to remove that restriction. Active snoozes stay
 hidden from ordinary views, including All; the Snoozed bookmark exposes them.
 Snooze is local and does not change Teams read state.
+Expiry automatically redraws the inbox without switching the reader. Overdue
+snoozes are processed when local state loads after a restart. A conversation
+returns only to views whose filters it still matches: a read chat does not
+become unread merely because its snooze ended.
+Known snoozed rows are retained across bounded recents refreshes until expiry.
 
 ### Changing Bindings
 

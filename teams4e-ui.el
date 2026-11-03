@@ -151,6 +151,8 @@
 (defvar teams4e--muted (make-hash-table :test #'equal))
 (defvar teams4e--handled (make-hash-table :test #'equal))
 (defvar teams4e--snoozed (make-hash-table :test #'equal))
+(defvar teams4e--snooze-timer nil
+  "Single timer for the next persisted snooze expiry.")
 (defvar teams4e--saved-views (make-hash-table :test #'equal))
 (defvar teams4e--captured-chat-table (make-hash-table :test #'equal)
   "Ephemeral chat-ID snapshot derived from the configured Org capture file.")
@@ -213,6 +215,8 @@
 (defvar-local teams4e--loaded-update nil)
 (defvar-local teams4e--loaded-all nil)
 (defvar-local teams4e--initial-messages-shown nil)
+(defvar-local teams4e--cached-reader-view nil
+  "Reader position after cached content, until the first live response.")
 (defvar-local teams4e--chat-render-state nil)
 (defvar teams4e--recent-chat-cache nil
   "Bounded, disposable raw-message snapshots; live responses remain authoritative.")
@@ -220,6 +224,9 @@
   "Dynamically bound optional callback for partial persistent responses.")
 (defvar-local teams4e--message-order nil)
 (defvar-local teams4e--request-id 0)
+;; The singleton reader changes major mode between chats and channel threads.
+;; Reusing a generation after that change could accept an old cache callback.
+(put 'teams4e--request-id 'permanent-local t)
 (defvar-local teams4e--preview-timer nil)
 (defvar-local teams4e--inbox-source-label nil)
 (defvar-local teams4e--automatic-preview-p nil)
@@ -229,6 +236,7 @@
 (defvar-local teams4e--recent-redraw-timer nil)
 (defvar-local teams4e--meeting-process nil)
 (defvar-local teams4e--meeting-request-id 0)
+(put 'teams4e--meeting-request-id 'permanent-local t)
 (defvar-local teams4e--image-processes nil)
 (defvar-local teams4e--image-queue nil)
 (defvar-local teams4e--image-active 0)
@@ -545,6 +553,14 @@ stored or shown."
     (delete-process process))
    ((teams4e-request-p process)
     (setf (teams4e-request-cancelled process) t)
+    (when-let* ((pending (gethash (teams4e-request-id process)
+                                 teams4e--server-pending))
+                (server (plist-get pending :server)))
+      (when (and (processp server) (process-live-p server))
+        (ignore-errors
+          (process-send-string
+           server (concat (json-serialize
+                           `((cancel . ,(teams4e-request-id process)))) "\n")))))
     (remhash (teams4e-request-id process) teams4e--server-pending))))
 
 (defun teams4e--request-live-p (request)
@@ -1220,7 +1236,48 @@ writing temporary files."
                            query teams4e--saved-views)))))
         (error
          (message "Ignoring invalid Teams state file: %s"
-                  (error-message-string error-data)))))))
+                  (error-message-string error-data)))))
+    (teams4e--schedule-snooze-wake)))
+
+(defun teams4e--schedule-snooze-wake ()
+  "Arm one wall-clock timer, including overdue snoozes after a restart."
+  (when (timerp teams4e--snooze-timer)
+    (cancel-timer teams4e--snooze-timer))
+  (setq teams4e--snooze-timer nil)
+  (let (earliest)
+    (maphash
+     (lambda (_id until)
+       (when-let ((time (ignore-errors (date-to-time until))))
+         (when (or (not earliest) (time-less-p time earliest))
+           (setq earliest time))))
+     teams4e--snoozed)
+    (when earliest
+      (setq teams4e--snooze-timer
+            (run-at-time (max 0.01 (float-time (time-subtract earliest nil))) nil
+                         #'teams4e--wake-snoozes
+                         teams4e--snoozed teams4e-state-file)))))
+
+(defun teams4e--wake-snoozes (state file)
+  "Expire due snoozes in STATE from FILE, without moving the reader."
+  (when (and (eq state teams4e--snoozed) (equal file teams4e-state-file))
+    (setq teams4e--snooze-timer nil)
+    (let (expired)
+      (maphash
+       (lambda (id until)
+         (when-let ((time (ignore-errors (date-to-time until))))
+           (unless (time-less-p (current-time) time) (push id expired))))
+       state)
+      (dolist (id expired) (remhash id state))
+      (if (not expired)
+          (teams4e--schedule-snooze-wake)
+        (unwind-protect
+            (teams4e--save-state)
+          (unless (timerp teams4e--snooze-timer)
+            (teams4e--schedule-snooze-wake))
+          (let ((teams4e--inhibit-reader-follow t))
+            (teams4e--refresh-visible-recent)))
+        (message "Teams: %d snooze%s expired; conversations are visible in matching views"
+                 (length expired) (if (= 1 (length expired)) "" "s"))))))
 
 (defun teams4e--save-state ()
   "Persist local Teams UI state atomically with private permissions."
@@ -1270,7 +1327,8 @@ writing temporary files."
                   (insert "\n")))
               (set-file-modes temporary #o600)
               (rename-file temporary file t))
-          (when (file-exists-p temporary) (delete-file temporary)))))))
+          (when (file-exists-p temporary) (delete-file temporary))))))
+  (teams4e--schedule-snooze-wake))
 
 (defun teams4e--favorite-p (chat)
   "Return non-nil when CHAT is a local favorite."
@@ -1941,7 +1999,16 @@ normal online/offline command, principally for cache-first inbox opening."
   (teams4e--run-json
    (or args (teams4e--chat-list-args))
    (lambda (payload)
-     (setq teams4e--chats (teams4e--normalize-chats payload))
+     (let* ((chats (teams4e--normalize-chats payload))
+            (ids (mapcar #'teams4e--chat-id chats)))
+       ;; A bounded recents response must not evict a sleeping conversation.
+       ;; Reuse canonical cached rows rather than maintaining another inbox.
+       (teams4e--load-state)
+       (dolist (chat teams4e--chats)
+         (when (and (gethash (teams4e--chat-id chat) teams4e--snoozed)
+                    (not (member (teams4e--chat-id chat) ids)))
+           (push chat chats)))
+       (setq teams4e--chats (sort chats #'teams4e--chat-updated-p)))
      (funcall callback teams4e--chats))
    error-callback))
 
@@ -3081,12 +3148,12 @@ STATE is the symbol `read' or `unread'.  QUIET suppresses success messages."
   (teams4e--set-read-state 'unread))
 
 (defun teams4e--message-args
-    (chat &optional all request-limit ignore-date)
+    (chat &optional all request-limit _ignore-date)
   "Return Graph-backend arguments to load CHAT messages.
 
-ALL non-nil suppresses the date and item bounds.  REQUEST-LIMIT overrides the
-normal on-screen limit, primarily for automatic previews.  IGNORE-DATE keeps
-the item bound while allowing older pages to be loaded."
+ALL non-nil suppresses the item bound.  REQUEST-LIMIT overrides the normal
+on-screen limit, primarily for automatic previews.  The date window is applied
+locally so live requests always fetch the newest-created messages first."
   (let ((limit (and (not all)
                     (or request-limit teams4e-message-limit))))
     (if teams4e-offline-mode
@@ -3098,13 +3165,22 @@ the item bound while allowing older pages to be loaded."
       (append
        (list "teams" "chat" "message" "list"
              "--chatId" (teams4e--chat-id chat))
-       (when limit (list "--limit" (number-to-string limit)))
-       (unless (or all ignore-date (not teams4e-message-days))
-         (list "--modifiedStartDateTime"
-               (format-time-string
-                "%Y-%m-%dT%H:%M:%SZ"
-                (time-subtract nil (days-to-time teams4e-message-days))
-                t)))))))
+       (when limit (list "--limit" (number-to-string limit)))))))
+
+(defun teams4e--chat-window-messages (payload &optional all ignore-date)
+  "Normalize PAYLOAD and apply the reader's creation-date window.
+Modification-order queries can fill a bounded result with edited old messages,
+omitting the newest exchange.  Filter creation dates after the newest page."
+  (let ((messages (teams4e--normalize-messages (teams4e--payload-list payload))))
+    (if (or all ignore-date (not teams4e-message-days))
+        messages
+      (let ((cutoff (time-subtract nil (days-to-time teams4e-message-days))))
+        (seq-filter
+         (lambda (message)
+           (let ((time (teams4e--parse-message-time
+                        (or (teams4e--get message 'createdDateTime) ""))))
+             (or (not time) (not (time-less-p time cutoff)))))
+         messages)))))
 
 (defun teams4e--reaction-summary (message)
   "Return a compact reaction summary for MESSAGE."
@@ -4511,6 +4587,13 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
                    (assoc-delete-all key teams4e--recent-chat-cache))
              teams4e-recent-chat-cache-size)))))
 
+(defun teams4e--prepare-first-live-render ()
+  "Follow cached content to the live end only if the user has not moved."
+  (when teams4e--cached-reader-view
+    (when (equal teams4e--cached-reader-view (teams4e--reader-view-state))
+      (setq teams4e--jump-to-bottom-on-render t))
+    (setq teams4e--cached-reader-view nil)))
+
 (defun teams4e-open-chat (chat &optional preview all message-id)
   "Open native transcript buffer for CHAT.
 
@@ -4551,6 +4634,7 @@ complete history, and MESSAGE-ID is selected after that history renders."
                 teams4e--loaded-update nil
                 teams4e--loaded-all nil
                 teams4e--initial-messages-shown nil
+                teams4e--cached-reader-view nil
                 teams4e--chat-render-state nil
                 teams4e--meeting-context
                 (teams4e--get chat 'meetingContext))
@@ -4564,10 +4648,12 @@ complete history, and MESSAGE-ID is selected after that history renders."
                         (cdr (assoc (teams4e--recent-chat-key chat)
                                     teams4e--recent-chat-cache))))
               (setq teams4e--messages
-                    (last messages (or (and preview teams4e-preview-message-limit)
-                                       teams4e-message-limit 300))
+                    (teams4e--chat-window-messages
+                     (last messages (or (and preview teams4e-preview-message-limit)
+                                        teams4e-message-limit 300)))
                     teams4e--initial-messages-shown t)
-              (teams4e--render-chat))))
+              (teams4e--render-chat)
+              (setq teams4e--cached-reader-view (teams4e--reader-view-state)))))
         (unless (or reuse-preview same-request-running)
           (when (and same-chat (not preview) (not message-id)
                      teams4e--messages)
@@ -4582,6 +4668,9 @@ complete history, and MESSAGE-ID is selected after that history renders."
                          teams4e--meeting-process)))
           (teams4e--load-meeting-context chat))))
     (teams4e--display-chat-buffer buffer preview)
+    (with-current-buffer buffer
+      (when teams4e--cached-reader-view
+        (setq teams4e--cached-reader-view (teams4e--reader-view-state))))
     (teams4e--close-other-readers buffer)
     (when (and teams4e-mark-read-on-open
                (not teams4e-offline-mode))
@@ -4635,14 +4724,14 @@ complete history, and MESSAGE-ID is selected after that history renders."
                         (equal chat-id (teams4e--chat-id teams4e--chat))
                         (not teams4e--loaded-at)
                         (not teams4e--initial-messages-shown))
-               (let ((messages (teams4e--normalize-messages
-                                (teams4e--payload-list payload)))
+               (let ((messages (teams4e--chat-window-messages payload))
                      (status header-line-format))
                  (when messages
                    (setq teams4e--messages messages
                          teams4e--loaded-all nil)
                    (let ((teams4e-display-images nil))
                      (teams4e--render-chat))
+                   (setq teams4e--cached-reader-view (teams4e--reader-view-state))
                    (setq header-line-format
                          (if (and (stringp status)
                                   (string-match-p "failed" status))
@@ -4684,8 +4773,8 @@ date window while retaining that bound, which supports incremental loading."
                                (derived-mode-p 'teams4e-chat-mode)
                                (equal (teams4e--chat-id chat)
                                       (teams4e--chat-id teams4e--chat)))
-                      (let ((messages (teams4e--normalize-messages
-                                       (teams4e--payload-list payload))))
+                      (teams4e--prepare-first-live-render)
+                      (let ((messages (teams4e--chat-window-messages payload)))
                         ;; Do not discard already visible older messages just
                         ;; because their unchanged newest page arrived first.
                         (unless (equal messages
@@ -4697,6 +4786,7 @@ date window while retaining that bound, which supports incremental loading."
                                  (append messages teams4e--messages)))))
                       (setq teams4e--initial-messages-shown t
                             teams4e--loaded-all nil)
+                      (teams4e--remember-chat cache-key)
                       (teams4e--update-chat-transcript)
                       (setq header-line-format
                             (format "%s - %d live messages; loading older messages..."
@@ -4723,9 +4813,9 @@ date window while retaining that bound, which supports incremental loading."
                                 (and teams4e--chat
                                      (teams4e--chat-id
                                       teams4e--chat))))
+                (teams4e--prepare-first-live-render)
                 (let* ((messages
-                        (teams4e--normalize-messages
-                         (teams4e--payload-list payload)))
+                        (teams4e--chat-window-messages payload all ignore-date))
                        (limit (and (not all)
                                    (or request-limit
                                        teams4e-message-limit))))
@@ -6145,6 +6235,9 @@ message-history request is made."
 (defalias 'teams-copy-thread-markdown
   #'teams4e-copy-thread-markdown)
 (defalias 'teams-capture-message #'teams4e-capture-message)
+
+(when teams4e--state-loaded
+  (teams4e--schedule-snooze-wake))
 
 (provide 'teams4e-ui)
 

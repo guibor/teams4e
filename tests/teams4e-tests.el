@@ -721,8 +721,8 @@
   (let ((teams4e-message-days 30)
         (teams4e-message-limit 300)
         (chat '((id . "chat-1"))))
-    (should (member "--modifiedStartDateTime"
-                    (teams4e--message-args chat nil)))
+    (should-not (member "--modifiedStartDateTime"
+                        (teams4e--message-args chat nil)))
     (should (equal "300"
                    (cadr (member "--limit"
                                  (teams4e--message-args chat nil)))))

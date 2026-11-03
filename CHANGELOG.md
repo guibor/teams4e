@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Cancel obsolete transcript pagination and retry waits on chat switches;
+  keep local cache reads independent of occupied network workers. Retain first
+  live pages for immediate revisits, guard generations across reader mode changes,
+  and follow cached content to the live end only when the reader is untouched.
+- Keep reader requests newest-created-first even with a day cutoff; filter
+  dates locally instead of letting old edits consume the newest-message limit.
+- Wake expired snoozes with one timer, including after sleep/restart, and redraw
+  without changing the reader. Preserve read state and the active view's filters.
+
 - Offer explicit recovery when an orphaned compose buffer has no matching
   autosave. Restore chosen saved metadata, or retain the text as a new message
   to a user-selected and confirmed chat. Match existing drafts by stable hash

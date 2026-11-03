@@ -170,8 +170,11 @@ tomorrow morning, next week, a custom date/time, and unsnooze. Tomorrow and
 next week use `teams4e-workday-start` (07:00 by default); end of workday uses
 `teams4e-workday-end` (18:00 by default) and wakes the next morning when the
 workday has already ended. Snoozing is local, persistent, and does not change
-Teams read state. Expired snoozes return on the next view redraw or refresh;
-there is no separate alarm notification or cross-device snooze synchronization.
+Teams read state. A timer redraws the inbox when snoozes expire, without moving
+the open reader, and reports the number expired in the echo area. After sleep
+or restart, overdue snoozes are processed when Emacs resumes or loads local
+state. Chats return to matching views; a chat read elsewhere will not reappear
+in Unread. There is no operating-system alarm or cross-device snooze sync.
 
 | After `Z` | Wake time |
 | --- | --- |
