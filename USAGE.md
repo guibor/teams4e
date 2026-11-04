@@ -416,9 +416,31 @@ understanding and discuss next actions there. This does not enable monitoring,
 share companion reference files, or change any Teams read state. Use a provider
 approved for these conversations; this command deliberately shares their content.
 
+The progress header and global mode-line indicator show a live spinner, elapsed
+time, completed/total chats and unavailable histories. The current chat's name
+appears only in the progress header. Counts advance when a whole history finishes;
+the spinner indicates waiting, not a claim that network bytes are arriving.
+There is no guessed completion time. The one-second UI timer makes no API calls.
+
+Press `q` to hide progress and keep working. When collection finishes, the agent
+starts in the background with its prompt queued without taking focus, including
+when Agent Shell initialization is deferred. If you are still watching the
+progress buffer, the ready agent opens automatically. Otherwise a persistent
+clickable mode-line indicator and an echo-area message announce readiness.
+Desktop notifications are also attempted when supported and
+`teams4e-notifications` is non-nil; they contain counts, not chat names or text.
+Readiness means the context was handed off, not that the agent has finished its
+answer. Agent Shell shows its own response progress from there.
+
+Click the mode-line indicator or use `M-x teams4e-view-analysis-status` to open
+the running export or its ready agent without exporting again. `RET` in the
+progress buffer does the same. These commands do not start another agent.
+
 `C-c C-k` in `*Teams View Analysis*`, or
-`M-x teams4e-view-analysis-cancel`, stops collection. Closing that progress buffer
-also cancels. Already exported files are retained; an in-flight HTTP export may
+`M-x teams4e-view-analysis-cancel`, stops collection. Killing that progress buffer
+also cancels, but merely hiding it with `q` does not. Completion, errors,
+cancellation and buffer cleanup all stop the loader timer.
+Already exported files are retained; an in-flight HTTP export may
 finish but cannot start the agent or another export. Repeating `G` after finishing
 or cancellation creates a fresh snapshot and conversation. `a g` still analyzes
 just the current thread. The former reader `G` history action is available as

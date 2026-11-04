@@ -12,6 +12,9 @@
 (declare-function evil-define-key* "evil-core")
 (declare-function evil-normalize-keymaps "evil-core")
 (declare-function evil-set-initial-state "evil-core")
+(declare-function teams4e-view-analysis-status "teams4e-companion" ())
+(declare-function teams4e-view-analysis-cancel "teams4e-companion" ())
+(defvar teams4e-view-analysis-mode-map)
 
 (defun teams4e-evil-refresh-bookmark-bindings ()
   "Repair bookmark-prefix bindings after Evil or Evil Collection reloads."
@@ -39,6 +42,12 @@
 (add-hook 'teams4e-chat-mode-hook #'teams4e-evil-refresh-bookmark-bindings)
 
 (with-eval-after-load 'evil
+  (with-eval-after-load 'teams4e-companion
+    (evil-set-initial-state 'teams4e-view-analysis-mode 'motion)
+    (evil-define-key* '(normal motion) teams4e-view-analysis-mode-map
+      (kbd "q") #'quit-window
+      (kbd "RET") #'teams4e-view-analysis-status
+      (kbd "C-c C-k") #'teams4e-view-analysis-cancel))
   (dolist (map (list teams4e-recent-mode-map teams4e-chat-mode-map))
     (evil-define-key* '(normal motion) map (kbd "M-f") #'teams4e-find-chat))
   (dolist (map (list teams4e-chat-mode-map teams4e-channel-thread-mode-map))

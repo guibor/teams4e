@@ -619,7 +619,11 @@ See [Calendar setup, defaults, and boundaries](CALENDAR.md), including the
   source links and explicit coverage/failures. This is a one-shot snapshot,
   not automatic monitoring. Use `teams4e-thread-analysis-agent` to choose the
   agent and `teams4e-view-analysis-prompt` to customize its first prompt.
-  Cancel collection with `C-c C-k` in the progress buffer.
+  A live spinner, elapsed time and chat counts remain visible in progress and
+  the mode line. `q` hides progress while collection continues; `C-c C-k` cancels.
+  When ready, Agent Shell opens if you are still watching progress. Otherwise
+  it stays in the background and completion is announced without stealing focus.
+  Click the mode-line indicator or run `teams4e-view-analysis-status` to open it.
 - `teams4e-companion` opens a reusable discussion of
   open requests, commitments, and possible next actions. Monitoring starts
   when you invoke it; it is bounded, visible, and pausable.

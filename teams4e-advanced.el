@@ -23,6 +23,7 @@
                   (designator))
 (declare-function agent-shell-insert "agent-shell" (&rest arguments))
 (declare-function agent-shell-start "agent-shell" (&rest arguments))
+(declare-function agent-shell--start "agent-shell" (&rest arguments))
 (autoload 'teams4e-analyze-view "teams4e-companion"
   "Export the current filtered chat view and discuss it in Agent Shell." t)
 (declare-function org-read-date "org" (&optional inactive to-time from-string prompt
@@ -2268,17 +2269,30 @@ AFTER-EXPORT with its saved path when that callback is non-nil."
        identifier))
     config))
 
-(defun teams4e--start-thread-analysis (path config &optional prompt-template)
+(defun teams4e--start-thread-analysis (path config &optional prompt-template background)
   "Start Agent Shell with CONFIG and a prompt for PATH.
-Use PROMPT-TEMPLATE when supplied, otherwise `teams4e-thread-analysis-prompt'."
+Use PROMPT-TEMPLATE when supplied, otherwise `teams4e-thread-analysis-prompt'.
+BACKGROUND starts a fresh session without focusing it, even on deferred insert."
   (let* ((absolute-path (expand-file-name path))
          (default-directory
           (file-name-as-directory (file-name-directory absolute-path)))
          (prompt
           (format (or prompt-template teams4e-thread-analysis-prompt) absolute-path))
-         (shell-buffer (agent-shell-start :config config)))
+         (shell-buffer
+          (if background
+              (if (fboundp 'agent-shell--start)
+                  ;; The public starter always focuses; this is the package's
+                  ;; own no-focus path, including deferred session startup.
+                  (agent-shell--start :config config :no-focus t
+                                      :new-session t :session-strategy 'new)
+                (user-error "Update Agent Shell to support background startup"))
+            (agent-shell-start :config config))))
     ;; agent-shell queues this submission until its first ACP prompt is ready.
-    (agent-shell-insert :text prompt :submit t :shell-buffer shell-buffer)
+    (if background
+        (with-current-buffer shell-buffer
+          (agent-shell-insert :text prompt :submit t :no-focus t
+                              :shell-buffer shell-buffer))
+      (agent-shell-insert :text prompt :submit t :shell-buffer shell-buffer))
     (message "Started Teams analysis with %s"
              (map-elt config :identifier))
     shell-buffer))

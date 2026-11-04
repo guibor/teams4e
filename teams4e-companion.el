@@ -11,11 +11,111 @@
 (declare-function shell-maker-busy "shell-maker" ())
 (declare-function agent-shell-start "agent-shell" (&rest arguments))
 (declare-function agent-shell-insert "agent-shell" (&rest arguments))
+(declare-function notifications-notify "notifications" (&rest parameters))
 (defvar teams4e-view-analysis-prompt)
+(defvar teams4e-notifications)
 
 (defvar-local teams4e-view-analysis--token nil)
 (defvar-local teams4e-view-analysis--request nil)
+(defvar-local teams4e-view-analysis--progress nil)
+(defvar-local teams4e-view-analysis--timer nil)
 (defconst teams4e-view-analysis--buffer-name "*Teams View Analysis*")
+
+(defconst teams4e-view-analysis--mode-line-entry
+  '(:eval (teams4e-view-analysis--mode-line-text)))
+
+(defvar teams4e-view-analysis--mode-line-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mode-line mouse-1]
+                (lambda (_event) (interactive "e") (teams4e-view-analysis-status)))
+    map))
+
+(defun teams4e-view-analysis--status-text (&optional detailed)
+  "Describe this buffer's progress, with its chat name when DETAILED."
+  (let* ((state (plist-get teams4e-view-analysis--progress :state))
+         (done (or (plist-get teams4e-view-analysis--progress :done) 0))
+         (total (or (plist-get teams4e-view-analysis--progress :total) 0))
+         (failed (or (plist-get teams4e-view-analysis--progress :failed) 0))
+         (seconds (max 0 (truncate (- (or (plist-get teams4e-view-analysis--progress :finished)
+                                         (float-time))
+                                     (or (plist-get teams4e-view-analysis--progress :started)
+                                         (float-time))))))
+         (busy (memq state '(exporting starting)))
+         (label (pcase state
+                  ('exporting "Teams export") ('starting "Teams agent startup")
+                  ('ready "Teams context ready") ('failed "Teams export failed")
+                  (_ "Teams export cancelled"))))
+    (concat
+     (format "%s%s %d/%d  %d:%02d" label
+             (if busy (format " %s" (aref ["|" "/" "-" "\\"] (mod seconds 4))) "")
+             done total (/ seconds 60) (% seconds 60))
+     (if (> failed 0) (format " (%d unavailable)" failed) "")
+     (when (and detailed busy (plist-get teams4e-view-analysis--progress :chat))
+       (concat " - " (truncate-string-to-width
+                      (plist-get teams4e-view-analysis--progress :chat) 60 nil nil t))))))
+
+(defun teams4e-view-analysis--mode-line-text ()
+  "Render the single current export indicator without retaining chat data."
+  (when-let ((buffer (get-buffer teams4e-view-analysis--buffer-name)))
+    (with-current-buffer buffer
+      (when teams4e-view-analysis--progress
+        (propertize (concat " [" (teams4e-view-analysis--status-text) "]")
+                    'mouse-face 'mode-line-highlight
+                    'help-echo "mouse-1: Teams export progress / ready Agent Shell"
+                    'local-map teams4e-view-analysis--mode-line-map)))))
+
+(defun teams4e-view-analysis--dismiss-indicator ()
+  "Remove only the view-export entry from the global mode line."
+  (setq global-mode-string
+        (delete teams4e-view-analysis--mode-line-entry global-mode-string))
+  (force-mode-line-update t))
+
+(defun teams4e-view-analysis--stop-loader ()
+  "Stop this buffer's UI timer; it never polls Teams or the agent."
+  (when (timerp teams4e-view-analysis--timer)
+    (cancel-timer teams4e-view-analysis--timer))
+  (setq teams4e-view-analysis--timer nil))
+
+(defun teams4e-view-analysis--tick (buffer token)
+  "Animate BUFFER's loader only while TOKEN owns its active export."
+  (when (and (buffer-live-p buffer)
+             (eq token (buffer-local-value 'teams4e-view-analysis--token buffer)))
+    (with-current-buffer buffer
+      (setq header-line-format (teams4e-view-analysis--status-text t))
+      (force-mode-line-update t))))
+
+(defun teams4e-view-analysis--update (buffer &rest values)
+  "Update BUFFER's small UI progress plist with VALUES."
+  (with-current-buffer buffer
+    (while values
+      (setq teams4e-view-analysis--progress
+            (plist-put teams4e-view-analysis--progress (pop values) (pop values))))
+    (unless (memq (plist-get teams4e-view-analysis--progress :state) '(exporting starting))
+      (setq teams4e-view-analysis--progress
+            (plist-put teams4e-view-analysis--progress :finished (float-time)))
+      (teams4e-view-analysis--stop-loader))
+    (setq header-line-format (teams4e-view-analysis--status-text t))
+    (force-mode-line-update t)))
+
+(defun teams4e-view-analysis--notify (body)
+  "Announce completion with generic BODY, without names or message content."
+  (message "%s; M-x teams4e-view-analysis-status to open" body)
+  (when teams4e-notifications
+    (condition-case nil
+        (when (and (require 'notifications nil t) (fboundp 'notifications-notify))
+          (notifications-notify :title "Teams view analysis" :body body :app-name "Emacs"))
+      (error nil))))
+
+(defun teams4e-view-analysis-status ()
+  "Open current export progress, or its ready Agent Shell, without a new export."
+  (interactive)
+  (let ((buffer (or (get-buffer teams4e-view-analysis--buffer-name)
+                    (user-error "No Teams view export has been started"))))
+    (with-current-buffer buffer
+      (let ((shell (plist-get teams4e-view-analysis--progress :shell)))
+        (unless teams4e-view-analysis--token
+          (teams4e-view-analysis--dismiss-indicator))
+        (pop-to-buffer (if (buffer-live-p shell) shell buffer))))))
 
 (defun teams4e-view-analysis-cancel ()
   "Stop collecting a view snapshot; keep already exported private files.
@@ -28,16 +128,21 @@ schedule another export after cancellation."
         (setq teams4e-view-analysis--token nil
               header-line-format "Teams view export cancelled")
         (teams4e--cancel-process teams4e-view-analysis--request)
-        (setq teams4e-view-analysis--request nil)))))
+        (setq teams4e-view-analysis--request nil)
+        (teams4e-view-analysis--update buffer :state 'cancelled))
+      (teams4e-view-analysis--stop-loader)
+      (teams4e-view-analysis--dismiss-indicator))))
 
 (define-derived-mode teams4e-view-analysis-mode special-mode "Teams-Export"
   "Progress for a private, complete-history view export."
-  (add-hook 'kill-buffer-hook #'teams4e-view-analysis-cancel nil t))
+  (add-hook 'kill-buffer-hook #'teams4e-view-analysis-cancel nil t)
+  (add-hook 'change-major-mode-hook #'teams4e-view-analysis-cancel nil t))
 
 (define-key teams4e-view-analysis-mode-map (kbd "C-c C-k")
             #'teams4e-view-analysis-cancel)
 (define-key teams4e-view-analysis-mode-map (kbd "q")
-            (lambda () (interactive) (quit-window t)))
+            #'quit-window)
+(define-key teams4e-view-analysis-mode-map (kbd "RET") #'teams4e-view-analysis-status)
 
 (defun teams4e-view-analysis--append (buffer text)
   "Append TEXT to export progress BUFFER without moving its reader."
@@ -72,7 +177,7 @@ or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
     (when (memq nil chats)
       (user-error "Chat headers changed; refresh the view before exporting"))
     (when (buffer-local-value 'teams4e-view-analysis--token buffer)
-      (user-error "View export is running; cancel with M-x teams4e-view-analysis-cancel"))
+      (user-error "View export is running; M-x teams4e-view-analysis-status shows progress"))
     (let* ((config (teams4e--thread-analysis-agent-config))
            (prompt teams4e-view-analysis-prompt)
            (identity (teams4e-companion--current-identity))
@@ -91,6 +196,11 @@ or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
         (teams4e-view-analysis-mode)
         (let ((inhibit-read-only t)) (erase-buffer))
         (setq teams4e-view-analysis--token token)
+        (teams4e-view-analysis--update buffer :state 'exporting :done 0 :total total
+                                       :failed 0 :started (float-time))
+        (add-to-list 'global-mode-string teams4e-view-analysis--mode-line-entry t)
+        (setq teams4e-view-analysis--timer
+              (run-at-time 1 1 #'teams4e-view-analysis--tick buffer token))
         (teams4e-view-analysis--append
          buffer
          (concat "# Teams view snapshot\n\n"
@@ -114,7 +224,8 @@ or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
                            (equal identity (teams4e-companion--current-identity)))
                       t
                     (teams4e-view-analysis-cancel)
-                    (message "Teams view export stopped: account/provider or online mode changed")
+                    (teams4e-view-analysis--notify
+                     "Teams view export stopped: account/provider or online mode changed")
                     nil)))
            (failure (chat)
              (cl-incf failed)
@@ -122,7 +233,8 @@ or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
               buffer (format "- UNAVAILABLE: %s. History not included; see *M365 Errors*.\n"
                              (teams4e--chat-label chat))))
            (finish ()
-             (let ((index (expand-file-name "index.md" directory)))
+             (let ((index (expand-file-name "index.md" directory))
+                   (watching (eq (window-buffer (selected-window)) buffer)))
                (teams4e-view-analysis--append
                 buffer (format "\nCoverage: %d of %d complete histories; %d unavailable.\n"
                                (- completed failed) total failed))
@@ -130,18 +242,30 @@ or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
                  (let ((coding-system-for-write 'utf-8-unix))
                    (write-region (point-min) (point-max) index nil 'silent))
                  (set-file-modes index #o600)
-                 (setq teams4e-view-analysis--token nil
-                       teams4e-view-analysis--request nil
-                       header-line-format (format "Exported %d/%d chats; %d unavailable"
-                                                  (- completed failed) total failed)))
+                 (setq teams4e-view-analysis--request nil))
+               (teams4e-view-analysis--update buffer :state 'starting
+                                              :done completed :failed failed :chat nil)
                (if (= completed failed)
-                   (message "No complete histories exported; no agent started")
-                 (teams4e--start-thread-analysis index config prompt))))
+                   (progn
+                     (teams4e-view-analysis--update buffer :state 'failed)
+                     (teams4e-view-analysis--notify "No complete histories exported; no agent started"))
+                 (let ((shell (teams4e--start-thread-analysis index config prompt t)))
+                   (teams4e-view-analysis--update buffer :state 'ready :shell shell)
+                   (teams4e-view-analysis--notify
+                    (format "Teams context ready: %d histor%s; %d unavailable"
+                            (- completed failed)
+                            (if (= (- completed failed) 1) "y" "ies") failed))))
+               (with-current-buffer buffer (setq teams4e-view-analysis--token nil))
+               (when watching (teams4e-view-analysis-status))))
            (advance ()
              (condition-case err
                  (next)
                (error
                 (teams4e-view-analysis-cancel)
+                (when (buffer-live-p buffer)
+                  (teams4e-view-analysis--update buffer :state 'failed)
+                  (add-to-list 'global-mode-string teams4e-view-analysis--mode-line-entry t))
+                (teams4e-view-analysis--notify "Teams view export failed; exported files retained")
                 (message "Teams view export stopped: %s" (error-message-string err)))))
            (next ()
              (when (valid-p)
@@ -151,7 +275,9 @@ or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
                      (error
                       (teams4e-view-analysis-cancel)
                       (with-current-buffer buffer
-                        (setq header-line-format "View analysis handoff failed; exported files retained"))
+                        (teams4e-view-analysis--update buffer :state 'failed))
+                      (add-to-list 'global-mode-string teams4e-view-analysis--mode-line-entry t)
+                      (teams4e-view-analysis--notify "Teams agent handoff failed; exported files retained")
                       (message "Teams view analysis: %s" (error-message-string err))))
                  (let* ((chat (pop remaining))
                         (number (1+ completed))
@@ -159,10 +285,9 @@ or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
                         (args (teams4e--full-history-args chat))
                         (request
                          (progn
-                           (with-current-buffer buffer
-                             (setq header-line-format
-                                   (format "Exporting full history %d/%d: %s"
-                                           number total (teams4e--chat-label chat))))
+                           (teams4e-view-analysis--update
+                            buffer :state 'exporting :done completed :failed failed
+                            :chat (teams4e--chat-label chat))
                            (teams4e--run-json
                             args
                             (lambda (payload)

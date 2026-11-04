@@ -474,10 +474,27 @@ data and request discussion, not autonomous Teams/calendar mutations.
 One progress buffer holds the cancellation token and current request. Callbacks
 check that token, account identity and the current batch position before writing
 or advancing. Cancelling/killing the buffer or switching accounts blocks late
-callbacks and agent startup. No timer, polling loop or companion monitoring is
-enabled. Failed chats are labeled in the index; if all fail, no agent starts.
+callbacks and agent startup. No polling loop or companion monitoring is enabled.
+Failed chats are labeled in the index; if all fail, no agent starts.
 The agent's own context limits still apply. Unit tests stub the agent, and an
 end-to-end test exports the bundled synthetic tenant through the real backend.
+
+The export UI has one buffer-local progress plist and a one-second display-only
+timer, not another request queue. Its token guard prevents stale ticks from
+altering a later export. Counts come from completed histories; elapsed time is
+wall-clock time and no per-page progress or ETA is invented. The timer stops on
+every terminal path. A standard `global-mode-string` entry remains available
+while the progress buffer is hidden and keeps readiness visible until opened.
+`q` hides; explicit cancellation or killing/changing the progress mode stops it.
+
+Background handoff uses Agent Shell's own `agent-shell--start` no-focus/new-session
+path and inserts the prompt from the shell buffer with `:no-focus t`. This also
+prevents deferred prompt insertion or viewport preferences from stealing focus;
+wrapping a foreground startup in `save-window-excursion` would not protect a
+later callback. Only a user still watching progress is switched to the new shell.
+Readiness notifications contain counts, not chat content; optional desktop
+notification failures cannot fail the export. Tests exercise hidden completion,
+window/point preservation, startup options, loader cleanup and stale ticks.
 
 ## Thread Latency
 

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Give view-wide agent exports a live spinner, elapsed time and completed/total
+  chat counts in the progress header and mode line. `q` hides without cancelling;
+  `teams4e-view-analysis-status` opens progress or the ready agent. Start the
+  agent without focus (including deferred prompt insertion); auto-show it only
+  when the user is still watching progress. Announce completion with a persistent
+  indicator and optional content-free desktop notification. Clean up UI timers
+  on completion, errors, cancellation and buffer cleanup.
+
 - Add `teams4e-analyze-view` on `G` / `a G` in headers and their reader. Freeze
   all displayed chat rows, export complete histories serially to a private
   Markdown snapshot/index, and open one configurable Agent Shell discussion.

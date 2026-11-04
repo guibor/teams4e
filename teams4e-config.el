@@ -161,7 +161,7 @@ Mutation commands remain disabled until this is toggled off."
   :group 'teams4e)
 
 (defcustom teams4e-notifications t
-  "Show a desktop notification when background sync finds new messages."
+  "Notify about new synced messages and completed view exports when supported."
   :type 'boolean
   :group 'teams4e)
 
