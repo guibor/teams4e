@@ -3,6 +3,89 @@
 (require 'ert)
 (require 'teams4e)
 
+(ert-deftest teams4e-ltr-rendering-skips-per-character-direction-work ()
+  (dolist (direction '(contextual hebrew unicode))
+    (let ((teams4e-message-direction direction)
+          (text (propertize "Ordinary text with `code` and https://example.test/\nNext line"
+                            'face 'bold)))
+      (cl-letf (((symbol-function 'get-char-code-property)
+                 (lambda (&rest _) (ert-fail "Unnecessary character direction scan"))))
+        (should (eq text (teams4e--directional-message-text text)))))))
+
+(defun teams4e-test--long-reader-messages ()
+  "Return synthetic messages long enough to exercise real window scrolling."
+  (cl-loop for i from 1 to 30 collect
+           `((id . ,(format "fixture-%d" i))
+             (createdDateTime . "2026-11-04T10:00:00Z")
+             (body . ((content . ,(format "Message %d: %s" i
+                                          (make-string 180 ?x))))))))
+
+(ert-deftest teams4e-reader-centers-latest-without-taking-preview-focus ()
+  (dolist (channel '(nil t))
+    (save-window-excursion
+      (delete-other-windows)
+      (let* ((index (selected-window))
+             (reader (split-window-right))
+             (teams4e-reader-center-latest t)
+             (teams4e-message-order 'oldest-first)
+             (teams4e-message-renderer 'plain))
+        (with-temp-buffer
+          (funcall (if channel #'teams4e-channel-thread-mode #'teams4e-chat-mode))
+          (set-window-buffer reader (current-buffer))
+          (setq teams4e--messages (teams4e-test--long-reader-messages)
+                teams4e-channel--messages teams4e--messages
+                teams4e--jump-to-bottom-on-render t)
+          (funcall (if channel #'teams4e--render-channel-thread #'teams4e--render-chat))
+          (should (eq index (selected-window)))
+          (should (= (window-point reader) (point-max)))
+          (let ((row (count-screen-lines (window-start reader) (point-max) nil reader))
+                (middle (/ (window-body-height reader) 2)))
+            (should (<= (abs (- row middle)) 1))))))))
+
+(ert-deftest teams4e-centering-can-be-disabled ()
+  (save-window-excursion
+    (with-temp-buffer
+      (teams4e-chat-mode)
+      (switch-to-buffer (current-buffer))
+      (let ((teams4e-reader-center-latest nil))
+        (cl-letf (((symbol-function 'recenter)
+                   (lambda (&rest _) (ert-fail "Disabled centering moved the viewport"))))
+          (teams4e--goto-reader-latest))))))
+
+(ert-deftest teams4e-cached-open-centers-after-creating-the-pane ()
+  (let* ((teams4e--read-buffer-name " *teams4e-center-test*")
+         (teams4e-cache-first t)
+         (teams4e-reader-center-latest t)
+         (teams4e-message-order 'oldest-first)
+         (teams4e-message-renderer 'plain)
+         (teams4e-mark-read-on-open nil)
+         (chat '((id . "center-fixture") (topic . "Synthetic chat")))
+         (teams4e--recent-chat-cache
+          (list (cons (teams4e--recent-chat-key chat)
+                      (teams4e-test--long-reader-messages)))))
+    (unwind-protect
+        (save-window-excursion
+          (cl-letf (((symbol-function 'teams4e-chat-refresh) #'ignore)
+                    ((symbol-function 'teams4e--close-other-readers) #'ignore)
+                    ((symbol-function 'teams4e--display-chat-buffer)
+                     (lambda (buffer _preview) (switch-to-buffer buffer))))
+            (teams4e-open-chat chat))
+          (with-current-buffer teams4e--read-buffer-name
+            (should (= (point) (point-max)))
+            (should (<= (abs (- (count-screen-lines (window-start) (point))
+                               (/ (window-body-height) 2))) 1))
+            ;; A normal refresh while reading older text must not recenter.
+            (teams4e--goto-message-id "fixture-10")
+            (set-window-start nil (point) t)
+            (let ((start (window-start)) (position (point)))
+              (cl-letf (((symbol-function 'recenter)
+                         (lambda (&rest _) (ert-fail "Refresh recentered an active reader"))))
+                (teams4e--render-chat))
+              (should (= position (point)))
+              (should (= start (window-start))))))
+      (when-let ((buffer (get-buffer teams4e--read-buffer-name)))
+        (kill-buffer buffer)))))
+
 (ert-deftest teams4e-backend-fingerprint-detects-in-place-module-updates ()
   (let* ((directory (make-temp-file "teams4e-backend-version-" t))
          (program (expand-file-name "teams4e-graph" directory))

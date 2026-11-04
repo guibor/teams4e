@@ -295,6 +295,15 @@ chronological regardless of this setting."
                  (const :tag "Newest first" newest-first))
   :group 'teams4e)
 
+(defcustom teams4e-reader-center-latest t
+  "Whether opening a transcript centers its newest end in the reading pane.
+In oldest-first order, leave space below the final message instead of pinning
+it to the bottom edge.  Short transcripts and newest-first order are bounded
+by the beginning of the buffer.  Refreshes preserve your position after you
+move or scroll away.  Nil retains Emacs's normal point visibility behavior."
+  :type 'boolean
+  :group 'teams4e)
+
 (defcustom teams4e-preview-message-limit 50
   "Maximum recent messages fetched for an automatic inbox preview.
 

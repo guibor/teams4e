@@ -113,7 +113,9 @@ class ReadCancellationTests(unittest.TestCase):
 
     def requests():
       for i in range(8):
-        yield json.dumps({"id": i, "args": ["status"]})
+        args = (["status"] if i < 6 else
+                ["teams", "chat", "message", "list", "--limit", "50"])
+        yield json.dumps({"id": i, "args": args})
       self.assertTrue(blocked.wait(3))
       yield json.dumps({"id": 9, "args": ["teams", "cache", "chat", "message", "list"]})
 

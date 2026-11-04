@@ -161,8 +161,8 @@ contains only operation, transport, status, item count, duration, and local
 time; it never records argv values, IDs, URLs, people, titles, bodies, or
 tokens. `teams4e-performance-report` renders this ring without persisting it.
 
-Cache-first opening paints cached rows once before Graph starts. Member and
-calendar completion callbacks mutate their established caches/attachments and
+Cache-first opening paints cached rows while Graph refreshes independently.
+Member and calendar completion callbacks mutate their established caches/attachments and
 request a shared short timer; adjacent completions therefore produce one
 tabulated-list redraw. Direct user actions still redraw immediately.
 
@@ -459,6 +459,21 @@ still reports completion/failure, and unchanged content avoids a second render.
 Opening a current-schema SQLite cache performs no writes: WAL readers must not
 wait for another operation's writer merely to update schema metadata.
 
+Two of the eight network command workers are reserved for bounded chat message
+reads. The remaining six handle calendar work, synchronization, mutations and
+unbounded history/exports. Cache reads keep their separate single worker. This
+does not raise network command concurrency or bypass shared rate limits; it
+only prevents background work from filling every command slot. Cancellation
+is checked before queued reads execute. Already in-flight HTTP and Graph
+cooldowns can still delay an interactive read.
+
+Latest-position selection recenters visible reader windows by default, without
+selecting the reader or affecting headers focus. Cached/synchronous renders
+are centered again after their pane is created. Existing reader anchors and
+cache-to-live movement guards still govern refreshes; no idle recenter timer
+or second viewport state is introduced. Emacs cannot add blank space above
+the beginning of a short transcript.
+
 The persistent worker uses a worker-local `http.client.HTTPSConnection` for
 direct Graph GETs. Python's previous `urllib.request` path sends
 `Connection: close` ([Python documentation](https://docs.python.org/3/library/urllib.request.html));
@@ -470,6 +485,13 @@ stored as a connection default, and direct reads never follow redirects.
 
 Offline regression evidence:
 
+- Saturating background workers still permits a bounded chat read to complete
+  before they are released. An unbounded history request waits with background
+  jobs, and a cancelled queued foreground read never executes.
+- Real Emacs windows verify newest-end centering in chats and channel threads,
+  including wrapped lines, preview focus, cached opens and opt-out behavior.
+- Messages without Hebrew skip character-by-character Hebrew-direction analysis;
+  mixed-language messages retain the existing direction rules and tests.
 - A held SQLite write transaction previously blocked an existing-cache reader
   for the entire two-second fixture hold. The reader now completes while the
   writer still holds its transaction.

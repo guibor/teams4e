@@ -1,6 +1,8 @@
 """Thread-loading latency regressions without a company account."""
 
+import contextlib
 import io
+import json
 import sys
 import tempfile
 import threading
@@ -14,6 +16,77 @@ from teams4e_cache import TeamsCache
 
 
 class ThreadLatencyTests(unittest.TestCase):
+  def test_chat_opens_while_six_background_workers_are_blocked(self):
+    started = [threading.Event() for _ in range(8)]
+    release = threading.Event()
+    opened = threading.Event()
+
+    def execute(args, **kwargs):
+      if args[0] == "background":
+        started[int(args[1])].set()
+        if not release.wait(5):
+          raise AssertionError("Background fixture timed out")
+      elif "--limit" in args:
+        opened.set()
+      else:
+        self.assertTrue(release.is_set(), "Unbounded history used a reserved reader slot")
+      return [], "json"
+
+    def requests():
+      try:
+        for i in range(8):
+          yield json.dumps({"id": i, "args": ["background", str(i)]})
+        self.assertTrue(all(event.wait(2) for event in started[:6]))
+        # An unbounded history read queues with background work, not the reader.
+        yield json.dumps({"id": 8, "args": ["teams", "chat", "message", "list"]})
+        yield json.dumps({"id": 9, "args": ["teams", "chat", "message", "list",
+                                            "--limit", "50"]})
+        self.assertTrue(opened.wait(2), "Thread queued behind background work")
+      finally:
+        release.set()
+
+    output = io.StringIO()
+    with (mock.patch.object(backend.sys, "stdin", requests()),
+          mock.patch.object(backend, "execute", side_effect=execute),
+          contextlib.redirect_stdout(output)):
+      backend.serve()
+    rows = [json.loads(line) for line in output.getvalue().splitlines()]
+    self.assertTrue(all(row["ok"] for row in rows))
+    self.assertEqual(10, len(rows))
+
+  def test_cancelled_queued_foreground_read_never_executes(self):
+    started = [threading.Event(), threading.Event()]
+    release = threading.Event()
+    executed = []
+
+    def execute(args, **kwargs):
+      index = int(args[-1])
+      executed.append(index)
+      if index < 2:
+        started[index].set()
+        if not release.wait(5):
+          raise AssertionError("Reader fixture timed out")
+      return [], "json"
+
+    def requests():
+      try:
+        for i in range(3):
+          if i == 2:
+            self.assertTrue(all(event.wait(2) for event in started))
+          yield json.dumps({"id": i, "args": ["teams", "chat", "message", "list",
+                                              "--limit", "50", "--chatId", str(i)]})
+        yield '{"cancel":2}'
+      finally:
+        release.set()
+
+    output = io.StringIO()
+    with (mock.patch.object(backend.sys, "stdin", requests()),
+          mock.patch.object(backend, "execute", side_effect=execute),
+          contextlib.redirect_stdout(output)):
+      backend.serve()
+    self.assertEqual([0, 1], sorted(executed))
+    self.assertEqual({0, 1}, {json.loads(line)["id"] for line in output.getvalue().splitlines()})
+
   def test_open_existing_cache_does_not_write(self):
     with tempfile.TemporaryDirectory() as directory:
       path = Path(directory) / "fixture.sqlite3"

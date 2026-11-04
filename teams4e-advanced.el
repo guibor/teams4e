@@ -1921,7 +1921,8 @@ COMPLETED holds inverse actions already confirmed by the server."
 
 (defun teams4e-open-channel-thread (team channel root &optional preview)
   "Open ROOT and all replies from TEAM CHANNEL; keep index focus for PREVIEW."
-  (let ((buffer (get-buffer-create teams4e--read-buffer-name)))
+  (let ((buffer (get-buffer-create teams4e--read-buffer-name))
+        opening)
     (with-current-buffer buffer
       (unless (derived-mode-p 'teams4e-channel-thread-mode)
         (when (derived-mode-p 'teams4e-read-mode)
@@ -1941,7 +1942,8 @@ COMPLETED holds inverse actions already confirmed by the server."
               teams4e-channel--channel channel
               teams4e-channel--root root
               teams4e--automatic-preview-p (not (null preview))
-              teams4e--jump-to-bottom-on-render (not preview))
+              teams4e--jump-to-bottom-on-render (or (not preview) (not same-thread)))
+        (setq opening teams4e--jump-to-bottom-on-render)
         (unless same-thread
           (teams4e--cancel-image-loads)
           (setq teams4e-channel--messages nil)
@@ -1954,6 +1956,9 @@ COMPLETED holds inverse actions already confirmed by the server."
     (let ((teams4e-channel--team team)
           (teams4e-channel--channel channel))
       (teams4e--display-channel-thread buffer preview))
+    (with-current-buffer buffer
+      (when (and opening teams4e-channel--messages)
+        (teams4e--recenter-reader)))
     (teams4e--close-other-readers buffer)))
 
 (defun teams4e--render-channel-thread (&optional preserve-position)

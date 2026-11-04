@@ -80,6 +80,7 @@
 (defvar teams4e-default-view)
 (defvar teams4e-display-images)
 (defvar teams4e-message-renderer)
+(defvar teams4e-reader-center-latest)
 (defvar teams4e-highlight-code-blocks)
 (defvar teams4e-draft-directory)
 (defvar teams4e-export-directory)
@@ -3729,42 +3730,44 @@ When RICH is non-nil, use the Markdown renderer."
 (defun teams4e--directional-message-text (text)
   "Return TEXT with display-only RTL hints for Hebrew-dominant prose.
 Never reverse characters or apply bidi overrides to English runs."
-  (let (fence)
-    (mapconcat
-     (lambda (line)
-       (cond
-        ((eq teams4e-message-direction 'unicode) line)
-        ((string-match "^[ \t>]*\\(```+\\|~~~+\\)" line)
-         (let ((kind (substring (match-string 1 line) 0 1)))
-           (setq fence (unless (equal fence kind) (or fence kind))))
-         line)
-        ((or fence (string-match-p "\\`    \\|[\u200e\u200f\u202a-\u202e\u2066-\u2069]" line)) line)
-        (t
-         (let ((prose (replace-regexp-in-string
-                       "https?://[^ \t<>]+\\|`[^`]*`" "" line))
-               (hebrew 0) (ltr 0) first)
-           (cl-loop for char across line do
-                    (let ((class (get-char-code-property char 'bidi-class)))
-                      (when (and (not first) (memq class '(L R AL)))
-                        (setq first class))))
-           (dolist (char (string-to-list prose))
-             (cond
-              ((and (<= #x590 char #x5ff)
-                    (eq (get-char-code-property char 'bidi-class) 'R))
-               (cl-incf hebrew))
-              ((eq (get-char-code-property char 'bidi-class) 'L) (cl-incf ltr))))
-           (if (and (eq first 'L) (> hebrew 0)
-                    (or (eq teams4e-message-direction 'hebrew) (> hebrew ltr)))
-               (let ((prefix (if (string-match
-                                  "\\`[ \t>]*\\(?:[-+*] \\|[0-9]+[.)] \\|#+ \\)?" line)
-                                 (match-end 0) 0)))
-                 (concat (substring line 0 prefix)
-                         (propertize "\u200f" 'invisible t
-                                     'teams4e-direction-hint t
-                                     'rear-nonsticky t)
-                         (substring line prefix)))
-             line)))))
-     (split-string text "\n" nil) "\n")))
+  (if (or (eq teams4e-message-direction 'unicode)
+          (not (string-match-p "[\u0590-\u05ff]" text)))
+      text
+    (let (fence)
+      (mapconcat
+       (lambda (line)
+         (cond
+          ((string-match "^[ \t>]*\\(```+\\|~~~+\\)" line)
+           (let ((kind (substring (match-string 1 line) 0 1)))
+             (setq fence (unless (equal fence kind) (or fence kind))))
+           line)
+          ((or fence (string-match-p "\\`    \\|[\u200e\u200f\u202a-\u202e\u2066-\u2069]" line)) line)
+          (t
+           (let ((prose (replace-regexp-in-string
+                         "https?://[^ \t<>]+\\|`[^`]*`" "" line))
+                 (hebrew 0) (ltr 0) first)
+             (cl-loop for char across line do
+                      (let ((class (get-char-code-property char 'bidi-class)))
+                        (when (and (not first) (memq class '(L R AL)))
+                          (setq first class))))
+             (dolist (char (string-to-list prose))
+               (cond
+                ((and (<= #x590 char #x5ff)
+                      (eq (get-char-code-property char 'bidi-class) 'R))
+                 (cl-incf hebrew))
+                ((eq (get-char-code-property char 'bidi-class) 'L) (cl-incf ltr))))
+             (if (and (eq first 'L) (> hebrew 0)
+                      (or (eq teams4e-message-direction 'hebrew) (> hebrew ltr)))
+                 (let ((prefix (if (string-match
+                                    "\\`[ \t>]*\\(?:[-+*] \\|[0-9]+[.)] \\|#+ \\)?" line)
+                                   (match-end 0) 0)))
+                   (concat (substring line 0 prefix)
+                           (propertize "\u200f" 'invisible t
+                                       'teams4e-direction-hint t
+                                       'rear-nonsticky t)
+                           (substring line prefix)))
+               line)))))
+       (split-string text "\n" nil) "\n"))))
 
 (defun teams4e--strip-direction-hints (text)
   "Remove only generated display hints from copied TEXT, retaining source marks."
@@ -4302,7 +4305,16 @@ When DATE-ONLY is non-nil, omit the time of day."
         (teams4e-chat-next-message)
         (dolist (window (get-buffer-window-list (current-buffer) nil t))
           (set-window-point window (point))))
-    (teams4e--goto-reader-bottom)))
+    (teams4e--goto-reader-bottom))
+  (teams4e--recenter-reader))
+
+(defun teams4e--recenter-reader ()
+  "Center the current reader's point in its windows without stealing focus."
+  (when teams4e-reader-center-latest
+    (dolist (window (get-buffer-window-list (current-buffer) nil t))
+      (with-selected-window window
+        ;; A prefix recenters just this window, without redrawing the frame.
+        (recenter '(4))))))
 
 (defun teams4e--chat-render-key ()
   "Return the inputs that affect the current transcript presentation."
@@ -4628,7 +4640,8 @@ When PREVIEW is non-nil, retain focus in the inbox window.  ALL requests
 complete history, and MESSAGE-ID is selected after that history renders."
   (unless (teams4e--chat-id chat)
     (user-error "The selected chat has no identifier"))
-  (let ((buffer (get-buffer-create teams4e--read-buffer-name)))
+  (let ((buffer (get-buffer-create teams4e--read-buffer-name))
+        opening)
     (with-current-buffer buffer
       (unless (derived-mode-p 'teams4e-chat-mode)
         (when (derived-mode-p 'teams4e-read-mode)
@@ -4651,6 +4664,7 @@ complete history, and MESSAGE-ID is selected after that history renders."
               teams4e--jump-to-bottom-on-render
               (and (not message-id)
                    (or (not preview) (not same-chat))))
+        (setq opening teams4e--jump-to-bottom-on-render)
         (unless same-chat
           (teams4e--cancel-process teams4e--meeting-process)
           (cl-incf teams4e--meeting-request-id)
@@ -4696,6 +4710,9 @@ complete history, and MESSAGE-ID is selected after that history renders."
           (teams4e--load-meeting-context chat))))
     (teams4e--display-chat-buffer buffer preview)
     (with-current-buffer buffer
+      ;; Cached or synchronous results can render before the pane exists.
+      (when (and opening teams4e--messages)
+        (teams4e--recenter-reader))
       (when teams4e--cached-reader-view
         (setq teams4e--cached-reader-view (teams4e--reader-view-state))))
     (teams4e--close-other-readers buffer)

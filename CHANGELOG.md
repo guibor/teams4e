@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Center the newest end when opening chats and channel threads, including
+  cached previews, without stealing inbox focus or moving an active reader on
+  refresh. Customize `teams4e-reader-center-latest` to disable centering.
+- Reserve two of the existing eight backend network command workers for bounded
+  chat reads, so background work cannot occupy every slot. Keep shared throttling
+  and cancellation. Skip per-character Hebrew-direction analysis when no Hebrew
+  is present, retaining normal Unicode bidi rendering.
+
 - Remove SQLite writes from existing-cache opening, so previews do not wait
   behind unrelated writers. Deliver single-page live results before caching.
 - Reuse verified HTTPS connections for direct persistent Graph GETs, with

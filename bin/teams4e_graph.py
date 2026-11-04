@@ -4070,7 +4070,11 @@ def serve() -> int:
   in :func:`execute`.
   """
   write_lock = threading.Lock()
-  workers = ThreadPoolExecutor(max_workers=8)
+  workers = ThreadPoolExecutor(max_workers=6)
+  # Reserve two of the existing eight slots for bounded foreground reads.
+  # Full-history/export jobs must not occupy this capacity. All lanes still
+  # obey the same Graph rate budget, authentication and cancellation rules.
+  reader_workers = ThreadPoolExecutor(max_workers=2)
   # Local cache reads must not queue behind slow HTTP calls or throttled history.
   cache_workers = ThreadPoolExecutor(max_workers=1)
   pending_lock = threading.Lock()
@@ -4156,12 +4160,21 @@ def serve() -> int:
       if cancel is not None:
         with pending_lock:
           pending[request_id] = cancel
-      pool = (cache_workers
-              if isinstance(args, list) and args[:2] == ["teams", "cache"]
-              else workers)
+      pool = workers
+      if isinstance(args, list):
+        if args[:2] == ["teams", "cache"]:
+          pool = cache_workers
+        elif args[:4] == ["teams", "chat", "message", "list"]:
+          try:
+            bounded = int(option(args, "--limit", required=False) or "0") > 0
+          except (ValueError, TypeError, BackendError):
+            bounded = False  # Execute reports invalid arguments normally.
+          if bounded:
+            pool = reader_workers
       pool.submit(handle, request, cancel, time.monotonic())
   finally:
     workers.shutdown(wait=True)
+    reader_workers.shutdown(wait=True)
     cache_workers.shutdown(wait=True)
   return 0
 

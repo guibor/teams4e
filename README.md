@@ -420,6 +420,13 @@ Automatic previews remain limited to 50. With the bundled persistent backend,
 the first live page appears before older pages finish, without extra Graph
 requests. Full-history loads and exports still wait for complete results.
 
+Opening a transcript centers its newest end in the reading pane, leaving room
+below the final message in the default oldest-first order. This also works for
+cached previews and channel threads, without moving focus out of the headers.
+Set `teams4e-reader-center-latest` to `nil` to keep ordinary Emacs scrolling.
+Background updates still preserve your position once you move or scroll away.
+Very short transcripts cannot scroll above the beginning of the buffer.
+
 The last eight opened chats retain bounded message snapshots in memory, so
 reopening shows cached content immediately while refreshing from Graph. This
 does not create extra reader buffers or another on-disk store. Customize
@@ -435,6 +442,9 @@ bundled backend. An HTTP request already in flight may finish, but its result
 cannot replace the selected chat. Local cache reads have their own worker, so
 they do not queue behind slow network requests. The first live page is reusable
 immediately when revisiting a chat, even before older history finishes loading.
+Two of the backend's eight network command workers are reserved for bounded
+chat reads. Calendar enrichment, synchronization and unbounded history/export
+jobs cannot fill those slots; Graph's shared rate limits still apply.
 Moving or scrolling away from cached content prevents a later live response
 from pulling you to the end.
 
