@@ -11,6 +11,187 @@
 (declare-function shell-maker-busy "shell-maker" ())
 (declare-function agent-shell-start "agent-shell" (&rest arguments))
 (declare-function agent-shell-insert "agent-shell" (&rest arguments))
+(defvar teams4e-view-analysis-prompt)
+
+(defvar-local teams4e-view-analysis--token nil)
+(defvar-local teams4e-view-analysis--request nil)
+(defconst teams4e-view-analysis--buffer-name "*Teams View Analysis*")
+
+(defun teams4e-view-analysis-cancel ()
+  "Stop collecting a view snapshot; keep already exported private files.
+An in-flight full-history request may finish, but cannot start an agent or
+schedule another export after cancellation."
+  (interactive)
+  (when-let ((buffer (get-buffer teams4e-view-analysis--buffer-name)))
+    (with-current-buffer buffer
+      (when teams4e-view-analysis--token
+        (setq teams4e-view-analysis--token nil
+              header-line-format "Teams view export cancelled")
+        (teams4e--cancel-process teams4e-view-analysis--request)
+        (setq teams4e-view-analysis--request nil)))))
+
+(define-derived-mode teams4e-view-analysis-mode special-mode "Teams-Export"
+  "Progress for a private, complete-history view export."
+  (add-hook 'kill-buffer-hook #'teams4e-view-analysis-cancel nil t))
+
+(define-key teams4e-view-analysis-mode-map (kbd "C-c C-k")
+            #'teams4e-view-analysis-cancel)
+(define-key teams4e-view-analysis-mode-map (kbd "q")
+            (lambda () (interactive) (quit-window t)))
+
+(defun teams4e-view-analysis--append (buffer text)
+  "Append TEXT to export progress BUFFER without moving its reader."
+  (with-current-buffer buffer
+    (let ((inhibit-read-only t))
+      (save-excursion (goto-char (point-max)) (insert text)))))
+
+;;;###autoload
+(defun teams4e-analyze-view ()
+  "Export every chat listed in the current view, then open one Agent Shell.
+Use all rows in the filtered headers, not only on-screen rows or marked chats.
+Freeze the list now; later bookmark/read-state changes do not expand it.
+Fetch complete histories serially and label failures. No automatic monitoring
+or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
+`teams4e-view-analysis-prompt'. Cancel in the progress buffer with C-c C-k."
+  (interactive)
+  (unless (derived-mode-p 'teams4e-recent-mode 'teams4e-chat-mode)
+    (user-error "Open the Teams chat headers or their reader first"))
+  (when teams4e-offline-mode
+    (user-error "Complete view export requires online mode; cached history may be partial"))
+  (let* ((headers (if (derived-mode-p 'teams4e-recent-mode)
+                      (current-buffer) (teams4e--recent-buffer)))
+         (scope (and (buffer-live-p headers)
+                     (with-current-buffer headers (teams4e--active-filter-label))))
+         ;; Use the actual displayed row IDs, not a freshly broadened chat query.
+         (chats (and (buffer-live-p headers)
+                     (with-current-buffer headers
+                       (mapcar (lambda (id) (copy-tree (teams4e--find-chat id)))
+                               (delete-dups (mapcar #'car tabulated-list-entries))))))
+         (buffer (get-buffer-create teams4e-view-analysis--buffer-name)))
+    (unless chats (user-error "No chats in the current Teams view"))
+    (when (memq nil chats)
+      (user-error "Chat headers changed; refresh the view before exporting"))
+    (when (buffer-local-value 'teams4e-view-analysis--token buffer)
+      (user-error "View export is running; cancel with M-x teams4e-view-analysis-cancel"))
+    (let* ((config (teams4e--thread-analysis-agent-config))
+           (prompt teams4e-view-analysis-prompt)
+           (identity (teams4e-companion--current-identity))
+           (token (make-symbol "view-export"))
+           (remaining chats)
+           (total (length chats))
+           (completed 0) (failed 0)
+           (directory
+            (progn
+              (make-directory teams4e-export-directory t)
+              (make-temp-file
+               (expand-file-name (format-time-string "view-%Y%m%d-%H%M%S-")
+                                 teams4e-export-directory) t))))
+      (set-file-modes directory #o700)
+      (with-current-buffer buffer
+        (teams4e-view-analysis-mode)
+        (let ((inhibit-read-only t)) (erase-buffer))
+        (setq teams4e-view-analysis--token token)
+        (teams4e-view-analysis--append
+         buffer
+         (concat "# Teams view snapshot\n\n"
+                 (format "- View: %s\n- Selected: %s\n- Chats: %d\n\n"
+                         scope (format-time-string "%Y-%m-%d %H:%M %Z") total)
+                 (when teams4e-mock-mode "SYNTHETIC MOCK DATA, not live Teams activity.\n\n")
+                 "All rows of this filtered view, not all Teams activity.\n"
+                 "Each successful export contains complete available history, not only\n"
+                 "messages from the bookmark's date range. Unavailable history is unknown,\n"
+                 "not evidence of resolution. Read state is not a task status.\n"
+                 "This is a one-time snapshot; no automatic monitoring is active.\n\n"
+                 "## Selected conversations\n\n"
+                 (mapconcat #'teams4e-companion--chat-summary chats "")
+                 "\n## Exported histories\n\n")))
+      (pop-to-buffer buffer)
+      (cl-labels
+          ((valid-p ()
+             (and (buffer-live-p buffer)
+                  (eq token (buffer-local-value 'teams4e-view-analysis--token buffer))
+                  (if (and (not teams4e-offline-mode)
+                           (equal identity (teams4e-companion--current-identity)))
+                      t
+                    (teams4e-view-analysis-cancel)
+                    (message "Teams view export stopped: account/provider or online mode changed")
+                    nil)))
+           (failure (chat)
+             (cl-incf failed)
+             (teams4e-view-analysis--append
+              buffer (format "- UNAVAILABLE: %s. History not included; see *M365 Errors*.\n"
+                             (teams4e--chat-label chat))))
+           (finish ()
+             (let ((index (expand-file-name "index.md" directory)))
+               (teams4e-view-analysis--append
+                buffer (format "\nCoverage: %d of %d complete histories; %d unavailable.\n"
+                               (- completed failed) total failed))
+               (with-current-buffer buffer
+                 (let ((coding-system-for-write 'utf-8-unix))
+                   (write-region (point-min) (point-max) index nil 'silent))
+                 (set-file-modes index #o600)
+                 (setq teams4e-view-analysis--token nil
+                       teams4e-view-analysis--request nil
+                       header-line-format (format "Exported %d/%d chats; %d unavailable"
+                                                  (- completed failed) total failed)))
+               (if (= completed failed)
+                   (message "No complete histories exported; no agent started")
+                 (teams4e--start-thread-analysis index config prompt))))
+           (advance ()
+             (condition-case err
+                 (next)
+               (error
+                (teams4e-view-analysis-cancel)
+                (message "Teams view export stopped: %s" (error-message-string err)))))
+           (next ()
+             (when (valid-p)
+               (if (not remaining)
+                   (condition-case err
+                       (finish)
+                     (error
+                      (teams4e-view-analysis-cancel)
+                      (with-current-buffer buffer
+                        (setq header-line-format "View analysis handoff failed; exported files retained"))
+                      (message "Teams view analysis: %s" (error-message-string err))))
+                 (let* ((chat (pop remaining))
+                        (number (1+ completed))
+                        (file (format "thread-%04d.md" number))
+                        (args (teams4e--full-history-args chat))
+                        (request
+                         (progn
+                           (with-current-buffer buffer
+                             (setq header-line-format
+                                   (format "Exporting full history %d/%d: %s"
+                                           number total (teams4e--chat-label chat))))
+                           (teams4e--run-json
+                            args
+                            (lambda (payload)
+                              (when (and (valid-p) (= completed (1- number)))
+                                (condition-case err
+                                    (let ((result (teams4e--full-history-result payload)))
+                                      (teams4e--write-thread-export
+                                       (expand-file-name file directory) chat
+                                       (plist-get result :messages) (plist-get result :history))
+                                      (teams4e-view-analysis--append
+                                       buffer (format "- [History %d](%s): %s (%d messages)\n"
+                                                      number file (teams4e--chat-label chat)
+                                                      (length (plist-get result :messages)))))
+                                  (error
+                                   (teams4e--report-error args "export" (error-message-string err))
+                                   (failure chat)))
+                                (cl-incf completed)
+                                (advance)))
+                            (lambda (status detail)
+                              (when (and (valid-p) (= completed (1- number)))
+                                (teams4e--report-error args status detail)
+                                (failure chat)
+                                (cl-incf completed)
+                                (advance)))))))
+                   ;; Synchronous adapters may already have advanced the batch.
+                   (when (and (valid-p) (= completed (1- number)))
+                     (with-current-buffer buffer
+                       (setq teams4e-view-analysis--request request))))))))
+        (advance)))))
 
 (defcustom teams4e-companion-interval 600
   "Seconds between companion checks while monitoring is enabled."

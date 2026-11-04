@@ -451,6 +451,34 @@ handled state expires, so no duplicate folder or server-side representation is
 required. The function remains available to callers, but the main keymaps bind
 lowercase `r` to mark-read.
 
+## View Analysis
+
+`teams4e-analyze-view` is a one-shot sibling of the ongoing companion, reusing
+the complete-history validator/writer, configured thread-analysis agent and
+Agent Shell starter. It freezes the IDs actually listed by the headers and
+copies their metadata for the export. It never refreshes/broadens the inbox,
+uses bulk marks as scope, or creates a synchronized second conversation list.
+Queries, bookmark membership and unread overlays have already been applied by
+the headers renderer. The snapshot covers all listed rows, not a screenful.
+
+A private unique directory contains one validated full-history Markdown file
+per successful chat and an index, including selected scope, dates, links and
+failure counts. Collection is serial; readers retain their existing execution
+capacity. Errors are not passed to the agent as source material. Incomplete
+pagination/count mismatches are failures rather than silently truncated history.
+The account/provider fingerprint is used only as an in-memory guard; no extra
+account identity or credentials are written to the snapshot. The user explicitly
+invokes sharing with their configured agent. Default prompts treat sources as
+data and request discussion, not autonomous Teams/calendar mutations.
+
+One progress buffer holds the cancellation token and current request. Callbacks
+check that token, account identity and the current batch position before writing
+or advancing. Cancelling/killing the buffer or switching accounts blocks late
+callbacks and agent startup. No timer, polling loop or companion monitoring is
+enabled. Failed chats are labeled in the index; if all fail, no agent starts.
+The agent's own context limits still apply. Unit tests stub the agent, and an
+end-to-end test exports the bundled synthetic tenant through the real backend.
+
 ## Thread Latency
 
 The first live page is the useful result, not completion of local persistence.

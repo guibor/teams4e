@@ -231,6 +231,7 @@ headers buffer. They can be changed independently of the commands.
 | `teams4e-jump-to-capture` | `a j` | Visit an existing capture |
 | `teams4e-export-current-thread` | `a e` | Export Markdown |
 | `teams4e-analyze-current-thread` | `a g` | Export for Agent Shell analysis |
+| `teams4e-analyze-view` | `G` or `a G` | Discuss all chats in the current filtered view with Agent Shell |
 
 The full [usage reference](USAGE.md) covers reader navigation, bulk actions,
 snooze choices, message selection, and channel-specific commands.
@@ -456,7 +457,7 @@ Python dependency is required. Sends and other mutations retain their existing
 transport and retry behavior.
 
 `teams4e-chat-load-more` (default `L`) loads more;
-`teams4e-chat-load-all` (default `G`) requests complete available history.
+`teams4e-chat-load-all`, or `C-u M-g` in the reader, requests complete available history.
 Configure `teams4e-message-days` and `teams4e-message-limit` to change the
 initial bounds; `nil` removes the respective bound.
 The optional day cutoff is applied to creation dates after fetching newest-first,
@@ -610,11 +611,20 @@ See [Calendar setup, defaults, and boundaries](CALENDAR.md), including the
 
 - `teams4e-analyze-current-thread` exports the full available conversation,
   then opens Agent Shell with a configurable prompt and agent.
+- `teams4e-analyze-view` (`G` in headers or their reader) exports every chat
+  listed in the current filtered view and opens one Agent Shell discussion.
+  Bookmarks, queries and unread-only filters determine the selected chats;
+  scroll position and bulk marks do not. The list is frozen when invoked.
+  Complete histories are saved as private Markdown files with an index, dates,
+  source links and explicit coverage/failures. This is a one-shot snapshot,
+  not automatic monitoring. Use `teams4e-thread-analysis-agent` to choose the
+  agent and `teams4e-view-analysis-prompt` to customize its first prompt.
+  Cancel collection with `C-c C-k` in the progress buffer.
 - `teams4e-companion` opens a reusable discussion of
   open requests, commitments, and possible next actions. Monitoring starts
   when you invoke it; it is bounded, visible, and pausable.
 
-Neither starts during ordinary reading. Calendar context and reference files
+None starts during ordinary reading. Calendar context and reference files
 are opt-in. The companion does not send messages or mutate calendars itself,
 but it does not restrict your agent's tools or permissions. Choose a provider
 approved for the content. [Companion setup and limits](COMPANION.md).

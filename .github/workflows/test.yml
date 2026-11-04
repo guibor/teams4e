@@ -48,6 +48,10 @@ jobs:
         run: |
           emacs -Q --batch -L . -L .tmp/expand-region -L .tmp/evil \
             -l tests/teams4e-selection-tests.el -f ert-run-tests-batch-and-exit
+      - name: Test view analysis with Evil
+        run: |
+          emacs -Q --batch -L . -L .tmp/evil -l evil \
+            -l tests/teams4e-view-analysis-tests.el -f ert-run-tests-batch-and-exit
       - name: Check out window-purpose test dependency
         uses: actions/checkout@v4
         with:

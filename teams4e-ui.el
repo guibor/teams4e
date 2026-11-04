@@ -52,6 +52,7 @@
 (declare-function teams4e-mark-read-later "advanced")
 (declare-function agent-shell-markdown-replace-markup
                   "agent-shell-markdown" (&rest arguments))
+(declare-function teams4e-analyze-view "teams4e-companion" ())
 
 (defvar org-capture-templates)
 (defvar er/try-expand-list)
@@ -4479,7 +4480,7 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
     (set-keymap-parent map special-mode-map)
     (define-key map (kbd "g") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "M-g") #'teams4e-chat-refresh)
-    (define-key map (kbd "G") #'teams4e-chat-load-all)
+    (define-key map (kbd "G") #'teams4e-analyze-view)
     (define-key map (kbd "L") #'teams4e-chat-load-more)
     (define-key map (kbd "S") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "M-S") #'teams4e-toggle-message-order)

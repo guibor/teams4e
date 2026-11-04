@@ -61,7 +61,7 @@ In the mock inbox, open a conversation with `RET`, return to the headers, and:
    reply with `R`; insert a participant mention with `C-c C-m`.
 5. Exercise `a e` to export Markdown, and `b m` to inspect mock meetings.
 
-These operations stay in the mock. Agent analysis (`a g`) is a separate,
+These operations stay in the mock. Agent analysis (`a g`, or view-wide `G`) is a separate,
 optional integration and can start a real configured agent even in mock mode.
 When finished, `M-x teams4e-mock-disable` returns to the live backend; it
 does not configure authentication.

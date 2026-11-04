@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add `teams4e-analyze-view` on `G` / `a G` in headers and their reader. Freeze
+  all displayed chat rows, export complete histories serially to a private
+  Markdown snapshot/index, and open one configurable Agent Shell discussion.
+  Label unavailable histories, support cancellation, and stop if the configured
+  account changes. No read-state changes or monitoring. `a g` retains single
+  thread analysis; reader full-history loading remains on `C-u M-g` / M-x.
+
 - Center the newest end when opening chats and channel threads, including
   cached previews, without stealing inbox focus or moving an active reader on
   refresh. Customize `teams4e-reader-center-latest` to disable centering.

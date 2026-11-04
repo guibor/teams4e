@@ -19,6 +19,7 @@
     (evil-define-key* '(normal motion) teams4e-recent-mode-map
       (kbd "b") #'teams4e-bookmark-jump
       (kbd "B") #'teams4e-bookmark-edit
+      (kbd "G") #'teams4e-analyze-view
       (kbd "U") #'teams-unread-filter
       (kbd "F") #'teams-unread-filter
       (kbd "z") #'teams4e-snooze-quick
@@ -26,6 +27,7 @@
     (evil-define-key* '(normal motion) teams4e-chat-mode-map
       (kbd "b") #'teams4e-chat-run-headers-command
       (kbd "B") #'teams4e-chat-run-headers-command
+      (kbd "G") #'teams4e-analyze-view
       (kbd "U") #'teams4e-chat-run-headers-command
       (kbd "F") #'teams4e-chat-run-headers-command
       (kbd "z") #'teams4e-chat-run-headers-command
@@ -58,6 +60,7 @@
     (kbd "]") #'teams4e-recent-next-unread
     (kbd "[") #'teams4e-recent-previous-unread
     (kbd "g r") #'teams4e-recent-refresh
+    (kbd "G") #'teams4e-analyze-view
     (kbd "c") #'teams4e-send
     (kbd "i") #'teams4e-mark-read-later
     (kbd "C") #'teams4e-send
@@ -101,7 +104,7 @@
   (evil-define-key* '(normal motion) teams4e-chat-mode-map
     (kbd "g r") #'teams4e-chat-refresh-headers
     (kbd "M-g") #'teams4e-chat-refresh
-    (kbd "G") #'teams4e-chat-load-all
+    (kbd "G") #'teams4e-analyze-view
     (kbd "L") #'teams4e-chat-load-more
     (kbd "S") #'teams4e-chat-run-headers-command
     (kbd "M-S") #'teams4e-toggle-message-order

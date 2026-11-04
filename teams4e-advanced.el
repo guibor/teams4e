@@ -23,6 +23,8 @@
                   (designator))
 (declare-function agent-shell-insert "agent-shell" (&rest arguments))
 (declare-function agent-shell-start "agent-shell" (&rest arguments))
+(autoload 'teams4e-analyze-view "teams4e-companion"
+  "Export the current filtered chat view and discuss it in Agent Shell." t)
 (declare-function org-read-date "org" (&optional inactive to-time from-string prompt
                                                  default-time default-input))
 
@@ -2266,17 +2268,18 @@ AFTER-EXPORT with its saved path when that callback is non-nil."
        identifier))
     config))
 
-(defun teams4e--start-thread-analysis (path config)
-  "Start a new agent-shell with CONFIG and submit an analysis prompt for PATH."
+(defun teams4e--start-thread-analysis (path config &optional prompt-template)
+  "Start Agent Shell with CONFIG and a prompt for PATH.
+Use PROMPT-TEMPLATE when supplied, otherwise `teams4e-thread-analysis-prompt'."
   (let* ((absolute-path (expand-file-name path))
          (default-directory
           (file-name-as-directory (file-name-directory absolute-path)))
          (prompt
-          (format teams4e-thread-analysis-prompt absolute-path))
+          (format (or prompt-template teams4e-thread-analysis-prompt) absolute-path))
          (shell-buffer (agent-shell-start :config config)))
     ;; agent-shell queues this submission until its first ACP prompt is ready.
     (agent-shell-insert :text prompt :submit t :shell-buffer shell-buffer)
-    (message "Started Teams thread analysis with %s"
+    (message "Started Teams analysis with %s"
              (map-elt config :identifier))
     shell-buffer))
 
@@ -4122,12 +4125,13 @@ from producing an invalid Graph payload after a mention is edited or deleted."
     (define-key map (kbd "?") #'teams4e-headers-action)
     (define-key map (kbd "x") #'teams4e-headers-action)
     map)
-  "Mu4e-style prefix map for actions on the current Teams conversation.")
+  "Conversation actions, with G for analysis of the whole filtered chat view.")
 
 ;; Keep source reloads useful when this prefix map already exists.
 (define-key teams4e-action-map (kbd "f") #'teams4e-forward-message)
 (define-key teams4e-action-map (kbd "g")
             #'teams4e-analyze-current-thread)
+(define-key teams4e-action-map (kbd "G") #'teams4e-analyze-view)
 (define-key teams4e-action-map (kbd "r") nil)
 (define-key teams4e-action-map (kbd "h") nil)
 (define-key teams4e-action-map (kbd "R")
@@ -4162,6 +4166,7 @@ shared by the terminal Teams client."
              teams4e-copy-current-thread-markdown)
             ("Analyze complete thread with agent" .
              teams4e-analyze-current-thread)
+            ("Discuss all chats in this view with agent" . teams4e-analyze-view)
             ("Capture compact action to Org" .
              teams4e-capture-current-summary)
             ("Jump to existing Org capture" .
@@ -4206,6 +4211,7 @@ shared by the terminal Teams client."
          ("]" . teams4e-recent-next-unread)
          ("[" . teams4e-recent-previous-unread)
          ("g" . teams4e-recent-refresh)
+         ("G" . teams4e-analyze-view)
          ("c" . teams4e-send)
          ("i" . teams4e-mark-read-later)
          ("C" . teams4e-send)
@@ -4293,7 +4299,7 @@ shared by the terminal Teams client."
          ("A" . teams4e-attachment-preview)
          ("M-a" . teams4e-attachment-download)
          ("M-g" . teams4e-chat-refresh)
-         ("G" . teams4e-chat-load-all)
+         ("G" . teams4e-analyze-view)
          ("L" . teams4e-chat-load-more)
          ("M-S" . teams4e-toggle-message-order)
          ("E" . teams4e-export-thread)
@@ -4398,6 +4404,7 @@ shared by the terminal Teams client."
              teams4e-copy-current-thread-markdown)
             ("Analyze complete thread with agent" .
              teams4e-analyze-current-thread)
+            ("Discuss all chats in this view with agent" . teams4e-analyze-view)
             ("Undo last action" . teams4e-undo-action)
             ("Cache status" . teams4e-cache-status)
             ("Close inactive transcript buffers" .
@@ -4478,6 +4485,7 @@ shared by the terminal Teams client."
     "a" "action"
     "b" "bookmark"
     "v" "view"
+    "G" "discuss view with agent"
     "F" "unread only"
     "M" "select chat"
     "i" "mark read"
@@ -4513,6 +4521,7 @@ shared by the terminal Teams client."
     "e" "export Markdown"
     "y" "copy Markdown"
     "g" "analyze with agent"
+    "G" "discuss view with agent"
     "o" "Teams web"
     "O" "Teams app"
     "?" "choose action")
@@ -4522,6 +4531,7 @@ shared by the terminal Teams client."
     "-" "unreact"
     "a" "action"
     "L" "load older"
+    "G" "discuss view with agent"
     "S" "toggle order"
     "Y" "copy Markdown"
     "N" "next thread"

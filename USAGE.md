@@ -30,10 +30,11 @@ turn the reader into a separate mini-application.
 | `f` / `a f` | Forward the message at point to a person or chat for review |
 | `a e` / `a y` | Export / copy complete Markdown |
 | `a g` | Export and analyze with Agent Shell |
+| `G` / `a G` | Export all chats in this view and discuss them in one Agent Shell |
 | `a p` | Open participant availability |
 | `a v` / `a J` | RSVP / join |
 | `a C` | Open the linked Outlook event |
-| `G` / `L` | Load complete history / load more |
+| `C-u M-g` / `L` | Load complete history / load more in the reader |
 | `M-j` / `M-k` | Next/previous message in the transcript |
 | `M-h` | Select the complete message at point |
 | `M-w` | Copy the selected region (ordinary Emacs behavior) |
@@ -389,6 +390,39 @@ prompt is still available as configuration:
 ```elisp
 (setq teams4e-thread-analysis-prompt "$thread-analysis of this thread: %s")
 ```
+
+## Discuss the Current View
+
+Choose a bookmark or query, optionally toggle unread-only with `F`, then press
+`G`. It works from the headers or the linked chat reader. For example, choose
+Today, toggle unread-only, then press `G` to discuss that exact list.
+
+All rows in the view are included, not just the visible screenful or marked
+chats. The list and its metadata are frozen at invocation, so later filtering
+or marking read cannot change the export. For each selected chat, teams4e
+fetches complete available history, including messages older than a Today/Week
+bookmark. It does not use the reader's bounded message window.
+
+Exports run serially under the existing rate limits. A private, unique folder
+below `teams4e-export-directory` holds one Markdown file per chat and `index.md`.
+The index identifies the view, source links, read state at selection, and any
+unavailable histories. It does not include extra account identity or credentials.
+Partial results are explicitly labeled; if every export fails, no agent starts.
+The agent may still have its own context-size limits and is asked to report gaps.
+
+After collection, a new Agent Shell opens with `teams4e-thread-analysis-agent`
+and the prompt in `teams4e-view-analysis-prompt`. Ask questions, correct its
+understanding and discuss next actions there. This does not enable monitoring,
+share companion reference files, or change any Teams read state. Use a provider
+approved for these conversations; this command deliberately shares their content.
+
+`C-c C-k` in `*Teams View Analysis*`, or
+`M-x teams4e-view-analysis-cancel`, stops collection. Closing that progress buffer
+also cancels. Already exported files are retained; an in-flight HTTP export may
+finish but cannot start the agent or another export. Repeating `G` after finishing
+or cancellation creates a fresh snapshot and conversation. `a g` still analyzes
+just the current thread. The former reader `G` history action is available as
+`C-u M-g` or `M-x teams4e-chat-load-all`.
 
 ## Ongoing Interaction Companion
 

@@ -1,5 +1,11 @@
 # Teams Companion
 
+For a **one-shot discussion of the current filtered chat list**, press `G` in
+the Teams headers or reader (`M-x teams4e-analyze-view`). It exports complete
+histories for that frozen list and opens a new Agent Shell without monitoring.
+See [view analysis](USAGE.md#discuss-the-current-view). The ongoing companion
+below is a separate, bounded monitoring workflow with its own query.
+
 `M-x teams4e-companion` opens one ongoing Agent Shell conversation about your
 Teams interactions. Return to it during the day to discuss open questions,
 commitments, and what to do next. It receives fresh evidence as you respond
