@@ -658,7 +658,8 @@ when non-nil, receives the exit status and combined diagnostic text."
          '("teams" "chat" "member" "batch") args)
         (teams4e--args-prefix-p
          '("teams" "chat" "member" "list") args)
-        (teams4e--args-prefix-p '("teams" "chat" "message" "list") args))))
+        (teams4e--args-prefix-p '("teams" "chat" "message" "list") args)
+        (teams4e--args-prefix-p '("teams" "chat" "message" "export") args))))
 
 (defun teams4e--current-server-fingerprint (program)
   "Return the non-secret configuration fingerprint for PROGRAM."
@@ -5644,6 +5645,10 @@ image downloader."
     (concat
      (format "### %s - %s\n\n"
              (teams4e--message-time-label created) sender)
+     (when-let ((id (teams4e--get message 'id)))
+       (format "Message ID: `%s`\n\n" id))
+     (when-let ((url (teams4e--get message 'webUrl)))
+       (format "[Open message](%s)\n\n" url))
      (when (and reference (not (string-empty-p reference)))
        (concat reference "\n\n"))
      (if (and (string-empty-p body)

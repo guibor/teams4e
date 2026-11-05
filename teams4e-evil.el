@@ -14,6 +14,7 @@
 (declare-function evil-set-initial-state "evil-core")
 (declare-function teams4e-view-analysis-status "teams4e-companion" ())
 (declare-function teams4e-view-analysis-cancel "teams4e-companion" ())
+(declare-function teams4e-view-analysis-retry "teams4e-companion" ())
 (defvar teams4e-view-analysis-mode-map)
 
 (defun teams4e-evil-refresh-bookmark-bindings ()
@@ -47,6 +48,7 @@
     (evil-define-key* '(normal motion) teams4e-view-analysis-mode-map
       (kbd "q") #'quit-window
       (kbd "RET") #'teams4e-view-analysis-status
+      (kbd "r") #'teams4e-view-analysis-retry
       (kbd "C-c C-k") #'teams4e-view-analysis-cancel))
   (dolist (map (list teams4e-recent-mode-map teams4e-chat-mode-map))
     (evil-define-key* '(normal motion) map (kbd "M-f") #'teams4e-find-chat))

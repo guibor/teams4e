@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Keep `G` view analysis in one continuing Agent Shell discussion. Repeated
+  invocations add timestamped context; `C-u G` starts fresh. Preserve user drafts
+  and busy turns by waiting for an idle, empty prompt without stealing focus.
+  Reuse complete unchanged exports for a configurable five minutes, provide
+  forced refresh and retry-only-failed/unfinished histories, and keep successful
+  files after cancellation. Account/agent changes require a new discussion.
+- Add source-opening and draft/capture/snooze/read actions in the view discussion,
+  message IDs/source links in Markdown, and an evidence-linked briefing separating
+  needed responses, waiting and upcoming commitments. Inherited MCP tools remain
+  untouched; actions require the user's request. Show real page/message counts,
+  authentication, rate-limit waits and cache-write stages for persistent exports.
+
 - Give view-wide agent exports a live spinner, elapsed time and completed/total
   chat counts in the progress header and mode line. `q` hides without cancelling;
   `teams4e-view-analysis-status` opens progress or the ready agent. Start the

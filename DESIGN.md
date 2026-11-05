@@ -453,7 +453,7 @@ lowercase `r` to mark-read.
 
 ## View Analysis
 
-`teams4e-analyze-view` is a one-shot sibling of the ongoing companion, reusing
+`teams4e-analyze-view` is an on-demand sibling of the monitored companion, reusing
 the complete-history validator/writer, configured thread-analysis agent and
 Agent Shell starter. It freezes the IDs actually listed by the headers and
 copies their metadata for the export. It never refreshes/broadens the inbox,
@@ -476,13 +476,28 @@ check that token, account identity and the current batch position before writing
 or advancing. Cancelling/killing the buffer or switching accounts blocks late
 callbacks and agent startup. No polling loop or companion monitoring is enabled.
 Failed chats are labeled in the index; if all fail, no agent starts.
+One session plist owns the agent buffer and disposable export references
+(path, label, history fingerprint, export time and count), not inferred tasks. `G`
+reuses that discussion across filters; explicit prefix starts anew. Immutable
+snapshot indexes link the preceding delivered snapshot. Histories with unchanged
+local metadata may reuse a complete file for five minutes. This is not a delta
+check; timestamps and the old-edit/deletion limitation are explicit. Forced
+refresh bypasses reuse. A retry closure retains the original selection and
+successful file references, retrying only failures/unfinished histories even
+after the progress buffer is killed. State is not restored across Emacs restarts.
+Account/provider and agent changes require an explicit fresh discussion.
 The agent's own context limits still apply. Unit tests stub the agent, and an
 end-to-end test exports the bundled synthetic tenant through the real backend.
 
-The export UI has one buffer-local progress plist and a one-second display-only
-timer, not another request queue. Its token guard prevents stale ticks from
+The export UI has one buffer-local progress plist and a one-second UI/delivery
+timer, not another network request queue. Its token guard prevents stale ticks from
 altering a later export. Counts come from completed histories; elapsed time is
-wall-clock time and no per-page progress or ETA is invented. The timer stops on
+wall-clock time. Opted-in persistent exports report content-free stages and
+page/message counters, isolated by a Python ContextVar; normal transcript
+preview progress retains its existing list payload. Authentication, shared
+rate-budget waits/backoff, download and cache write stages are factual; no ETA
+is invented. Export reads use general workers (never reserved foreground slots)
+and support cancellation between pages/backoff. The timer stops on
 every terminal path. A standard `global-mode-string` entry remains available
 while the progress buffer is hidden and keeps readiness visible until opened.
 `q` hides; explicit cancellation or killing/changing the progress mode stops it.
@@ -491,10 +506,17 @@ Background handoff uses Agent Shell's own `agent-shell--start` no-focus/new-sess
 path and inserts the prompt from the shell buffer with `:no-focus t`. This also
 prevents deferred prompt insertion or viewport preferences from stealing focus;
 wrapping a foreground startup in `save-window-excursion` would not protect a
-later callback. Only a user still watching progress is switched to the new shell.
+later callback. Subsequent snapshots use the same shell, sharing the companion's
+empty/idle prompt readiness check. One pending handoff waits without overwriting
+input. It is cleared before insertion so partial failures never auto-resubmit.
+Large synchronous/cache batches use a bounded trampoline and yield to Emacs.
+Only a user still watching progress is switched to the shell.
 Readiness notifications contain counts, not chat content; optional desktop
 notification failures cannot fail the export. Tests exercise hidden completion,
 window/point preservation, startup options, loader cleanup and stale ticks.
+Source actions reuse the existing compose/capture/snooze/read commands and
+isolate bulk selections. Message exports now expose IDs and supplied source
+links for citations. Agent tools/permissions are inherited, not reconfigured.
 
 ## Thread Latency
 

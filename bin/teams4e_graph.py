@@ -48,6 +48,7 @@ OUTBOX_SEND = ContextVar("outbox_send", default=False)
 READ_CANCEL = ContextVar("read_cancel", default=None)
 REQUEST_TIMINGS = ContextVar("request_timings", default=None)
 KEEP_ALIVE = ContextVar("keep_alive", default=False)
+EXPORT_PROGRESS = ContextVar("export_progress", default=None)
 GRAPH_READ_TRANSPORT = GraphReadTransport(GRAPH_HOST)
 MEETING_EVENT_SELECT = (
     "id,subject,start,end,isAllDay,isCancelled,showAs,responseStatus,"
@@ -72,6 +73,12 @@ class BackendError(RuntimeError):
 
 class ReadCancelled(Exception):
   """An obsolete, read-only request was cancelled by the client."""
+
+
+def export_progress(stage: str, **counts: int | float) -> None:
+  """Emit content-free stages only for an opted-in history export."""
+  if (callback := EXPORT_PROGRESS.get()) is not None:
+    callback({"stage": stage, **counts})
 
 
 def check_read_cancelled() -> None:
@@ -128,6 +135,7 @@ class GraphRequestBudget:
         if wait <= 0:
           self.requests.extend([now] * cost)
           return
+      export_progress("throttle", retryAfterSeconds=wait)
       self.sleep(wait)
 
   def defer(self, seconds):
@@ -553,6 +561,7 @@ def graph_json(
         with timed_stage("throttleMs"):
           GRAPH_REQUEST_BUDGET.acquire(max(1, cost))
         check_read_cancelled()
+        export_progress("download")
         with timed_stage("httpMs"):
           opener = (GRAPH_READ_TRANSPORT.open
                     if KEEP_ALIVE.get() and method == "GET"
@@ -577,6 +586,8 @@ def graph_json(
           raise Rejected() from exception
         raise BackendError("Scheduled send outcome unknown") from exception
       if retryable and attempt + 1 < GRAPH_RETRY_ATTEMPTS:
+        export_progress("throttle" if exception.code == 429 else "retry",
+                        retryAfterSeconds=delay)
         if exception.code != 429:
           read_wait(delay)
         continue
@@ -894,6 +905,7 @@ def graph_collection_with_metadata(
     if not isinstance(values, list):
       raise BackendError("Microsoft Graph collection has no value array")
     items.extend(item for item in values if isinstance(item, dict))
+    export_progress("download", pages=page_count, messages=len(items))
     candidate = page.get("@odata.nextLink")
     next_url = candidate if isinstance(candidate, str) and candidate else None
     if first_page and page_count == 1 and limit:
@@ -3719,6 +3731,7 @@ def execute(
     return "The shared Microsoft Graph credential is ready.", "text"
 
   with timed_stage("authMs"):
+    export_progress("auth")
     with TOKEN_REFRESH_LOCK:
       access_token = ensure_graph_token(path)
   result: Any
@@ -3853,6 +3866,7 @@ def execute(
   elif args[:4] == ["teams", "chat", "message", "export"]:
     chat_id = str(option(args, "--chatId"))
     result = export_message_history(chat_id, access_token)
+    export_progress("cache")
     with TeamsCache() as cache:
       cache.upsert_messages("chat", chat_id, result["value"])
   elif args[:4] == ["teams", "chat", "message", "list"]:
@@ -4062,8 +4076,9 @@ def serve() -> int:
 
   Each input object contains an integer ``id`` and a string-array ``args``.
   Responses contain the same ID plus either ``result`` or a redacted error.
-  Opt-in ``progress: true`` allows an intermediate chat-page response with
-  that flag; the final response omits it and retains normal command semantics.
+  Opt-in ``progress: true`` allows intermediate chat-page responses or, for
+  full exports, content-free stage/count dictionaries. The final response omits
+  that flag and retains normal command semantics.
   ``cancel: id`` stops obsolete transcript reads between HTTP calls and during
   retry waits. It never cancels mutations or claims to interrupt in-flight HTTP.
   The protocol is transport-only: command semantics and cache ownership remain
@@ -4098,6 +4113,11 @@ def serve() -> int:
     timings = {"queueMs": (time.monotonic() - queued_at) * 1000}
     timing_context = REQUEST_TIMINGS.set(timings)
     transport_context = KEEP_ALIVE.set(True)
+    export_context = EXPORT_PROGRESS.set(
+        (lambda update: respond({"id": request_id, "ok": True,
+                                 "progress": True, "result": update}))
+        if request.get("progress") is True
+        and args[:4] == ["teams", "chat", "message", "export"] else None)
     try:
       check_read_cancelled()
       if request.get("progress") is True:
@@ -4122,6 +4142,7 @@ def serve() -> int:
           "error": f"Unexpected backend failure: {exception}",
       })
     finally:
+      EXPORT_PROGRESS.reset(export_context)
       KEEP_ALIVE.reset(transport_context)
       REQUEST_TIMINGS.reset(timing_context)
       READ_CANCEL.reset(context)
@@ -4149,11 +4170,12 @@ def serve() -> int:
         continue
       args = request.get("args")
       request_id = request.get("id")
-      # Only transcript reads are cancellable. Never abort sends, read-state
-      # changes, exports, or any other side-effecting command.
+      # History exports only read Graph and update a disposable local cache.
+      # Never cancel sends, read-state changes or other remote mutations.
       cancellable = (
           isinstance(args, list) and all(isinstance(arg, str) for arg in args)
           and (args[:4] == ["teams", "chat", "message", "list"]
+               or args[:4] == ["teams", "chat", "message", "export"]
                or args[:5] == ["teams", "cache", "chat", "message", "list"])
       )
       cancel = threading.Event() if cancellable and isinstance(request_id, int) else None

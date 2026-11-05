@@ -612,18 +612,31 @@ See [Calendar setup, defaults, and boundaries](CALENDAR.md), including the
 - `teams4e-analyze-current-thread` exports the full available conversation,
   then opens Agent Shell with a configurable prompt and agent.
 - `teams4e-analyze-view` (`G` in headers or their reader) exports every chat
-  listed in the current filtered view and opens one Agent Shell discussion.
+  listed in the current filtered view into **one continuing Agent Shell
+  discussion**. Press `G` again to add current context, keeping your corrections
+  and decisions. `C-u G` explicitly starts a new discussion.
   Bookmarks, queries and unread-only filters determine the selected chats;
   scroll position and bulk marks do not. The list is frozen when invoked.
   Complete histories are saved as private Markdown files with an index, dates,
-  source links and explicit coverage/failures. This is a one-shot snapshot,
-  not automatic monitoring. Use `teams4e-thread-analysis-agent` to choose the
-  agent and `teams4e-view-analysis-prompt` to customize its first prompt.
+  source links and explicit coverage/failures. Collection is on demand, not
+  automatic monitoring. Use `teams4e-thread-analysis-agent` to choose the
+  agent and `teams4e-view-analysis-prompt` to customize each context update.
+  Unchanged histories can reuse a complete export for five minutes, with its
+  original timestamp clearly labeled. `C-u C-c t r` in the agent forces fresh
+  histories; `C-c t e` retries only missing/failed histories from the last view.
+  Updates wait for an idle, empty prompt and never overwrite what you are typing.
   A live spinner, elapsed time and chat counts remain visible in progress and
   the mode line. `q` hides progress while collection continues; `C-c C-k` cancels.
+  The bundled persistent backend also reports pages/messages, authentication,
+  rate-limit waits and local cache writes. `C-c t o` opens a source; `C-c t a`
+  offers draft, capture, snooze and read actions using the existing Teams UI.
   When ready, Agent Shell opens if you are still watching progress. Otherwise
   it stays in the background and completion is announced without stealing focus.
   Click the mode-line indicator or run `teams4e-view-analysis-status` to open it.
+  The briefing separates requests needing your response, waiting on others,
+  and upcoming commitments, with citations and explicit uncertainty. Existing
+  agent tools, including Teams MCP when configured, are inherited unchanged;
+  sends and other mutations require your request, not an inferred task.
 - `teams4e-companion` opens a reusable discussion of
   open requests, commitments, and possible next actions. Monitoring starts
   when you invoke it; it is bounded, visible, and pausable.

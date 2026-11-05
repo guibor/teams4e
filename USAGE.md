@@ -410,17 +410,37 @@ unavailable histories. It does not include extra account identity or credentials
 Partial results are explicitly labeled; if every export fails, no agent starts.
 The agent may still have its own context-size limits and is asked to report gaps.
 
-After collection, a new Agent Shell opens with `teams4e-thread-analysis-agent`
-and the prompt in `teams4e-view-analysis-prompt`. Ask questions, correct its
-understanding and discuss next actions there. This does not enable monitoring,
+The first collection opens Agent Shell with `teams4e-thread-analysis-agent`
+and `teams4e-view-analysis-prompt`. Subsequent `G` invocations add a new snapshot
+to **the same discussion**, even when you change bookmarks. Your earlier
+corrections and decisions remain in that conversation. Each snapshot identifies
+its scope; a chat disappearing from a filtered view does not close a commitment.
+Use `C-u G` for a deliberately new conversation and fresh exports.
+
+The default briefing separates **Needs my response**, **Waiting on someone**,
+and **Upcoming commitments**. Updates focus on what changed, with at most three
+suggested next actions and message citations. Exports contain message IDs and
+exact source links when Teams supplies them. Agent inference is not a task status.
+The agent inherits its configured tools, including Teams MCP if available;
+teams4e does not install tools or alter permissions. You can ask it to find a
+source, prepare a reply, or take an explicitly requested action through those
+tools. Source text never authorizes actions; sending requires your request.
+
+Ask questions, correct its understanding and discuss next actions there.
+This does not enable monitoring,
 share companion reference files, or change any Teams read state. Use a provider
 approved for these conversations; this command deliberately shares their content.
 
 The progress header and global mode-line indicator show a live spinner, elapsed
-time, completed/total chats and unavailable histories. The current chat's name
-appears only in the progress header. Counts advance when a whole history finishes;
+time, completed/total chats, reused files and unavailable histories. The current
+chat's name appears only in the progress header. With the bundled persistent
+backend, it also shows actual page/message counts, credential checks, downloads,
+rate-limit/backoff waits, local cache writes and Markdown writing. Older/custom
+or one-shot adapters still get the spinner and completed-chat counts, without
+invented stage information. Counts advance when a whole history finishes;
 the spinner indicates waiting, not a claim that network bytes are arriving.
-There is no guessed completion time. The one-second UI timer makes no API calls.
+There is no guessed completion time. The one-second timer makes no API calls;
+while an update is queued it also checks whether the agent prompt is ready.
 
 Press `q` to hide progress and keep working. When collection finishes, the agent
 starts in the background with its prompt queued without taking focus, including
@@ -429,7 +449,10 @@ progress buffer, the ready agent opens automatically. Otherwise a persistent
 clickable mode-line indicator and an echo-area message announce readiness.
 Desktop notifications are also attempted when supported and
 `teams4e-notifications` is non-nil; they contain counts, not chat names or text.
-Readiness means the context was handed off, not that the agent has finished its
+For an existing discussion, updates wait while the agent is busy or you have
+unsent input. The indicator explicitly says it is waiting for an idle prompt.
+Only one collection/handoff runs at a time. Readiness means the context was
+handed off, not that the agent has finished its
 answer. Agent Shell shows its own response progress from there.
 
 Click the mode-line indicator or use `M-x teams4e-view-analysis-status` to open
@@ -440,11 +463,53 @@ progress buffer does the same. These commands do not start another agent.
 `M-x teams4e-view-analysis-cancel`, stops collection. Killing that progress buffer
 also cancels, but merely hiding it with `q` does not. Completion, errors,
 cancellation and buffer cleanup all stop the loader timer.
-Already exported files are retained; an in-flight HTTP export may
-finish but cannot start the agent or another export. Repeating `G` after finishing
-or cancellation creates a fresh snapshot and conversation. `a g` still analyzes
+Already exported files are retained; the bundled backend cancels between pages
+and during retry waits. An in-flight HTTP call may finish, but its result cannot
+start an agent or another export after cancellation. Cancellation also drops a
+pending context handoff, but cannot retract an already submitted agent prompt.
+`a g` still analyzes
 just the current thread. The former reader `G` history action is available as
 `C-u M-g` or `M-x teams4e-chat-load-all`.
+
+### Refresh, Retry and Act
+
+These bindings apply inside the view discussion's Agent Shell:
+
+| Key | Command | Action |
+| --- | --- | --- |
+| `C-c t r` | `teams4e-view-analysis-refresh` | Add the currently displayed headers view |
+| `C-u C-c t r` | Same, with prefix | Re-export every selected history, preserving the discussion |
+| `C-c t e` | `teams4e-view-analysis-retry` | Retry missing/failed histories in the last frozen selection |
+| `C-c t o` | `teams4e-view-analysis-open-source` | Choose a shared source and open its native reader |
+| `C-u C-c t o` | Same, with prefix | Enter a cited message ID and select it after full loading |
+| `C-c t a` | `teams4e-view-analysis-action` | Choose a source, then open/draft/capture/snooze/mark read |
+| `C-c t s` | `teams4e-view-analysis-status` | Return to export status or the discussion |
+
+`r` in the progress buffer also retries. Bindings are ordinary customizable
+keymaps, `teams4e-view-analysis-session-mode-map` and
+`teams4e-view-analysis-mode-map`. Drafting opens the configured editor (Org by
+default); it does not send. Source actions target one selected conversation,
+not an unrelated bulk selection in the headers.
+
+`teams4e-view-analysis-reuse-seconds` defaults to 300. Reuse requires an existing
+complete file, matching account/provider, and unchanged local history metadata.
+The original export time is retained, never presented as a fresh server read.
+This is **not a delta API**: refresh your headers for new activity, or force a
+full export to check old edits/deletions that preview metadata can miss.
+Setting the option to zero disables normal reuse. Changed/expired histories
+are downloaded completely; partial histories never enter the reuse cache.
+
+Retry keeps successful files from the original frozen selection, even after the
+normal reuse timeout, and labels their timestamps. It works after cancellation,
+authentication failure, or closing the progress buffer. If agent handoff fails,
+the files remain available for an explicit retry; a failed prompt insertion is
+never automatically repeated because it might have partly succeeded.
+
+Discussion ownership, reuse references and retry state live in the current
+Emacs session. Restarting Emacs does not automatically restore the agent or a
+partial export job; retained Markdown snapshots can still be inspected manually.
+Changing account/provider or agent requires `C-u G`, preventing accidental
+cross-account context reuse. Provider context limits and retention still apply.
 
 ## Ongoing Interaction Companion
 

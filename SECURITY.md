@@ -34,6 +34,7 @@ See [AUTHENTICATION.md](AUTHENTICATION.md) for provider contracts and limitation
 | Scheduled source, rendered messages and delivery results | Private local SQLite outbox; not encrypted or automatically purged |
 | Downloads, Markdown exports, Org captures | Local destinations you select or configure |
 | Thread analysis | An exported conversation made available to your selected Agent Shell agent |
+| View analysis (`G`) | Complete histories for the explicitly selected filtered view, supplied to one continuing agent discussion; private timestamped Markdown snapshots retained locally |
 | Ongoing companion | Bounded excerpts and explicitly shared context sent to the selected agent after you start it |
 
 Local caches, drafts, exports, and snapshots can contain personal or confidential
@@ -51,6 +52,17 @@ Markdown renderer does not submit messages to an AI service. The companion is
 opt-in, but invoking it starts periodic checks by default; see [COMPANION.md](COMPANION.md)
 for pausing, scope limits, and manual-only operation. Agent tools and permissions
 are governed by your agent configuration, not restricted by teams4e.
+
+View analysis is on demand, not a monitor. Repeated `G` adds evidence to the
+same agent conversation; changing filters does not remove previously shared
+content. `C-u G` starts a new discussion. Account/provider guards and export
+reuse references are in memory, not credentials written into snapshots. Cached
+histories are timestamped evidence, not guaranteed fresh server state. Retained
+files are not automatically purged; see [view analysis](USAGE.md#discuss-the-current-view).
+The default prompt requests reviewed drafts and explicit authorization for
+mutations, but is not a technical sandbox. Inherited Teams MCP or other tools
+retain their existing permissions. The export loader sends only stage names and
+numeric counts; errors are not included as agent source material.
 
 Org composition disables Babel execution and rejects includes, setup files,
 macros, and calls. Markdown conversion runs the configured Pandoc executable
