@@ -617,11 +617,15 @@ See [Calendar setup, defaults, and boundaries](CALENDAR.md), including the
   and decisions. `C-u G` explicitly starts a new discussion.
   Bookmarks, queries and unread-only filters determine the selected chats;
   scroll position and bulk marks do not. The list is frozen when invoked.
-  Complete histories are saved as private Markdown files with an index, dates,
+  By default each chat contributes **the last 30 days, capped at 5,000 newest
+  messages**. Pagination stops at the first bound, not after downloading the
+  lifetime of a busy chat. Configure `teams4e-view-analysis-days` and
+  `teams4e-view-analysis-message-limit`; nil disables the respective cap.
+  Bounded histories are saved as private Markdown files with an index, dates,
   source links and explicit coverage/failures. Collection is on demand, not
   automatic monitoring. Use `teams4e-thread-analysis-agent` to choose the
   agent and `teams4e-view-analysis-prompt` to customize each context update.
-  Unchanged histories can reuse a complete export for five minutes, with its
+  Unchanged histories can reuse a successful snapshot for five minutes, with its
   original timestamp clearly labeled. `C-u C-c t r` in the agent forces fresh
   histories; `C-c t e` retries only missing/failed histories from the last view.
   Updates wait for an idle, empty prompt and never overwrite what you are typing.
@@ -637,6 +641,8 @@ See [Calendar setup, defaults, and boundaries](CALENDAR.md), including the
   and upcoming commitments, with citations and explicit uncertainty. Existing
   agent tools, including Teams MCP when configured, are inherited unchanged;
   sends and other mutations require your request, not an inferred task.
+  Update the installed Python backend along with the Lisp package for bounded
+  snapshots. Single-thread `a g` analysis and full Markdown export stay exhaustive.
 - `teams4e-companion` opens a reusable discussion of
   open requests, commitments, and possible next actions. Monitoring starts
   when you invoke it; it is bounded, visible, and pausable.

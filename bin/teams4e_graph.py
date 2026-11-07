@@ -29,6 +29,7 @@ from typing import Any
 from teams4e_cache import TeamsCache
 from teams4e_calendar import calendar_draft_payload
 from teams4e_http import GraphReadTransport
+from teams4e_history import bounded_history
 from teams4e_mock import MockTenant, mock_enabled
 from teams4e_outbox import Outbox, RetryLater, Rejected, schedule_time
 
@@ -2674,6 +2675,38 @@ def export_message_history(
   }
 
 
+def export_message_snapshot(chat_id, access_token, *, since=None, limit=None):
+  """Fetch recent context, stopping network reads at the first configured bound."""
+  def pages():
+    next_url = collection_path(
+        f"/chats/{quoted_id(chat_id)}/messages",
+        [("$top", str(min(50, limit) if limit else 50)),
+         ("$orderby", "createdDateTime desc")],
+    )
+    seen = set()
+    while next_url:
+      check_read_cancelled()
+      if next_url in seen:
+        raise BackendError("Microsoft Graph pagination repeated a page URL")
+      seen.add(next_url)
+      page = graph_json(next_url, access_token)
+      check_read_cancelled()
+      yield page
+      candidate = page.get("@odata.nextLink")
+      next_url = candidate if isinstance(candidate, str) and candidate else None
+
+  # createdDateTime supports descending order, but only an lt date filter.
+  # Stop the lazy iterator at the lower bound, never scan the older pages.
+  try:
+    return bounded_history(
+        pages(), since=since, limit=limit,
+        progress=lambda pages, messages: export_progress(
+            "download", pages=pages, messages=messages),
+    )
+  except ValueError as exception:
+    raise BackendError(str(exception)) from exception
+
+
 def list_joined_teams(access_token: str) -> list[dict[str, Any]]:
   """Return teams joined by the signed-in user."""
   return graph_collection(
@@ -3869,6 +3902,17 @@ def execute(
     export_progress("cache")
     with TeamsCache() as cache:
       cache.upsert_messages("chat", chat_id, result["value"])
+  elif args[:4] == ["teams", "chat", "message", "snapshot"]:
+    chat_id = str(option(args, "--chatId"))
+    result = export_message_snapshot(
+        chat_id, access_token,
+        since=option(args, "--since", required=False),
+        limit=(integer_option(args, "--limit", 5000, minimum=1)
+               if option(args, "--limit", required=False) is not None else None),
+    )
+    export_progress("cache")
+    with TeamsCache() as cache:
+      cache.upsert_messages("chat", chat_id, result["value"])
   elif args[:4] == ["teams", "chat", "message", "list"]:
     chat_id = str(option(args, "--chatId"))
     requested_limit = option(args, "--limit", required=False)
@@ -4117,7 +4161,8 @@ def serve() -> int:
         (lambda update: respond({"id": request_id, "ok": True,
                                  "progress": True, "result": update}))
         if request.get("progress") is True
-        and args[:4] == ["teams", "chat", "message", "export"] else None)
+        and args[:4] in (["teams", "chat", "message", "export"],
+                        ["teams", "chat", "message", "snapshot"]) else None)
     try:
       check_read_cancelled()
       if request.get("progress") is True:
@@ -4176,6 +4221,7 @@ def serve() -> int:
           isinstance(args, list) and all(isinstance(arg, str) for arg in args)
           and (args[:4] == ["teams", "chat", "message", "list"]
                or args[:4] == ["teams", "chat", "message", "export"]
+               or args[:4] == ["teams", "chat", "message", "snapshot"]
                or args[:5] == ["teams", "cache", "chat", "message", "list"])
       )
       cancel = threading.Event() if cancellable and isinstance(request_id, int) else None

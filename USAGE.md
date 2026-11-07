@@ -400,14 +400,39 @@ Today, toggle unread-only, then press `G` to discuss that exact list.
 All rows in the view are included, not just the visible screenful or marked
 chats. The list and its metadata are frozen at invocation, so later filtering
 or marking read cannot change the export. For each selected chat, teams4e
-fetches complete available history, including messages older than a Today/Week
-bookmark. It does not use the reader's bounded message window.
+fetches **the last 30 rolling days, capped at 5,000 newest messages**, stopping
+network pagination at whichever bound is reached first. These limits are
+independent of the bookmark and the reader's message window. For example, Today
+selects the chats, while the snapshot can include their preceding 30 days.
+
+```elisp
+(setq teams4e-view-analysis-days 30
+      teams4e-view-analysis-message-limit 5000)
+```
+
+Both options accept a positive integer or nil to remove that cap. This uses
+message creation time, not edits/reactions to an old message. Thirty days means
+a rolling 30 x 24 hours, not the previous calendar month. The cutoff is frozen
+once for the entire collection. Undated/malformed-date messages are retained,
+counted against the cap, and labeled in the exported metadata.
+
+`C-u G` and forced refresh **keep these limits**. For deliberate full-history
+work, use the unchanged single-thread `a g` or Markdown export, or explicitly
+set both view limits to nil. Update both the Lisp package and the installed
+Python backend: bounded views use `teams chat message snapshot --since ...
+--limit ... --chatId ...`. An older adapter rejects this command rather than
+silently downloading unlimited history. There is no automatic unbounded fallback.
 
 Exports run serially under the existing rate limits. A private, unique folder
 below `teams4e-export-directory` holds one Markdown file per chat and `index.md`.
-The index identifies the view, source links, read state at selection, and any
-unavailable histories. It does not include extra account identity or credentials.
-Partial results are explicitly labeled; if every export fails, no agent starts.
+The index identifies the view, source links, read state at selection, bounds,
+stop reasons and any unavailable histories. It does not include extra account
+identity or credentials. Bounded exports never claim full history: hitting the
+message cap can omit even part of the requested month. Older quoted originals
+may also be outside the snapshot. The prompt asks the agent not to compensate by
+silently fetching old histories through MCP. Failed results are explicitly
+labeled; if every export fails, no agent starts. An empty recent window is a
+valid snapshot, not a backend failure or evidence that older work is resolved.
 The agent may still have its own context-size limits and is asked to report gaps.
 
 The first collection opens Agent Shell with `teams4e-thread-analysis-agent`
@@ -435,9 +460,10 @@ The progress header and global mode-line indicator show a live spinner, elapsed
 time, completed/total chats, reused files and unavailable histories. The current
 chat's name appears only in the progress header. With the bundled persistent
 backend, it also shows actual page/message counts, credential checks, downloads,
-rate-limit/backoff waits, local cache writes and Markdown writing. Older/custom
-or one-shot adapters still get the spinner and completed-chat counts, without
-invented stage information. Counts advance when a whole history finishes;
+rate-limit/backoff waits, local cache writes and Markdown writing. Custom or
+one-shot adapters that implement bounded snapshots still get the spinner and
+completed-chat counts, without invented stage information. Counts advance when
+a whole history finishes;
 the spinner indicates waiting, not a claim that network bytes are arriving.
 There is no guessed completion time. The one-second timer makes no API calls;
 while an update is queued it also checks whether the agent prompt is ready.
@@ -492,18 +518,23 @@ default); it does not send. Source actions target one selected conversation,
 not an unrelated bulk selection in the headers.
 
 `teams4e-view-analysis-reuse-seconds` defaults to 300. Reuse requires an existing
-complete file, matching account/provider, and unchanged local history metadata.
+successful file, matching account/provider and history-limit settings, and
+unchanged local history metadata. Changing either limit invalidates normal reuse;
+an earlier unlimited export cannot slip into a newly bounded snapshot.
 The original export time is retained, never presented as a fresh server read.
 This is **not a delta API**: refresh your headers for new activity, or force a
-full export to check old edits/deletions that preview metadata can miss.
+fresh export to check edits/deletions within the selected bounds that preview
+metadata can miss.
 Setting the option to zero disables normal reuse. Changed/expired histories
-are downloaded completely; partial histories never enter the reuse cache.
+are downloaded up to the configured bounds; failed downloads never enter the
+reuse cache.
 
-Retry keeps successful files from the original frozen selection, even after the
+Retry keeps the original frozen selection **and cutoff/limits**, even after the
 normal reuse timeout, and labels their timestamps. It works after cancellation,
 authentication failure, or closing the progress buffer. If agent handoff fails,
 the files remain available for an explicit retry; a failed prompt insertion is
 never automatically repeated because it might have partly succeeded.
+Use `G` or `C-c t r` instead of retry to apply changed limit preferences.
 
 Discussion ownership, reuse references and retry state live in the current
 Emacs session. Restarting Emacs does not automatically restore the agent or a

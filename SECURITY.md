@@ -34,7 +34,7 @@ See [AUTHENTICATION.md](AUTHENTICATION.md) for provider contracts and limitation
 | Scheduled source, rendered messages and delivery results | Private local SQLite outbox; not encrypted or automatically purged |
 | Downloads, Markdown exports, Org captures | Local destinations you select or configure |
 | Thread analysis | An exported conversation made available to your selected Agent Shell agent |
-| View analysis (`G`) | Complete histories for the explicitly selected filtered view, supplied to one continuing agent discussion; private timestamped Markdown snapshots retained locally |
+| View analysis (`G`) | Bounded recent histories for the explicitly selected filtered view (30 days / 5,000 messages per chat by default), supplied to one continuing agent discussion; private timestamped Markdown snapshots retained locally |
 | Ongoing companion | Bounded excerpts and explicitly shared context sent to the selected agent after you start it |
 
 Local caches, drafts, exports, and snapshots can contain personal or confidential

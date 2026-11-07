@@ -659,7 +659,8 @@ when non-nil, receives the exit status and combined diagnostic text."
         (teams4e--args-prefix-p
          '("teams" "chat" "member" "list") args)
         (teams4e--args-prefix-p '("teams" "chat" "message" "list") args)
-        (teams4e--args-prefix-p '("teams" "chat" "message" "export") args))))
+        (teams4e--args-prefix-p '("teams" "chat" "message" "export") args)
+        (teams4e--args-prefix-p '("teams" "chat" "message" "snapshot") args))))
 
 (defun teams4e--current-server-fingerprint (program)
   "Return the non-secret configuration fingerprint for PROGRAM."
@@ -5670,9 +5671,9 @@ image downloader."
       (error value))))
 
 (defun teams4e--thread-markdown (chat messages &optional history)
-  "Return complete CHAT MESSAGES as a portable Markdown document.
+  "Return CHAT MESSAGES as a portable Markdown document.
 
-HISTORY is backend pagination metadata for a verified full-chat export."
+HISTORY labels verified full-chat pagination or an explicitly bounded snapshot."
   (let* ((title (teams4e--chat-label chat))
          (url (teams4e--get chat 'webUrl))
          (normalized (teams4e--normalize-messages messages))
@@ -5689,11 +5690,20 @@ HISTORY is backend pagination metadata for a verified full-chat export."
      (format "- Exported: %s\n" (format-time-string "%Y-%m-%d %H:%M %Z"))
      (format "- Teams chat ID: `%s`\n" (teams4e--chat-id chat))
      (format "- Messages: %d\n" (length normalized))
-     (when history
+     (cond
+      ((eq t (teams4e--get history 'bounded))
+       (format (concat "- History: Bounded recent snapshot, NOT full history\n"
+                       "- Cutoff: %s; message cap: %s; stopped: %s\n"
+                       "- Undated messages retained: %d\n")
+               (or (teams4e--get history 'since) "none")
+               (or (teams4e--get history 'limit) "none")
+               (teams4e--get history 'stopReason)
+               (or (teams4e--get history 'undatedMessageCount) 0)))
+      (history
        (format "- History: Complete Microsoft Graph pagination%s\n"
                (if (numberp pages)
                    (format " (%d page%s)" pages (if (= pages 1) "" "s"))
-                 "")))
+                 ""))))
      (when (or oldest newest)
        (format "- Range: %s to %s\n"
                (or (teams4e--export-time-label oldest) "unknown")
@@ -5771,11 +5781,16 @@ with the absolute saved path after the mode-0600 file has been written."
 
 (defun teams4e--full-history-result (payload)
   "Validate PAYLOAD and return its messages and completion metadata."
+  (unless (eq t (teams4e--get (teams4e--get payload 'history) 'complete))
+    (error "Teams backend did not confirm complete history pagination"))
+  (teams4e--history-result payload))
+
+(defun teams4e--history-result (payload)
+  "Check raw row count in PAYLOAD before normalizing messages.
+Callers must separately validate complete-history or bounded-snapshot coverage."
   (let* ((history (teams4e--get payload 'history))
          (messages (teams4e--payload-list (teams4e--get payload 'value)))
          (reported-count (teams4e--get history 'messageCount)))
-    (unless (eq t (teams4e--get history 'complete))
-      (error "Teams backend did not confirm complete history pagination"))
     (when (and (numberp reported-count)
                (/= reported-count (length messages)))
       (error "Teams history count mismatch: backend %d, received %d"

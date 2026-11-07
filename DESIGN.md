@@ -124,7 +124,7 @@ Main entry points:
   meeting interval through the meeting workspace, with a legacy minibuffer
   fallback when that module is not loaded.
 
-Chat export and agent analysis use a separate full-history backend command,
+Single-thread export and agent analysis use a separate full-history backend command,
 not the bounded reader or SQLite cache. `export_message_history` follows Graph
 until no `@odata.nextLink` remains and returns the same message objects with a
 small completion envelope: page count, message count, and oldest/newest
@@ -454,18 +454,31 @@ lowercase `r` to mark-read.
 ## View Analysis
 
 `teams4e-analyze-view` is an on-demand sibling of the monitored companion, reusing
-the complete-history validator/writer, configured thread-analysis agent and
+the Markdown writer, configured thread-analysis agent and
 Agent Shell starter. It freezes the IDs actually listed by the headers and
 copies their metadata for the export. It never refreshes/broadens the inbox,
 uses bulk marks as scope, or creates a synchronized second conversation list.
 Queries, bookmark membership and unread overlays have already been applied by
 the headers renderer. The snapshot covers all listed rows, not a screenful.
 
-A private unique directory contains one validated full-history Markdown file
+A private unique directory contains one validated bounded Markdown snapshot
 per successful chat and an index, including selected scope, dates, links and
 failure counts. Collection is serial; readers retain their existing execution
 capacity. Errors are not passed to the agent as source material. Incomplete
 pagination/count mismatches are failures rather than silently truncated history.
+Default bounds are 30 rolling days and 5,000 newest messages per chat. The new
+`teams chat message snapshot` command uses newest-created-first Graph ordering
+and stops its lazy page iterator at the first date or message bound. This is
+not post-download truncation. A separate command prevents older backends from
+ignoring new flags and fetching everything. Full `export` stays unchanged.
+The shared pure `teams4e_history.bounded_history` selector is also used by the
+mock tenant. It retains undated messages under the row cap and reports their
+count. Metadata acknowledges requested bounds and a stop reason (`date`,
+`messageLimit`, `exhausted`); it never calls bounded output complete lifetime
+history. Emacs validates that acknowledgement and raw count before normalization.
+The supported [Graph ordering and filters](https://learn.microsoft.com/en-us/graph/api/chat-list-messages?view=graph-rest-1.0)
+include descending creation time but no creation-time `gt` filter, hence the
+early-stop iterator instead of an unsupported lower-bound server query.
 The account/provider fingerprint is used only as an in-memory guard; no extra
 account identity or credentials are written to the snapshot. The user explicitly
 invokes sharing with their configured agent. Default prompts treat sources as
@@ -477,13 +490,15 @@ or advancing. Cancelling/killing the buffer or switching accounts blocks late
 callbacks and agent startup. No polling loop or companion monitoring is enabled.
 Failed chats are labeled in the index; if all fail, no agent starts.
 One session plist owns the agent buffer and disposable export references
-(path, label, history fingerprint, export time and count), not inferred tasks. `G`
-reuses that discussion across filters; explicit prefix starts anew. Immutable
+(path, label, history fingerprint, export time, bounds and count), not inferred
+tasks. `G` reuses that discussion across filters; explicit prefix starts anew. Immutable
 snapshot indexes link the preceding delivered snapshot. Histories with unchanged
-local metadata may reuse a complete file for five minutes. This is not a delta
-check; timestamps and the old-edit/deletion limitation are explicit. Forced
-refresh bypasses reuse. A retry closure retains the original selection and
-successful file references, retrying only failures/unfinished histories even
+local metadata and identical limit preferences may reuse a successful file for
+five minutes. Old unbounded files cannot satisfy a bounded request. This is not a
+delta check; timestamps and the old-edit/deletion limitation are explicit. Forced
+refresh bypasses reuse but not limits. A retry closure retains the original
+selection, cutoff/limits and successful file references, retrying only
+failures/unfinished histories even
 after the progress buffer is killed. State is not restored across Emacs restarts.
 Account/provider and agent changes require an explicit fresh discussion.
 The agent's own context limits still apply. Unit tests stub the agent, and an

@@ -19,6 +19,10 @@
           (teams4e-view-analysis--buffer-name " *view-export-test*")
           (teams4e-view-analysis--session nil)
           (teams4e-view-analysis-reuse-seconds 300)
+          ;; Existing tests cover the explicit unlimited option; bounded
+          ;; regressions below set the normal defaults independently.
+          (teams4e-view-analysis-days nil)
+          (teams4e-view-analysis-message-limit nil)
           (teams4e-export-directory directory)
           (teams4e-offline-mode nil)
           (teams4e-mock-mode t)
@@ -686,6 +690,131 @@
       (should-error (teams4e-view-analysis-retry) :type 'user-error)
       (should-error (teams4e-view-analysis-action) :type 'user-error))
     (should (= 2 (length requests)))))
+
+(defun teams4e-view-test-snapshot (request &optional reason)
+  "Deliver a synthetic, correctly acknowledged bounded REQUEST."
+  (let ((args (car request)))
+    (teams4e-view-test-complete
+     request
+     `((value . (((id . "recent") (createdDateTime . "2026-11-07T12:00:00Z")
+                   (body . ((contentType . "text") (content . "Recent context"))))))
+       (history . ((bounded . t) (complete . nil) (messageCount . 1) (pageCount . 1)
+                   (since . ,(cadr (member "--since" args)))
+                   (limit . ,(when-let ((value (cadr (member "--limit" args))))
+                               (string-to-number value)))
+                   (stopReason . ,(or reason "date"))))))))
+
+(ert-deftest teams4e-view-analysis-defaults-are-30-days-and-5000-messages ()
+  (should (= 30 (default-value 'teams4e-view-analysis-days)))
+  (should (= 5000 (default-value 'teams4e-view-analysis-message-limit))))
+
+(ert-deftest teams4e-view-analysis-bounds-stop-at-backend-and-are-explicit-to-agent ()
+  (teams4e-view-test-session
+    (setq teams4e-view-analysis-days 30 teams4e-view-analysis-message-limit 5000)
+    (cl-letf (((symbol-function 'current-time)
+               (lambda () (date-to-time "2026-11-07T12:00:00Z"))))
+      (with-current-buffer headers (teams4e-analyze-view)))
+    (should (equal '("teams" "chat" "message" "snapshot"
+                     "--since" "2026-10-08T12:00:00Z" "--limit" "5000" "--chatId" "b")
+                   (caar requests)))
+    ;; Settings changed mid-collection must not change the frozen window.
+    (setq teams4e-view-analysis-days 7 teams4e-view-analysis-message-limit 1)
+    (teams4e-view-test-snapshot (car requests) "messageLimit")
+    (should (equal "2026-10-08T12:00:00Z" (cadr (member "--since" (car (cadr requests))))))
+    (should (equal "5000" (cadr (member "--limit" (car (cadr requests))))))
+    (teams4e-view-test-snapshot (cadr requests))
+    (should (= 1 (length submitted)))
+    (with-temp-buffer
+      (insert-file-contents (plist-get teams4e-view-analysis--session :index))
+      (should (search-forward "30 rolling days" nil t))
+      (should (search-forward "stopped: messageLimit" nil t))
+      (should (search-forward "2 of 2 bounded snapshots" nil t))
+      (should-not (string-match-p "complete histories" (buffer-string))))
+    (dolist (file (directory-files-recursively directory "thread-.*\\.md\\'"))
+      (with-temp-buffer
+        (insert-file-contents file)
+        (should (search-forward "Bounded recent snapshot, NOT full history" nil t))
+        (should (search-forward "message cap: 5000" nil t))
+        (should-not (string-match-p "Complete Microsoft Graph pagination" (buffer-string)))))))
+
+(ert-deftest teams4e-view-analysis-bounds-changes-invalidate-reuse-but-retry-freezes-window ()
+  (teams4e-view-test-session
+    (setq teams4e-view-analysis-days 30 teams4e-view-analysis-message-limit 5000)
+    (with-current-buffer headers (teams4e-analyze-view))
+    (teams4e-view-test-snapshot (car requests))
+    (funcall (nth 2 (cadr requests)) "429" "temporary")
+    (let ((original-since (cadr (member "--since" (caar requests)))))
+      (setq teams4e-view-analysis-days 7 teams4e-view-analysis-message-limit 2000)
+      (teams4e-view-analysis-retry)
+      (should (= 3 (length requests)))
+      (should (equal original-since (cadr (member "--since" (car (nth 2 requests))))))
+      (should (equal "5000" (cadr (member "--limit" (car (nth 2 requests))))))
+      (teams4e-view-test-snapshot (nth 2 requests)))
+    (with-current-buffer headers (teams4e-analyze-view))
+    (should (= 4 (length requests)))
+    (should (equal "2000" (cadr (member "--limit" (car (nth 3 requests))))))
+    (teams4e-view-test-snapshot (nth 3 requests))
+    (teams4e-view-test-snapshot (nth 4 requests))
+    (should (= 1 (length launches)))
+    (with-current-buffer headers (teams4e-analyze-view))
+    (should (= 5 (length requests))) ; Same bounds can reuse recent snapshots.
+    (should (= 4 (length submitted)))))
+
+(ert-deftest teams4e-view-analysis-never-reuses-unlimited-export-for-bounded-context ()
+  (teams4e-view-test-session
+    (with-current-buffer headers (teams4e-analyze-view))
+    (teams4e-view-test-complete (car requests))
+    (teams4e-view-test-complete (cadr requests))
+    (setq teams4e-view-analysis-days 30 teams4e-view-analysis-message-limit 5000)
+    (with-current-buffer headers (teams4e-analyze-view))
+    (should (= 3 (length requests)))
+    (should (equal "snapshot" (nth 3 (car (nth 2 requests)))))))
+
+(ert-deftest teams4e-view-analysis-validates-bounds-and-rejects-old-backend-results ()
+  (teams4e-view-test-session
+    (dolist (value '(0 -1 1.5 "30"))
+      (let ((teams4e-view-analysis-days value))
+        (should-error (with-current-buffer headers (teams4e-analyze-view)) :type 'user-error)))
+    (should-not requests)
+    (let ((bounds '(:since "2026-10-08T12:00:00Z" :limit 10)))
+      (should-error (teams4e-view-analysis--history-result
+                     '((history . ((complete . t) (messageCount . 0)))) bounds))
+      (should-error (teams4e-view-analysis--history-result
+                     '((history . ((bounded . t) (since . "2026-10-08T12:00:00Z")
+                                    (limit . 10) (messageCount . 11) (stopReason . "messageLimit")))) bounds)))
+    (should (equal '("teams" "chat" "message" "export" "--chatId" "a")
+                   (teams4e--full-history-args (car teams4e--chats))))))
+
+(ert-deftest teams4e-view-analysis-each-cap-can-be-disabled-independently ()
+  (let ((chat '((id . "fixture"))))
+    (should (equal '("teams" "chat" "message" "snapshot" "--limit" "2000" "--chatId" "fixture")
+                   (teams4e-view-analysis--history-args chat '(:since nil :limit 2000))))
+    (should (equal '("teams" "chat" "message" "snapshot" "--since" "2026-10-01T00:00:00Z"
+                     "--chatId" "fixture")
+                   (teams4e-view-analysis--history-args chat '(:since "2026-10-01T00:00:00Z" :limit nil))))))
+
+(ert-deftest teams4e-view-analysis-real-mock-bounded-export-acknowledges-limits ()
+  (let ((run-json (symbol-function 'teams4e--run-json)))
+    (teams4e-view-test-session
+      (let ((teams4e-backend-program (expand-file-name "bin/teams4e-graph" teams4e-view-test-root))
+            (teams4e-use-persistent-backend nil)
+            (teams4e-mock-delay-ms 0)
+            (teams4e-mock-state-file (expand-file-name "mock.json" directory))
+            (teams4e-cache-file (expand-file-name "cache.sqlite3" directory))
+            (teams4e-view-analysis-days 30)
+            (teams4e-view-analysis-message-limit 2)
+            (teams4e--chats '(((id . "chat-1") (topic . "Mock One")))))
+        (with-current-buffer headers (setq tabulated-list-entries '(("chat-1" []))))
+        (cl-letf (((symbol-function 'teams4e--run-json) run-json))
+          (with-current-buffer headers (teams4e-analyze-view))
+          (let ((deadline (+ (float-time) 8)))
+            (while (and (not submitted) (not errors) (< (float-time) deadline))
+              (accept-process-output nil 0.05))))
+        (should-not errors)
+        (should (= 1 (length submitted)))
+        (let ((entry (gethash "chat-1" (plist-get teams4e-view-analysis--session :exports))))
+          (should (<= (plist-get entry :count) 2))
+          (should (equal '(30 2) (plist-get entry :policy))))))))
 
 (provide 'teams4e-view-analysis-tests)
 ;;; teams4e-view-analysis-tests.el ends here

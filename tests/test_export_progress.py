@@ -96,6 +96,7 @@ class ExportProgressTests(unittest.TestCase):
         {"id": 1, "args": ["teams", "chat", "message", "export"], "progress": True},
         {"id": 2, "args": ["teams", "chat", "message", "export"]},
         {"id": 3, "args": ["teams", "chat", "message", "list"], "progress": True},
+        {"id": 4, "args": ["teams", "chat", "message", "snapshot"], "progress": True},
     ]
     output = io.StringIO()
     with (mock.patch.object(backend.sys, "stdin", map(json.dumps, requests)),
@@ -104,9 +105,10 @@ class ExportProgressTests(unittest.TestCase):
       backend.serve()
     responses = [json.loads(line) for line in output.getvalue().splitlines()]
     progress = [item for item in responses if item.get("progress")]
-    self.assertEqual([{"id": 1, "ok": True, "progress": True,
-                       "result": {"stage": "download", "pages": 2, "messages": 80}}], progress)
-    self.assertEqual(3, len([item for item in responses if not item.get("progress")]))
+    self.assertEqual([{"id": request_id, "ok": True, "progress": True,
+                       "result": {"stage": "download", "pages": 2, "messages": 80}}
+                      for request_id in (1, 4)], sorted(progress, key=lambda item: item["id"]))
+    self.assertEqual(4, len([item for item in responses if not item.get("progress")]))
     self.assertIsNone(backend.EXPORT_PROGRESS.get())
 
   def test_server_cancels_full_export_without_affecting_mutations(self):
@@ -133,6 +135,24 @@ class ExportProgressTests(unittest.TestCase):
           contextlib.redirect_stdout(output)):
       backend.serve()
     self.assertEqual("", output.getvalue())
+
+  def test_server_snapshot_is_cancellable_and_keeps_progress_and_final_contract(self):
+    def execute(args, **kwargs):
+      self.assertIsNotNone(backend.READ_CANCEL.get())
+      backend.export_progress("download", pages=1, messages=5)
+      return {"history": {"bounded": True, "messageCount": 5}}, "json"
+
+    output = io.StringIO()
+    with (mock.patch.object(backend.sys, "stdin", [json.dumps({
+        "id": 7, "args": ["teams", "chat", "message", "snapshot"], "progress": True})]),
+          mock.patch.object(backend, "execute", side_effect=execute),
+          contextlib.redirect_stdout(output)):
+      backend.serve()
+    rows = [json.loads(line) for line in output.getvalue().splitlines()]
+    self.assertEqual(2, len(rows))
+    self.assertTrue(rows[0]["progress"])
+    self.assertNotIn("progress", rows[1])
+    self.assertTrue(rows[1]["result"]["history"]["bounded"])
 
 
 if __name__ == "__main__":

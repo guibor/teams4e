@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Bound `G` status-review histories to 30 rolling days and 5,000 newest messages
+  per chat by default. Customize `teams4e-view-analysis-days` and
+  `teams4e-view-analysis-message-limit`. Stop actual backend pagination at the
+  first bound; label omitted history and cap hits in Markdown and the index.
+  Keep single-thread full exports/analysis unchanged. Retry preserves the original
+  bounds; changing preferences invalidates normal reuse. Update Lisp and the
+  installed backend together for the new `message snapshot` command.
+
 - Keep `G` view analysis in one continuing Agent Shell discussion. Repeated
   invocations add timestamped context; `C-u G` starts fresh. Preserve user drafts
   and busy turns by waiting for an idle, empty prompt without stealing focus.

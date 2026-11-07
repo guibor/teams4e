@@ -152,7 +152,7 @@ schedule another export after cancellation."
       (teams4e-view-analysis--dismiss-indicator))))
 
 (define-derived-mode teams4e-view-analysis-mode special-mode "Teams-Export"
-  "Progress for a private, complete-history view export."
+  "Progress for a private, bounded view export."
   (add-hook 'kill-buffer-hook #'teams4e-view-analysis-cancel nil t)
   (add-hook 'change-major-mode-hook #'teams4e-view-analysis-cancel nil t))
 
@@ -177,9 +177,47 @@ schedule another export after cancellation."
                       (teams4e--last-message chat)))))
 
 (defun teams4e-view-analysis--usable-export-p (entry)
-  "Whether ENTRY still points to a readable complete exported history."
+  "Whether ENTRY still points to a readable successful history snapshot."
   (and entry (file-regular-p (plist-get entry :path))
        (file-readable-p (plist-get entry :path))))
+
+(defun teams4e-view-analysis--bounds ()
+  "Validate preferences and freeze the rolling cutoff for one collection."
+  (dolist (value (list teams4e-view-analysis-days teams4e-view-analysis-message-limit))
+    (unless (or (null value) (and (integerp value) (> value 0)))
+      (user-error "View analysis bounds must be positive integers or nil")))
+  (list :days teams4e-view-analysis-days :limit teams4e-view-analysis-message-limit
+        :since (when teams4e-view-analysis-days
+                 (format-time-string
+                  "%Y-%m-%dT%H:%M:%SZ"
+                  (time-subtract (current-time) (days-to-time teams4e-view-analysis-days)) t))))
+
+(defun teams4e-view-analysis--history-args (chat bounds)
+  "Return a bounded snapshot request for CHAT, or explicit full export.
+A separate command makes older backends fail instead of silently ignoring caps."
+  (let ((since (plist-get bounds :since)) (limit (plist-get bounds :limit)))
+    (if (or since limit)
+        (append '("teams" "chat" "message" "snapshot")
+                (when since (list "--since" since))
+                (when limit (list "--limit" (number-to-string limit)))
+                (list "--chatId" (teams4e--chat-id chat)))
+      (teams4e--full-history-args chat))))
+
+(defun teams4e-view-analysis--history-result (payload bounds)
+  "Validate that PAYLOAD acknowledges exactly the requested BOUNDS."
+  (let ((since (plist-get bounds :since)) (limit (plist-get bounds :limit)))
+    (if (not (or since limit))
+        (teams4e--full-history-result payload)
+      (let* ((history (teams4e--get payload 'history))
+             (count (teams4e--get history 'messageCount)))
+        (unless (and (eq t (teams4e--get history 'bounded))
+                     (equal since (teams4e--get history 'since))
+                     (equal limit (teams4e--get history 'limit))
+                     (member (teams4e--get history 'stopReason)
+                             '("date" "messageLimit" "exhausted"))
+                     (integerp count) (>= count 0) (or (null limit) (<= count limit)))
+          (error "Backend did not confirm snapshot bounds; update the installed teams4e backend"))
+        (teams4e--history-result payload)))))
 
 (defun teams4e-view-analysis--session-valid-p (session)
   "Whether SESSION still belongs to the current account and agent selection."
@@ -325,14 +363,15 @@ Prefix NEW starts a fresh discussion and bypasses export reuse.  FORCE bypasses
 reuse without replacing the discussion, as in `teams4e-view-analysis-refresh'.
 Use all rows in the filtered headers, not only on-screen rows or marked chats.
 Freeze the list now; later bookmark/read-state changes do not expand it.
-Fetch complete histories serially and label failures. No automatic monitoring
-or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
+Fetch recent histories serially within the configured date/message caps and
+label omissions and failures. No automatic monitoring or Teams mutations are
+enabled. Use `teams4e-thread-analysis-agent' and
 `teams4e-view-analysis-prompt'. Cancel in the progress buffer with C-c C-k."
   (interactive "P")
   (unless (derived-mode-p 'teams4e-recent-mode 'teams4e-chat-mode)
     (user-error "Open the Teams chat headers or their reader first"))
   (when teams4e-offline-mode
-    (user-error "Complete view export requires online mode; cached history may be partial"))
+    (user-error "View export requires online mode; cached history may be partial"))
   (let* ((headers (if (derived-mode-p 'teams4e-recent-mode)
                       (current-buffer) (teams4e--recent-buffer)))
          (scope (and (buffer-live-p headers)
@@ -347,17 +386,21 @@ or Teams mutations are enabled. Use `teams4e-thread-analysis-agent' and
       (user-error "Chat headers changed; refresh the view before exporting"))
     (teams4e-view-analysis--collect chats scope new force)))
 
-(defun teams4e-view-analysis--collect (chats scope &optional new force successes)
+(defun teams4e-view-analysis--collect (chats scope &optional new force successes bounds)
   "Collect frozen CHATS in SCOPE; NEW/FORCE bypass reuse.
-SUCCESSES, when non-nil, contains only completed files from a retry's snapshot."
+SUCCESSES holds completed files from a retry's snapshot.
+BOUNDS freezes its limits."
   (let ((buffer (get-buffer-create teams4e-view-analysis--buffer-name)))
     (when (buffer-local-value 'teams4e-view-analysis--token buffer)
       (user-error "View export is running; M-x teams4e-view-analysis-status shows progress"))
-    (when teams4e-offline-mode (user-error "Complete export requires online mode"))
+    (when teams4e-offline-mode (user-error "View export requires online mode"))
     (when (and teams4e-view-analysis--session (not new)
                (not (teams4e-view-analysis--session-valid-p teams4e-view-analysis--session)))
       (user-error "Account or agent changed; use C-u G for a separate discussion"))
-    (let* ((config (teams4e--thread-analysis-agent-config))
+    (let* ((bounds (or bounds (teams4e-view-analysis--bounds)))
+           (policy (list (plist-get bounds :days) (plist-get bounds :limit)))
+           (bounded (or (plist-get bounds :since) (plist-get bounds :limit)))
+           (config (teams4e--thread-analysis-agent-config))
            (prompt teams4e-view-analysis-prompt)
            (identity (teams4e-companion--current-identity))
            (session
@@ -383,7 +426,7 @@ SUCCESSES, when non-nil, contains only completed files from a retry's snapshot."
       (set-file-modes directory #o700)
       (setf (plist-get session :chats) chats
             (plist-get session :retry)
-            (lambda () (teams4e-view-analysis--collect chats scope nil nil successful)))
+            (lambda () (teams4e-view-analysis--collect chats scope nil nil successful bounds)))
       (with-current-buffer buffer
         (teams4e-view-analysis-mode)
         (let ((inhibit-read-only t)) (erase-buffer))
@@ -400,14 +443,22 @@ SUCCESSES, when non-nil, contains only completed files from a retry's snapshot."
                          scope (format-time-string "%Y-%m-%d %H:%M %Z") total)
                  (when teams4e-mock-mode "SYNTHETIC MOCK DATA, not live Teams activity.\n\n")
                  "All rows of this filtered view, not all Teams activity.\n"
-                 "Each successful export contains complete available history, not only\n"
-                 "messages from the bookmark's date range. Unavailable history is unknown,\n"
+                 (if bounded
+                     (format (concat "Recent status context, NOT full chat history.\n"
+                                     "Per chat: %s rolling days; cutoff %s; at most %s newest messages.\n"
+                                     "Stop at the first bound. Older messages/quoted originals may be omitted.\n")
+                             (or (plist-get bounds :days) "unlimited")
+                             (or (plist-get bounds :since) "none")
+                             (or (plist-get bounds :limit) "unlimited"))
+                   "Explicit full-history export: no date or message cap.\n")
+                 "The history bounds are independent of the bookmark's date range.\n"
+                 "Unavailable or omitted history is unknown,\n"
                  "not evidence of resolution. Read state is not a task status.\n"
                  "This is a one-time snapshot; no automatic monitoring is active.\n\n"
                  (when-let ((previous (plist-get session :index)))
                    (format "Previous context: [%s](%s). Keep earlier discussion and corrections.\n\n"
                            "snapshot" previous))
-                 "Reused histories are complete AS OF their export timestamp, not a live\n"
+                 "Reused histories retain their original bounds and export timestamp, not a live\n"
                  "delta check. Local metadata may miss old edits/deletions. A missing or\n"
                  "filtered-out chat does not mean its earlier commitments are resolved.\n\n"
                  "## Selected conversations\n\n"
@@ -432,8 +483,9 @@ SUCCESSES, when non-nil, contains only completed files from a retry's snapshot."
            (finish ()
              (let ((index (expand-file-name "index.md" directory)))
                (teams4e-view-analysis--append
-                buffer (format "\nCoverage: %d of %d complete histories; %d unavailable.\n"
-                               (- completed failed) total failed))
+                buffer (format "\nCoverage: %d of %d %s; %d unavailable.\n"
+                               (- completed failed) total
+                               (if bounded "bounded snapshots" "complete histories") failed))
                (with-current-buffer buffer
                  (let ((coding-system-for-write 'utf-8-unix))
                    (write-region (point-min) (point-max) index nil 'silent))
@@ -446,7 +498,7 @@ SUCCESSES, when non-nil, contains only completed files from a retry's snapshot."
                    (progn
                      (with-current-buffer buffer (setq teams4e-view-analysis--token nil))
                      (teams4e-view-analysis--update buffer :state 'failed)
-                     (teams4e-view-analysis--notify "No complete histories exported; no agent started"))
+                     (teams4e-view-analysis--notify "No histories exported successfully; no agent started"))
                  (if (buffer-live-p (plist-get session :shell))
                      (progn
                        (with-current-buffer buffer
@@ -463,7 +515,9 @@ SUCCESSES, when non-nil, contains only completed files from a retry's snapshot."
              (teams4e-view-analysis--append
               buffer (format "- [History %d](%s): %s (%d messages); %s; exported %s\n"
                              number file (teams4e--chat-label chat) (plist-get entry :count)
-                             (if reuse "REUSED snapshot" "fresh complete export")
+                             (concat (if reuse "REUSED snapshot" "fresh export")
+                                     (when-let ((reason (teams4e--get (plist-get entry :history) 'stopReason)))
+                                       (format "; bounded, stopped: %s" reason)))
                              (format-time-string "%Y-%m-%d %H:%M:%S %Z"
                                                  (seconds-to-time (plist-get entry :time))))))
            (advance ()
@@ -510,18 +564,19 @@ SUCCESSES, when non-nil, contains only completed files from a retry's snapshot."
                         (reuse
                          (and (not new) (not force)
                               (teams4e-view-analysis--usable-export-p cached)
+                              (equal policy (plist-get cached :policy))
                               (or successes
                                   (and (> teams4e-view-analysis-reuse-seconds 0)
                                        (equal signature (plist-get cached :signature))
                                        (<= 0 (- (float-time) (plist-get cached :time))
                                            teams4e-view-analysis-reuse-seconds)))))
-                        (args (teams4e--full-history-args chat))
+                        (args (teams4e-view-analysis--history-args chat bounds))
                         (request
                          (progn
                            (teams4e-view-analysis--update
                             buffer :state 'exporting :done completed :failed failed
                             :chat (teams4e--chat-label chat) :pages nil :messages nil
-                            :reused reused :stage (if reuse "Reusing complete snapshot" "Queued / connecting"))
+                            :reused reused :stage (if reuse "Reusing snapshot" "Queued / connecting"))
                            (if reuse
                                (progn
                                  (copy-file (plist-get cached :path) path)
@@ -539,8 +594,9 @@ SUCCESSES, when non-nil, contains only completed files from a retry's snapshot."
                                 (lambda (payload)
                                   (when (and (valid-p) (= completed (1- number)))
                                     (condition-case err
-                                        (let* ((result (teams4e--full-history-result payload))
+                                        (let* ((result (teams4e-view-analysis--history-result payload bounds))
                                                (entry (list :path path :signature signature :time (float-time)
+                                                            :policy policy :history (plist-get result :history)
                                                             :label (teams4e--chat-label chat)
                                                             :count (length (plist-get result :messages)))))
                                           (teams4e-view-analysis--update buffer :stage "Writing Markdown")

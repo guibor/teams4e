@@ -17,6 +17,7 @@ from typing import Any
 
 from teams4e_cache import TeamsCache
 from teams4e_calendar import calendar_draft_payload
+from teams4e_history import bounded_history, message_time
 
 
 def mock_enabled() -> bool:
@@ -1436,6 +1437,18 @@ class MockTenant:
       }
     if args[:4] == ["teams", "chat", "member", "list"]:
       return self.state["chatMembers"].get(str(option(args, "--chatId")), [])
+    if args[:4] == ["teams", "chat", "message", "snapshot"]:
+      messages = copy.deepcopy(self.state["chatMessages"].get(
+          str(option(args, "--chatId")), []
+      ))
+      messages.sort(key=lambda row: message_time(row.get("createdDateTime"))
+                    or datetime.max.replace(tzinfo=timezone.utc), reverse=True)
+      pages = ({"value": messages[start:start + 50],
+                "@odata.nextLink": "mock-next" if start + 50 < len(messages) else None}
+               for start in range(0, len(messages), 50))
+      raw_limit = option(args, "--limit", required=False)
+      return bounded_history(pages, since=option(args, "--since", required=False),
+                             limit=int(raw_limit) if raw_limit is not None else None)
     if args[:4] == ["teams", "chat", "message", "export"]:
       messages = copy.deepcopy(self.state["chatMessages"].get(
           str(option(args, "--chatId")), []
