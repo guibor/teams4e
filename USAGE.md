@@ -17,8 +17,8 @@ turn the reader into a separate mini-application.
 | `c` or `C` | Compose a new message |
 | `o` / `O` | Open in browser / native Teams app |
 | `b` | Choose a bookmark |
-| `F` | Toggle unread-only on top of the current view |
-| `U`, `b u`, or `M-F` | Compatibility aliases for unread-only |
+| `F`, `U`, or `M-F` | Toggle unread-only on top of the current view |
+| `b u` | Enable unread-only on the current view |
 | `z` / `Z` | Snooze for the default duration / choose a wake time |
 | `M-U` | Undo the last completed action |
 | `m` | Deferred-mark prefix |
@@ -148,7 +148,7 @@ that need synchronization.
 | --- | --- | --- |
 | `b i` | Relevant inbox | Newest message first |
 | `b a` | All active chats; clear overlays | Newest message first |
-| `b u` | Toggle unread-only in the current view | Preserve current order |
+| `b u` | Enable unread-only in the current view | Preserve current order |
 | `b s` | Snoozed chats, with wake times | Earliest wake first |
 | `b t` | Activity today in local time | Newest message first |
 | `b 1` | Activity in the last 24 hours | Newest message first |

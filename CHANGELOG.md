@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make `b u` idempotently enable unread-only filtering instead of toggling it
+  off when the overlay is already active. Keep `F`, `U`, and `M-F` as the
+  reversible toggle commands, and repair legacy standalone unread-query state
+  when the bookmark is used.
+
 - Replace the former `b 2` one-day activity bookmark with numbered rolling
   windows: `b 1` through `b 6` now cover exact 24-hour multiples from 24 to 144
   hours. Keep `b t` calendar-day based and `b w` as the rolling seven-day view.

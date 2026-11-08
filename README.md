@@ -701,6 +701,8 @@ windows of 24 through 144 hours; they do not use local calendar-day boundaries.
 `teams4e-toggle-unread-filter` narrows the current view without replacing
 its query; invoke it again to remove that restriction. Active snoozes stay
 hidden from ordinary views, including All; the Snoozed bookmark exposes them.
+Use `b u` to enable unread-only idempotently; use `F`, `U`, or `M-F` when you
+want to toggle the overlay off again.
 Snooze is local and does not change Teams read state.
 Expiry automatically redraws the inbox without switching the reader. Overdue
 snoozes are processed when local state loads after a restart. A conversation

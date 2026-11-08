@@ -105,9 +105,10 @@ workflows, proposal primitives, and optional agent analysis.
 Main entry points:
 
 - `teams4e-bookmark-jump`: apply a configured view/query.
-- `teams4e-toggle-unread-filter`: reversibly toggle the independent unread
-  overlay used directly by `F` (with `U`, `b u`, and `M-F` retained as aliases)
-  without replacing the active bookmark/query; All Chats clears it.
+- `teams4e-filter-unread`: idempotently enable the independent unread overlay
+  for the `b u` bookmark without replacing the active bookmark/query.
+- `teams4e-toggle-unread-filter`: reversibly toggle that overlay through `F`,
+  `U`, or `M-F`; All Chats clears it.
 - `teams4e-snooze-quick` / `teams4e-snooze`: apply the terminal-compatible
   default or key-selected wake time using the existing persisted timestamp.
 - `teams4e--query-chat-p`: resolve known built-in view symbols before callable

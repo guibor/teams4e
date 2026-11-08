@@ -875,7 +875,7 @@ the distinction between mu4e's `b' and `B' commands."
              (or (eq query 'unread)
                  (and (stringp query)
                       (string-equal (string-trim query) "unread"))))
-        (teams4e-toggle-unread-filter)
+        (teams4e-filter-unread)
       (teams4e--apply-inbox-query query name))))
 
 (defun teams4e-bookmark-edit ()
@@ -907,6 +907,9 @@ the distinction between mu4e's `b' and `B' commands."
 (defun teams4e-filter-unread ()
   "Enable unread-only filtering without replacing the active inbox filter."
   (interactive)
+  (when (teams4e--plain-unread-query-p teams4e--active-query)
+    (setq teams4e--active-query nil
+          teams4e--active-filter-name nil))
   (teams4e--set-unread-filter t)
   (message "Teams unread-only filter enabled for %s"
            (or teams4e--active-filter-name
