@@ -695,6 +695,8 @@ With the default bookmark binding, this makes `b p` select that view.
 Choose an unused shortcut of your own. Query terms include `unread`,
 `favorite`, `mentioned`, `type:meeting`, `name:TEXT`, and `after:7d`.
 See [query syntax](USAGE.md#views-that-compose) for combinations and predicates.
+The built-in `b 1` through `b 6` bookmarks select exact rolling elapsed-time
+windows of 24 through 144 hours; they do not use local calendar-day boundaries.
 
 `teams4e-toggle-unread-filter` narrows the current view without replacing
 its query; invoke it again to remove that restriction. Active snoozes stay

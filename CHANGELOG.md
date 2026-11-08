@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Replace the former `b 2` one-day activity bookmark with numbered rolling
+  windows: `b 1` through `b 6` now cover exact 24-hour multiples from 24 to 144
+  hours. Keep `b t` calendar-day based and `b w` as the rolling seven-day view.
+  Reload migration replaces only the old built-in definition and preserves
+  personal bookmarks that already occupy a numeric key.
+
 - Bound `G` status-review histories to 30 rolling days and 5,000 newest messages
   per chat by default. Customize `teams4e-view-analysis-days` and
   `teams4e-view-analysis-message-limit`. Stop actual backend pagination at the

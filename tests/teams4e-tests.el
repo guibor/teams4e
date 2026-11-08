@@ -5216,18 +5216,72 @@
                               (eq (plist-get bookmark :key) ?t))
                             teams4e-bookmarks)
                   :query)))
-  (should (equal "after:1d"
-                 (plist-get
-                  (seq-find (lambda (bookmark)
-                              (eq (plist-get bookmark :key) ?2))
-                            teams4e-bookmarks)
-                  :query)))
+  (dolist (days '(1 2 3 4 5 6))
+    (should
+     (equal (format "after:%dd" days)
+            (plist-get
+             (seq-find (lambda (bookmark)
+                         (eq (plist-get bookmark :key)
+                             (+ ?0 days)))
+                       teams4e-bookmarks)
+             :query))))
   (should (equal "after:7d"
                  (plist-get
                   (seq-find (lambda (bookmark)
                               (eq (plist-get bookmark :key) ?w))
                             teams4e-bookmarks)
                   :query))))
+
+(ert-deftest teams4e-rolling-activity-bookmarks-migrate-without-overwriting-custom-keys ()
+  (let* ((legacy '(:name "Last 24 hours" :query "after:1d" :key ?2))
+         (migrated
+          (teams4e--merge-rolling-activity-bookmarks (list legacy)))
+         (custom-one '(:name "One" :query "name:One" :key ?1))
+         (custom-three '(:name "Three" :query "name:Three" :key ?3))
+         (preserved
+          (teams4e--merge-rolling-activity-bookmarks
+           (list custom-one legacy custom-three))))
+    (dolist (days '(1 2 3 4 5 6))
+      (should
+       (equal (format "after:%dd" days)
+              (plist-get
+               (seq-find (lambda (bookmark)
+                           (eq (plist-get bookmark :key) (+ ?0 days)))
+                         migrated)
+               :query))))
+    (should (eq custom-one
+                (seq-find (lambda (bookmark)
+                            (eq (plist-get bookmark :key) ?1))
+                          preserved)))
+    (should (equal "after:2d"
+                   (plist-get
+                    (seq-find (lambda (bookmark)
+                                (eq (plist-get bookmark :key) ?2))
+                              preserved)
+                    :query)))
+    (should (eq custom-three
+                (seq-find (lambda (bookmark)
+                            (eq (plist-get bookmark :key) ?3))
+                          preserved)))))
+
+(ert-deftest teams4e-rolling-activity-query-uses-24-hour-multiples ()
+  (let* ((now (encode-time 0 0 12 8 11 2026 t))
+         (chat-at
+          (lambda (id hours-ago)
+            (let ((timestamp
+                   (format-time-string
+                    "%Y-%m-%dT%H:%M:%SZ"
+                    (time-subtract
+                     now (seconds-to-time (* hours-ago 60 60)))
+                    t)))
+              `((id . ,id)
+                (lastMessagePreview
+                 . ((createdDateTime . ,timestamp)))))))
+         (inside (funcall chat-at "inside" 47))
+         (outside (funcall chat-at "outside" 49)))
+    (cl-letf (((symbol-function 'current-time) (lambda () now)))
+      (should (teams4e--query-chat-p inside "after:2d"))
+      (should-not (teams4e--query-chat-p outside "after:2d")))))
 
 (ert-deftest teams4e-today-query-uses-local-calendar-day ()
   (let* ((today-time (format-time-string "%Y-%m-%dT12:00:00%z"))

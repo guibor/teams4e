@@ -135,10 +135,13 @@ from `teams4e-thread-analysis-prompt`, with the export path substituted for `%s`
 Its default is ordinary analysis instructions, with no personal skill dependency.
 
 Activity bookmarks are textual projections over the canonical chat list.
-`today` compares the last message's local calendar-day key, while `after:1d` and
-`after:7d` remain rolling elapsed-time windows. Sending records one in-memory
-pre-send read state; normalization consumes it only when a new outgoing
-last-message marker appears.
+`today` compares the last message's local calendar-day key. The numbered
+bookmarks `b 1` through `b 6` use `after:1d` through `after:6d`, each measured
+from the current instant in exact 24-hour multiples; `b w` remains the rolling
+seven-day shortcut. Reload migration removes only the exact former built-in
+`b 2 = after:1d` before filling free numeric keys, so custom key assignments
+remain authoritative. Sending records one in-memory pre-send read state;
+normalization consumes it only when a new outgoing last-message marker appears.
 
 Transcript day grouping and display both derive from the local Emacs timezone;
 the previous raw-UTC day split could disagree with local message times around

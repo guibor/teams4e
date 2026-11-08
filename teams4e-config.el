@@ -566,7 +566,12 @@ the following day."
     (:name "Upcoming meetings" :query upcoming :key ?m)
     (:name "All meeting chats" :query "type:meeting" :key ?M)
     (:name "Today" :query "today" :key ?t)
-    (:name "Last 24 hours" :query "after:1d" :key ?2)
+    (:name "Last 24 hours" :query "after:1d" :key ?1)
+    (:name "Last 48 hours" :query "after:2d" :key ?2)
+    (:name "Last 72 hours" :query "after:3d" :key ?3)
+    (:name "Last 96 hours" :query "after:4d" :key ?4)
+    (:name "Last 120 hours" :query "after:5d" :key ?5)
+    (:name "Last 144 hours" :query "after:6d" :key ?6)
     (:name "Last 7 days" :query "after:7d" :key ?w))
   "Mu4e-style shortcut bookmarks for the Teams headers buffer.
 
@@ -585,14 +590,46 @@ to negate it."
 (dolist (bookmark '((:name "Inbox" :query inbox :key ?i)
                     (:name "Needs attention" :query attention :key ?n)
                     (:name "Handled" :query handled :key ?h)
-                    (:name "Snoozed" :query snoozed :key ?s)
-                    (:name "Last 24 hours" :query "after:1d" :key ?2)))
+                    (:name "Snoozed" :query snoozed :key ?s)))
   (unless (seq-find
            (lambda (existing)
              (eq (plist-get existing :key) (plist-get bookmark :key)))
            teams4e-bookmarks)
     (setq teams4e-bookmarks
           (append teams4e-bookmarks (list bookmark)))))
+
+(defconst teams4e--rolling-activity-bookmarks
+  '((:name "Last 24 hours" :query "after:1d" :key ?1)
+    (:name "Last 48 hours" :query "after:2d" :key ?2)
+    (:name "Last 72 hours" :query "after:3d" :key ?3)
+    (:name "Last 96 hours" :query "after:4d" :key ?4)
+    (:name "Last 120 hours" :query "after:5d" :key ?5)
+    (:name "Last 144 hours" :query "after:6d" :key ?6))
+  "Built-in rolling activity bookmarks measured in 24-hour multiples.")
+
+(defun teams4e--merge-rolling-activity-bookmarks (bookmarks)
+  "Return BOOKMARKS upgraded with free numeric rolling activity keys.
+Remove only the exact former `b 2' one-day built-in.  Existing personal
+bookmarks on numeric keys remain authoritative."
+  (let ((result (copy-sequence bookmarks)))
+    (when-let ((legacy-bookmark
+                (seq-find
+                 (lambda (bookmark)
+                   (and (eq (plist-get bookmark :key) ?2)
+                        (equal (plist-get bookmark :name) "Last 24 hours")
+                        (equal (plist-get bookmark :query) "after:1d")))
+                 result)))
+      (setq result (delq legacy-bookmark result)))
+    (dolist (bookmark teams4e--rolling-activity-bookmarks result)
+      (unless (seq-find
+               (lambda (existing)
+                 (eq (plist-get existing :key) (plist-get bookmark :key)))
+               result)
+        (setq result
+              (append result (list (copy-sequence bookmark))))))))
+
+(setq teams4e-bookmarks
+      (teams4e--merge-rolling-activity-bookmarks teams4e-bookmarks))
 
 ;; Update the former rolling "today" default without replacing a personal
 ;; bookmark that uses the same key or a customized query.

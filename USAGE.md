@@ -151,7 +151,12 @@ that need synchronization.
 | `b u` | Toggle unread-only in the current view | Preserve current order |
 | `b s` | Snoozed chats, with wake times | Earliest wake first |
 | `b t` | Activity today in local time | Newest message first |
-| `b 2` | Activity in the last 24 hours | Newest message first |
+| `b 1` | Activity in the last 24 hours | Newest message first |
+| `b 2` | Activity in the last 48 hours | Newest message first |
+| `b 3` | Activity in the last 72 hours | Newest message first |
+| `b 4` | Activity in the last 96 hours | Newest message first |
+| `b 5` | Activity in the last 120 hours | Newest message first |
+| `b 6` | Activity in the last 144 hours | Newest message first |
 | `b w` | Activity in the last 7 days | Newest message first |
 | `b m` | Upcoming and active meetings | Earliest start first |
 | `b M` | All meeting chats | Earliest known start first |
