@@ -10,6 +10,7 @@
 
 (require 'teams4e-ui)
 (require 'cl-lib)
+(require 'crm)
 (require 'json)
 (require 'seq)
 (require 'subr-x)
@@ -59,6 +60,12 @@
 (defvar teams4e--active-query nil)
 (defvar teams4e--active-filter-name nil)
 (defvar teams4e--unread-filter-enabled nil)
+(defvar teams4e--chat-directory nil
+  "Session-only index of every chat returned by Microsoft Graph.")
+(defvar teams4e--chat-directory-account nil
+  "Account identity that owns `teams4e--chat-directory'.")
+(defvar teams4e--chat-directory-refreshing nil
+  "Non-nil while the complete Graph chat directory is refreshing.")
 (defvar teams4e--marks (make-hash-table :test #'equal))
 (defvar teams4e--selections (make-hash-table :test #'equal))
 (defvar teams4e--action-history nil)
@@ -1121,13 +1128,153 @@ normal reader without adding a second search cache."
   (interactive)
   (teams4e-search query t))
 
-;;;###autoload
-(defun teams4e-find-chat (query)
-  "Find an existing chat by QUERY beyond the recent-chat limit.
-Match all words against chat names and participant names/emails.  This scans
-chat metadata, not messages or calendars, and never creates a conversation.
-Use `teams4e-server-search' to find a channel thread by message contents."
-  (interactive (list (read-string "Find chat (name or participants): ")))
+(defun teams4e--chat-directory-account-key ()
+  "Return the stable identity used to scope the session chat directory."
+  (or teams4e--connected-user-id teams4e--connected-as))
+
+(defun teams4e--merge-chat-directory (payload)
+  "Merge chat directory PAYLOAD into canonical chat objects and return them."
+  (let ((known (make-hash-table :test #'equal))
+        merged)
+    (dolist (chat teams4e--chat-directory)
+      (when-let ((id (teams4e--chat-id chat)))
+        (puthash id chat known)))
+    ;; Inbox objects win when an older directory object has the same ID.
+    (dolist (chat teams4e--chats)
+      (when-let ((id (teams4e--chat-id chat)))
+        (puthash id chat known)))
+    (dolist (chat (teams4e--get payload 'chats))
+      (let* ((id (teams4e--chat-id chat))
+             (old (and id (gethash id known)))
+             (canonical
+              (if old
+                  (car (teams4e--reuse-chat-object old chat))
+                chat))
+             (members (teams4e--get canonical 'members)))
+        (when (and id (listp members))
+          ;; Partial expanded rosters are still useful completion hints.
+          (puthash id (or members teams4e--no-members)
+                   teams4e--member-cache))
+        (push canonical merged)))
+    (setq teams4e--chat-directory
+          (sort (nreverse merged) #'teams4e--chat-updated-p)
+          teams4e--chat-directory-account
+          (teams4e--chat-directory-account-key))
+    teams4e--chat-directory))
+
+(defun teams4e--chat-directory-choice (chat)
+  "Return one rich, unique completion label for directory CHAT."
+  (let* ((label (teams4e--chat-label chat))
+         (members (teams4e--member-names chat))
+         (member-text (and members (string-join members ", "))))
+    (string-trim-right
+     (format "%-8s %s%s  [%s]  %s"
+             (teams4e--chat-type-label chat)
+             label
+             (if (and member-text (not (string-equal label member-text)))
+                 (concat " | " member-text)
+               "")
+             (teams4e--short-id chat)
+             (teams4e--format-date
+              (teams4e--get chat 'lastUpdatedDateTime))))))
+
+(defun teams4e--choose-directory-chat (chats)
+  "Fuzzy-select and open one existing chat from CHATS."
+  (let ((pairs (mapcar (lambda (chat)
+                         (cons (teams4e--chat-directory-choice chat) chat))
+                       chats)))
+    (unless pairs (user-error "No Teams chats are available"))
+    (let* ((choice (string-trim (completing-read
+                    (format "Existing Teams chat (%d): " (length pairs))
+                    pairs nil nil)))
+           (chat (cdr (assoc choice pairs))))
+      (cond
+       (chat (teams4e-open-chat chat))
+       ((not (string-empty-p choice))
+        ;; A cache-first chooser may not yet contain a cold/old chat.
+        (teams4e--find-chat-by-query choice))))))
+
+(defun teams4e--refresh-chat-directory (&optional callback quiet)
+  "Refresh the complete Graph directory, then invoke CALLBACK.
+When QUIET is non-nil, report failure without opening diagnostics."
+  (when teams4e-offline-mode
+    (user-error "The complete chat directory requires online mode"))
+  (setq teams4e--chat-directory-refreshing t)
+  (teams4e--run-json
+   '("teams" "chat" "directory")
+   (lambda (payload)
+     (setq teams4e--chat-directory-refreshing nil)
+     (let ((chats (teams4e--merge-chat-directory payload)))
+       (if callback
+           (funcall callback chats)
+         (unless quiet
+           (message "Teams chat directory refreshed: %d chats" (length chats))))))
+   (lambda (status detail)
+     (setq teams4e--chat-directory-refreshing nil)
+     (if quiet
+         (message "Teams chat directory refresh failed; cached chats remain available")
+       (teams4e--report-error '("teams" "chat" "directory") status detail)))))
+
+(defun teams4e--ensure-chat-directory (callback &optional refresh)
+  "Pass the fastest available account-scoped chat directory to CALLBACK.
+With REFRESH non-nil, wait for a complete Graph reload.  Otherwise use the
+session index or SQLite immediately and refresh Graph quietly in background."
+  (let ((account (teams4e--chat-directory-account-key))
+        (origin (current-buffer)))
+    (cond
+     (refresh
+      (message "Refreshing every existing Teams chat...")
+      (teams4e--refresh-chat-directory
+       (lambda (chats)
+         (when (buffer-live-p origin)
+           (with-current-buffer origin (funcall callback chats))))))
+     ((and teams4e--chat-directory
+           (equal account teams4e--chat-directory-account))
+      (unless (or teams4e-offline-mode teams4e--chat-directory-refreshing)
+        (teams4e--refresh-chat-directory nil t))
+      (funcall callback teams4e--chat-directory))
+     (t
+      (teams4e--run-json
+       '("teams" "cache" "chat" "list")
+       (lambda (payload)
+         (let ((cached (teams4e--payload-list payload)))
+           (if cached
+               (let ((chats
+                      (teams4e--merge-chat-directory
+                       `((chats . ,cached)))))
+                 (unless (or teams4e-offline-mode
+                             teams4e--chat-directory-refreshing)
+                   (teams4e--refresh-chat-directory nil t))
+                 (when (buffer-live-p origin)
+                   (with-current-buffer origin (funcall callback chats))))
+             (if teams4e-offline-mode
+                 (user-error "No cached Teams chats are available")
+               (teams4e--refresh-chat-directory
+                (lambda (chats)
+                  (when (buffer-live-p origin)
+                    (with-current-buffer origin
+                      (funcall callback chats)))))))))
+       (lambda (_status _detail)
+         ;; Older/custom adapters may not expose the optional SQLite command.
+         (if teams4e--chats
+             (let ((chats
+                    (teams4e--merge-chat-directory
+                     `((chats . ,teams4e--chats)))))
+               (unless (or teams4e-offline-mode
+                           teams4e--chat-directory-refreshing)
+                 (teams4e--refresh-chat-directory nil t))
+               (when (buffer-live-p origin)
+                 (with-current-buffer origin (funcall callback chats))))
+           (if teams4e-offline-mode
+               (user-error "No cached Teams chats are available")
+             (teams4e--refresh-chat-directory
+              (lambda (chats)
+                (when (buffer-live-p origin)
+                  (with-current-buffer origin
+                    (funcall callback chats)))))))))))))
+
+(defun teams4e--find-chat-by-query (query)
+  "Find and open an existing chat through legacy literal server QUERY."
   (when teams4e-offline-mode
     (user-error "Finding chats beyond recents requires online mode"))
   (setq query (string-trim query))
@@ -1174,6 +1321,20 @@ Use `teams4e-server-search' to find a channel thread by message contents."
              (puthash (teams4e--chat-id chat) (or (teams4e--get chat 'members) teams4e--no-members)
                       teams4e--member-cache))
            (teams4e-open-chat (or (teams4e--find-chat (teams4e--chat-id chat)) chat))))))))
+
+;;;###autoload
+(defun teams4e-find-chat (&optional query refresh)
+  "Fuzzy-select any existing chat without requiring an initial query.
+
+The interactive command loads every chat once per account/session, then lets
+the active Emacs completion system filter names, topics, participants, types,
+and IDs locally.  With prefix REFRESH, reload the directory.  A non-nil QUERY
+retains the older literal server-search entry point for callers and scripts.
+This command never creates a conversation."
+  (interactive (list nil current-prefix-arg))
+  (if query
+      (teams4e--find-chat-by-query query)
+    (teams4e--ensure-chat-directory #'teams4e--choose-directory-chat refresh)))
 
 (defun teams4e-search-open ()
   "Open the source transcript for the cached search result at point."
@@ -3121,6 +3282,7 @@ destination is preserved, with the forward appended."
   (let* ((search "Search people on server...")
          (older "Find older chat on server...")
          (email "Enter recipient email...")
+         (new-chat "New direct or group chat...")
          (seen (make-hash-table :test #'equal)) pairs)
     (dolist (person users)
       (let ((id (or (teams4e--get person 'id) (teams4e--get person 'mail))))
@@ -3138,11 +3300,18 @@ destination is preserved, with the forward appended."
     (setq pairs (nreverse pairs))
     (let* ((choice (string-trim (completing-read
                                  "Forward to (name, chat, or search): "
-                                 (append (mapcar #'car pairs) (list search older email)) nil nil)))
+                                 (append (mapcar #'car pairs)
+                                         (list new-chat search older email))
+                                 nil nil)))
            (target (cdr (assoc choice pairs))))
       (cond
        ((eq (car target) 'chat) (funcall callback (cdr target)))
        ((eq (car target) 'person) (teams4e--forward-person-target (cdr target) callback))
+       ((equal choice new-chat)
+        (teams4e--choose-new-chat-people
+         users
+         (lambda (people)
+           (teams4e--create-chat-for-people people callback))))
        ((equal choice older)
         (teams4e--require-online)
         (let ((query (string-trim (read-string "Find chat by name or participant: "))))
@@ -3168,27 +3337,33 @@ destination is preserved, with the forward appended."
                                 (lambda (person) (teams4e--forward-person-target person callback)))))))))
 
 (defun teams4e--select-forward-target (callback)
-  "Select a forwarding target using cached identities before explicit server search."
+  "Select any existing chat/person or create a new group for CALLBACK."
   (let* ((origin (current-buffer))
          (deliver (lambda (target)
                     (when (buffer-live-p origin)
                       (with-current-buffer origin (funcall callback target))))))
-    (teams4e--run-json
-     '("teams" "cache" "recipient" "list")
-     (lambda (payload)
-       (when (buffer-live-p origin)
-         (with-current-buffer origin
-           (teams4e--choose-forward-target
-            (append teams4e--chats (teams4e--get payload 'chats))
-            (append (teams4e--get payload 'users)
-                    (delq nil (mapcar (lambda (msg) (teams4e--dig msg 'from 'user))
-                                      (if (derived-mode-p 'teams4e-channel-thread-mode)
-                                          teams4e-channel--messages teams4e--messages)))) deliver))))
-     (lambda (_status _detail)
-       ;; Older/custom adapters need not implement the optional cache command.
-       (when (buffer-live-p origin)
-         (with-current-buffer origin
-           (teams4e--choose-forward-target teams4e--chats nil deliver)))))))
+    (teams4e--ensure-chat-directory
+     (lambda (chats)
+       (teams4e--run-json
+        '("teams" "cache" "recipient" "list")
+        (lambda (payload)
+          (when (buffer-live-p origin)
+            (with-current-buffer origin
+              (teams4e--choose-forward-target
+               (append chats (teams4e--get payload 'chats))
+               (append
+                (teams4e--get payload 'users)
+                (delq nil
+                      (mapcar
+                       (lambda (msg) (teams4e--dig msg 'from 'user))
+                       (if (derived-mode-p 'teams4e-channel-thread-mode)
+                           teams4e-channel--messages teams4e--messages))))
+               deliver))))
+        (lambda (_status _detail)
+          ;; Older/custom adapters need not implement the optional cache command.
+          (when (buffer-live-p origin)
+            (with-current-buffer origin
+              (teams4e--choose-forward-target chats nil deliver)))))))))
 
 (dolist (map (list teams4e-chat-mode-map teams4e-channel-thread-mode-map))
   (define-key map (kbd "f") #'teams4e-forward-message))
@@ -3320,6 +3495,162 @@ destination is preserved, with the forward appended."
                                     "unknown")))
                 (special-mode)))
             (pop-to-buffer buffer))))))))
+
+(defun teams4e--new-chat-person-identifier (person)
+  "Return a stable Graph identifier for new-chat PERSON."
+  (or (teams4e--get person 'id)
+      (teams4e--get person 'mail)
+      (teams4e--get person 'userPrincipalName)))
+
+(defun teams4e--new-chat-person-pairs (users)
+  "Return unique completion pairs for cached directory USERS."
+  (let ((seen (make-hash-table :test #'equal)) pairs)
+    (dolist (person users (nreverse pairs))
+      (when-let ((id (teams4e--new-chat-person-identifier person)))
+        (let ((key (downcase id)))
+          (unless (or (equal id teams4e--connected-user-id)
+                      (and (stringp teams4e--connected-as)
+                           (string-equal key (downcase teams4e--connected-as)))
+                      (gethash key seen))
+            (puthash key t seen)
+            (push (cons (format "%s  [%s]"
+                                (teams4e--user-choice person) id)
+                        person)
+                  pairs)))))))
+
+(defun teams4e--new-chat-email-p (value)
+  "Return non-nil when VALUE is one exact email or UPN."
+  (and (stringp value)
+       (string-match-p "\\`[^ ,;@]+@[^ ,;@]+\\'" value)))
+
+(defun teams4e--resolve-new-chat-entries
+    (entries pairs callback &optional resolved)
+  "Resolve multi-select ENTRIES against PAIRS, then call CALLBACK.
+
+Unmatched email/UPN values are accepted directly.  Other unmatched values
+search the tenant directory and ask the user to disambiguate only when needed."
+  (if-let ((entry (car entries)))
+      (let ((person (cdr (assoc entry pairs))))
+        (cond
+         (person
+          (teams4e--resolve-new-chat-entries
+           (cdr entries) pairs callback (cons person resolved)))
+         ((teams4e--new-chat-email-p entry)
+          (teams4e--resolve-new-chat-entries
+           (cdr entries) pairs callback
+           (cons `((displayName . ,entry) (mail . ,entry)) resolved)))
+         (t
+          (teams4e--search-user
+           entry
+           (lambda (found)
+             (teams4e--resolve-new-chat-entries
+              (cdr entries) pairs callback (cons found resolved)))))))
+    (let ((seen (make-hash-table :test #'equal)) unique)
+      (dolist (person (nreverse resolved))
+        (when-let ((identifier (teams4e--new-chat-person-identifier person)))
+          (let ((key (downcase identifier)))
+            (unless (gethash key seen)
+              (puthash key t seen)
+              (push person unique)))))
+      (funcall callback (nreverse unique)))))
+
+(defun teams4e--remember-created-chat (chat people)
+  "Return canonical CHAT and index it with selected PEOPLE."
+  (let* ((chat-id (teams4e--chat-id chat))
+         (canonical
+          (or (and chat-id
+                   (seq-find (lambda (candidate)
+                               (equal chat-id (teams4e--chat-id candidate)))
+                             teams4e--chats))
+              (and chat-id
+                   (seq-find (lambda (candidate)
+                               (equal chat-id (teams4e--chat-id candidate)))
+                             teams4e--chat-directory))
+              chat))
+         (members
+          (mapcar
+           (lambda (person)
+             `((userId . ,(teams4e--get person 'id))
+               (displayName . ,(teams4e--get person 'displayName))
+               (email . ,(or (teams4e--get person 'mail)
+                             (teams4e--get person 'userPrincipalName)))))
+           people)))
+    (when chat-id
+      (puthash chat-id (or members teams4e--no-members)
+               teams4e--member-cache)
+      (unless (memq canonical teams4e--chats)
+        (push canonical teams4e--chats))
+      (unless (memq canonical teams4e--chat-directory)
+        (push canonical teams4e--chat-directory)))
+    canonical))
+
+(defun teams4e--create-chat-for-people (people callback)
+  "Create or reuse a chat for PEOPLE and pass it to CALLBACK."
+  (unless people (user-error "Choose at least one Teams participant"))
+  (let* ((identifiers
+          (mapcar #'teams4e--new-chat-person-identifier people))
+         (topic (if (> (length people) 1)
+                    (string-trim (read-string "Group topic (optional): "))
+                  ""))
+         (args '("teams" "chat" "create")))
+    (dolist (identifier identifiers)
+      (setq args (append args (list "--userId" identifier))))
+    (unless (string-empty-p topic)
+      (setq args (append args (list "--topic" topic))))
+    (message "Creating Teams chat...")
+    (teams4e--run-json
+     args
+     (lambda (chat)
+       (let ((canonical (teams4e--remember-created-chat chat people)))
+         (funcall callback canonical))))))
+
+(defun teams4e--create-new-chat-for-people (people)
+  "Create or reuse a chat for PEOPLE and open an unsent composer."
+  (teams4e--create-chat-for-people
+   people
+   (lambda (chat)
+     (teams4e--open-compose chat)
+     (message "New Teams draft opened; nothing has been sent"))))
+
+(defun teams4e--choose-new-chat-people (users &optional callback)
+  "Choose one or more cached USERS and pass them to CALLBACK.
+Free text resolves through Graph.  CALLBACK defaults to creating a new draft."
+  (let* ((pairs (teams4e--new-chat-person-pairs users))
+         (crm-separator "[ \\t]*,[ \\t]*")
+         (entries
+          (delq nil
+                (mapcar
+                 (lambda (entry)
+                   (let ((trimmed (string-trim entry)))
+                     (unless (string-empty-p trimmed) trimmed)))
+                 (completing-read-multiple
+                  "New chat participants (comma-separated names/emails): "
+                  (mapcar #'car pairs) nil nil)))))
+    (unless entries (user-error "Choose at least one Teams participant"))
+    (teams4e--resolve-new-chat-entries
+     entries pairs (or callback #'teams4e--create-new-chat-for-people))))
+
+;;;###autoload
+(defun teams4e-new-chat ()
+  "Create a genuinely new direct or group chat through person completion.
+
+Cached people complete locally.  Free names search the tenant directory, and
+exact email/UPN values remain available when directory search is restricted.
+The command creates or reuses the chat and opens a blank draft without sending."
+  (interactive)
+  (teams4e--require-online)
+  (let ((origin (current-buffer)))
+    (teams4e--run-json
+     '("teams" "cache" "recipient" "list")
+     (lambda (payload)
+       (when (buffer-live-p origin)
+         (with-current-buffer origin
+           (teams4e--choose-new-chat-people
+            (teams4e--get payload 'users)))))
+     (lambda (_status _detail)
+       (when (buffer-live-p origin)
+         (with-current-buffer origin
+           (teams4e--choose-new-chat-people nil)))))))
 
 (defun teams4e-create-chat (participants topic)
   "Create a new chat with comma-separated PARTICIPANTS and optional TOPIC."
@@ -4064,6 +4395,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
     (define-key map (kbd "r") #'teams4e-mark-read-later)
     (define-key map (kbd "u") #'teams4e-mark-unread-later)
     (define-key map (kbd "*") #'teams4e-mark-favorite-later)
+    (define-key map (kbd "m") #'teams4e-toggle-selection)
     (define-key map (kbd "SPC") #'teams4e-unmark)
     (define-key map (kbd "U") #'teams4e-unmark-all)
     map)
@@ -4071,7 +4403,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
 
 (defvar teams4e-chat-mark-map
   (let ((map (make-sparse-keymap)))
-    (dolist (key '("i" "r" "u" "*" "SPC" "U"))
+    (dolist (key '("i" "r" "u" "*" "m" "SPC" "U"))
       (define-key map (kbd key)
                   #'teams4e-chat-run-headers-command))
     map)
@@ -4082,9 +4414,11 @@ from producing an invalid Graph payload after a mention is edited or deleted."
             #'teams4e-mark-read-later)
 (define-key teams4e-mark-map (kbd "r")
             #'teams4e-mark-read-later)
+(define-key teams4e-mark-map (kbd "m")
+            #'teams4e-toggle-selection)
 (define-key teams4e-mark-map (kbd "U")
             #'teams4e-unmark-all)
-(dolist (key '("i" "r" "u" "*" "SPC" "U"))
+(dolist (key '("i" "r" "u" "*" "m" "SPC" "U"))
   (define-key teams4e-chat-mark-map (kbd key)
               #'teams4e-chat-run-headers-command))
 
@@ -4204,7 +4538,8 @@ shared by the terminal Teams client."
             ("Search cached messages" . teams4e-search)
             ("Search Microsoft Teams server" .
              teams4e-server-search)
-            ("Find chat beyond recents" . teams4e-find-chat)
+            ("Find existing chat" . teams4e-find-chat)
+            ("Create new chat" . teams4e-new-chat)
             ("Reopen saved compose draft" . teams4e-compose-drafts)
             ("Close inactive transcript buffers" .
              teams4e-close-inactive-transcripts)
@@ -4239,7 +4574,8 @@ shared by the terminal Teams client."
          ("*" . teams4e-toggle-favorite)
          ("M-u" . teams4e-mark-unread)
          ("I" . teams4e-mark-read-later)
-         ("M" . teams4e-toggle-selection)
+         ("M" . teams4e-find-chat)
+         ("N" . teams4e-new-chat)
          ("T" . teams4e-toggle-visible-selections)
          ("X" . teams4e-bulk-action)
          ("E" . teams4e-export-thread)
@@ -4283,7 +4619,7 @@ shared by the terminal Teams client."
 
 (defconst teams4e--chat-header-mirror-keys
   '("g" "n" "p" "[" "]" "i" "I" "!" "?" "r" "M-u" "*"
-    "M" "T" "X" "u" "U" "F" "x" "z" "Z" "M-U" "/" "s" "b" "B"
+    "M" "N" "T" "X" "u" "U" "F" "x" "z" "Z" "M-U" "/" "s" "b" "B"
     "v" "V" "S" "H" "J" "K" "C-+" "C-=" "C--")
   "Headers keys delegated from the singleton Teams chat reader.")
 
@@ -4301,7 +4637,6 @@ shared by the terminal Teams client."
       (binding
        '(("j" . teams4e-thread-next)
          ("k" . teams4e-thread-previous)
-         ("N" . teams4e-thread-next)
          ("P" . teams4e-thread-previous)
          ("M-j" . teams4e-chat-next-message)
          ("M-k" . teams4e-chat-previous-message)
@@ -4381,7 +4716,7 @@ shared by the terminal Teams client."
             ("Search cache" . teams4e-search)
             ("Search Microsoft Teams server" .
              teams4e-server-search)
-            ("Find chat beyond recents" . teams4e-find-chat)
+            ("Find existing chat" . teams4e-find-chat)
             ("Synchronize chats" . teams4e-sync)
             ("Synchronize chats and channels" .
              teams4e-sync-all)
@@ -4391,7 +4726,7 @@ shared by the terminal Teams client."
             ("Scheduled outbox" . teams4e-outbox)
             ("Forward message at point" . teams4e-forward-message)
             ("Reopen compose draft" . teams4e-compose-drafts)
-            ("Create chat" . teams4e-create-chat)
+            ("Create new chat" . teams4e-new-chat)
             ("Find person" . teams4e-user)
             ("Choose inbox bookmark" . teams4e-bookmark-jump)
             ("Filter inbox" . teams4e-filter)
@@ -4457,7 +4792,7 @@ shared by the terminal Teams client."
           ("c" "channels" teams4e-channels)
          ("/" "search" teams4e-search)
           ("?" "server search" teams4e-server-search)
-          ("M-f" "find chat" teams4e-find-chat)
+          ("M" "existing chat" teams4e-find-chat)
           ("b" "bookmark" teams4e-bookmark-jump)
           ("f" "filter" teams4e-filter)
           ("F" "unread only" teams4e-toggle-unread-filter)
@@ -4466,7 +4801,7 @@ shared by the terminal Teams client."
           ("s" "send" teams4e-send)
           ("w" "forward message" teams4e-forward-message)
           ("d" "drafts" teams4e-compose-drafts)
-          ("n" "new chat" teams4e-create-chat)
+          ("n" "new chat" teams4e-new-chat)
           ("p" "person" teams4e-user)
           ("P" "meeting availability" teams4e-meeting-availability)
           ("V" "meeting response" teams4e-meeting-respond)
@@ -4504,7 +4839,8 @@ shared by the terminal Teams client."
     "v" "view"
     "G" "discuss view with agent"
     "F" "unread only"
-    "M" "select chat"
+    "M" "find existing chat"
+    "N" "new chat"
     "i" "mark read"
     "I" "mark read"
     "r" "mark read"
@@ -4539,6 +4875,7 @@ shared by the terminal Teams client."
     "y" "copy Markdown"
     "g" "analyze with agent"
     "G" "discuss view with agent"
+    "M" "find existing chat"
     "o" "Teams web"
     "O" "Teams app"
     "?" "choose action")
@@ -4551,7 +4888,7 @@ shared by the terminal Teams client."
     "G" "discuss view with agent"
     "S" "toggle order"
     "Y" "copy Markdown"
-    "N" "next thread"
+    "N" "new chat"
     "P" "previous thread"))
 
 (defalias 'teams-channels #'teams4e-channels)
@@ -4574,6 +4911,7 @@ shared by the terminal Teams client."
 (defalias 'teams-sync #'teams4e-sync)
 (defalias 'teams-user #'teams4e-user)
 (defalias 'teams-create-chat #'teams4e-create-chat)
+(defalias 'teams-new-chat #'teams4e-new-chat)
 (defalias 'teams-dispatch #'teams4e-dispatch)
 (defalias 'teams-export-thread #'teams4e-export-current-thread)
 (defalias 'teams-copy-thread-markdown

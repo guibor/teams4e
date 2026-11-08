@@ -22,9 +22,11 @@ turn the reader into a separate mini-application.
 | `z` / `Z` | Snooze for the default duration / choose a wake time |
 | `M-U` | Undo the last completed action |
 | `m` | Deferred-mark prefix |
+| `m m` / `T` | Select one / all visible conversations for a bulk action |
 | `x` | Apply deferred marks |
-| `M` / `T` | Select one / all visible conversations |
 | `X` | Run a bulk action |
+| `M` / `C-u M` | Find any existing chat from cache / force a full refresh first |
+| `N` | Start a new direct or multi-person chat draft |
 | `a` | Current-conversation action prefix |
 | `a a` / `a A` | Capture a summary / complete thread to Org |
 | `f` / `a f` | Forward the message at point to a person or chat for review |
@@ -75,27 +77,29 @@ forwarded/quoted content, and attachment links. It does not reupload files or
 grant access to protected links. An existing destination draft is preserved
 and the forward is appended.
 
-The forwarding picker uses people and conversations from the existing private
-SQLite cache, not only the current inbox or bookmark. Member records and past
-directory results remain available after restarting Emacs. Duplicate names
-show addresses and IDs. Type a missing name and press `RET` to search the
-directory, or choose **Search people on server...**, **Find older chat on
-server...**, or **Enter recipient email...**. Directory access still depends on
-your tenant permissions; no new permissions are requested. An older/custom
-backend without recipient-cache support falls back to loaded chats and search.
+The forwarding picker uses the cache-first complete chat directory, not only the
+current inbox or bookmark, and combines it with people from the existing private
+SQLite cache. Duplicate names show addresses and IDs. Type a missing name and
+press `RET` to search the tenant directory, or choose **New direct or group
+chat...**, **Search people on server...**, **Find older chat on server...**, or
+**Enter recipient email...**. The new-chat choice uses the same comma-separated
+multi-person completion as `N`, creates or reuses the destination, and then
+opens the forward draft. Nothing is sent until explicit draft submission.
 
-Selecting a recipient never sends a message or creates a conversation. Known
-direct chats use their cached chat ID; other people use the existing email-based
-send path, which requires an existing direct chat. Create a new conversation
-with `teams4e-create-chat` first when needed. Cache identities are suggestions,
-not proof of current membership or delivery permission: review the destination
-shown in the draft. `teams4e-graph teams cache clear` also removes cached people; separate
+Directory access and chat creation still depend on tenant permissions; no new
+permissions are requested. Older/custom backends fall back to loaded chats and
+explicit search. Cache identities are suggestions, not proof of current
+membership or delivery permission: review the destination shown in the draft.
+`teams4e-graph teams cache clear` also removes cached people and chats; separate
 accounts should use separate `TEAMS4E_CACHE` files.
 
 With expand-region installed, your existing `er/expand-region` binding includes
 a complete message as an expansion step in chat and channel readers. `M-h`
 selects that message directly; `M-w` copies the selection, including in Evil.
-Date separators and neighboring messages are excluded.
+Date separators and neighboring messages are excluded. Selection uses the
+high-contrast `teams4e-message-selection` face. Messages from the connected
+account use the quieter `teams4e-own-message` full-block face, independently of
+selection, so `You` remains visually distinct in long transcripts.
 
 ### Writing Messages
 
@@ -202,10 +206,18 @@ predicate functions.
 
 ## Chats Outside Recents
 
-Use `M-x teams4e-create-chat` and enter a participant's email address or
-user ID. Leave the topic blank for a one-to-one conversation. The participant
-does not need to appear in your loaded recent chats. For a group, enter
-comma-separated participants and an optional topic.
+Use `M` to fuzzy-select any existing chat from the private cache-backed account
+directory. The chooser starts immediately from SQLite and refreshes all Graph
+chat pages in the background. `C-u M` waits for that refresh first. A free value
+not found in a cold cache falls back to exhaustive server search.
+
+Use `N` for a new chat. Select one or several comma-separated people. Cached
+people complete immediately; free names search the tenant directory; exact
+email/UPN input is accepted as a fallback. A group can have an optional topic.
+The resulting conversation opens as a blank unsent draft.
+
+`M-x teams4e-create-chat` remains the low-level exact-identifier command. Enter
+participant email addresses or user IDs and an optional group topic.
 
 For one-to-one chats, [Microsoft Graph returns an existing conversation](https://learn.microsoft.com/en-us/graph/api/chat-post?view=graph-rest-1.0)
 when one already exists. This command requires your authenticated account to

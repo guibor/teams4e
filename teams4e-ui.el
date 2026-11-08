@@ -40,6 +40,10 @@
           "Snooze the current Teams conversation for the default duration." t)
 (autoload 'teams4e-snooze "teams4e-advanced"
           "Choose a Teams conversation snooze wake time." t)
+(autoload 'teams4e-find-chat "teams4e-advanced"
+          "Fuzzy-select any existing Teams chat." t)
+(autoload 'teams4e-new-chat "teams4e-advanced"
+          "Create a new Teams direct or group chat." t)
 (defalias 'teams-unread-filter #'teams4e-toggle-unread-filter)
 (declare-function teams4e--refresh-current-view "advanced")
 (declare-function teams4e-search-refresh "teams4e-advanced" ())
@@ -260,8 +264,12 @@
 (defvar-local teams4e-compose--content-type "text")
 (defvar-local teams4e-compose--draft-timer nil)
 (defvar-local teams4e-compose--draft-file nil)
+(defvar-local teams4e--message-selection-overlay nil
+  "Overlay emphasizing the explicitly selected transcript message.")
 (defvar teams4e--cache-first-open nil
   "Dynamically bound while a newly selected chat performs its initial load.")
+(defvar teams4e--chat-directory nil)
+(defvar teams4e--chat-directory-account nil)
 
 ;; Defined by advanced.el; declarations keep the shared message renderer able
 ;; to resolve relative hosted-content URLs in channel thread buffers.
@@ -272,6 +280,16 @@
 (defface teams4e-own-sender
   '((t :inherit success :weight semi-bold))
   "Face for the signed-in user's message header."
+  :group 'teams4e)
+
+(defface teams4e-own-message
+  '((t :inherit secondary-selection :extend t))
+  "Subtle full-block face for messages sent by the signed-in user."
+  :group 'teams4e)
+
+(defface teams4e-message-selection
+  '((t :inherit region :weight bold :extend t :box (:line-width 1)))
+  "High-contrast face for an explicitly selected complete message."
   :group 'teams4e)
 
 (defface teams4e-other-sender
@@ -653,6 +671,7 @@ when non-nil, receives the exit status and combined diagnostic text."
         (teams4e--args-prefix-p '("teams" "user" "profile") args)
         (teams4e--args-prefix-p '("teams" "user" "presence") args)
         (teams4e--args-prefix-p '("teams" "chat" "list") args)
+        (teams4e--args-prefix-p '("teams" "chat" "directory") args)
         (teams4e--args-prefix-p '("teams" "chat" "get") args)
         (teams4e--args-prefix-p
          '("teams" "chat" "member" "batch") args)
@@ -1931,7 +1950,9 @@ and leave CALLBACK untouched."
       (let ((inhibit-read-only t)) (erase-buffer)))
     (apply #'make-comint-in-buffer "M365 Login" buffer program nil args)
     (setq teams4e--connected-as nil
-          teams4e--recent-chat-cache nil)
+          teams4e--recent-chat-cache nil
+          teams4e--chat-directory nil
+          teams4e--chat-directory-account nil)
     (pop-to-buffer buffer)))
 
 ;;;###autoload
@@ -1996,7 +2017,7 @@ and leave CALLBACK untouched."
   (let ((old-by-id (make-hash-table :test #'equal))
         (reused-contexts 0)
         (chats (teams4e--payload-list payload)))
-    (dolist (chat teams4e--chats)
+    (dolist (chat (append teams4e--chat-directory teams4e--chats))
       (when-let ((id (teams4e--chat-id chat)))
         (puthash id chat old-by-id)))
     (setq chats
@@ -2543,7 +2564,8 @@ Upcoming views instead match all candidates in one near-term calendar lookup."
     (define-key map (kbd "*") #'teams4e-toggle-favorite)
     (define-key map (kbd "M-u") #'teams4e-mark-unread)
     (define-key map (kbd "I") #'teams4e-mark-read-later)
-    (define-key map (kbd "M") #'teams4e-toggle-selection)
+    (define-key map (kbd "M") #'teams4e-find-chat)
+    (define-key map (kbd "N") #'teams4e-new-chat)
     (define-key map (kbd "T") #'teams4e-toggle-visible-selections)
     (define-key map (kbd "X") #'teams4e-bulk-action)
     (define-key map (kbd "E") #'teams4e-export-thread)
@@ -3901,7 +3923,9 @@ Do not infer mentions from arbitrary names or @ characters."
     (insert "\n")
     (add-text-properties start (point)
                          (list 'teams4e-message message
-                               'rear-nonsticky '(teams4e-message)))))
+                               'rear-nonsticky '(teams4e-message)))
+    (when own
+      (add-face-text-property start (point) 'teams4e-own-message t))))
 
 (defun teams4e--event-date-time (event field)
   "Return EVENT's UTC dateTime string for FIELD."
@@ -4475,6 +4499,8 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
   (add-function :filter-return (local 'filter-buffer-substring-function)
                 #'teams4e--strip-direction-hints)
   (add-hook 'kill-buffer-hook #'teams4e--cancel-buffer-process nil t)
+  (add-hook 'post-command-hook
+            #'teams4e--clear-inactive-message-selection nil t)
   (setq-local truncate-lines nil))
 
 (defvar teams4e-chat-mode-map
@@ -4511,7 +4537,7 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
     (define-key map (kbd "p") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "j") #'teams4e-thread-next)
     (define-key map (kbd "k") #'teams4e-thread-previous)
-    (define-key map (kbd "N") #'teams4e-thread-next)
+    (define-key map (kbd "N") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "P") #'teams4e-thread-previous)
     (define-key map (kbd "]") #'teams4e-chat-run-headers-command)
     (define-key map (kbd "[") #'teams4e-chat-run-headers-command)
@@ -4951,8 +4977,22 @@ Separators are not messages.  At end of buffer, use the last message."
   (interactive)
   (when-let ((bounds (teams4e-message-bounds
                      (if (use-region-p) (region-beginning) (point)))))
+    (when (overlayp teams4e--message-selection-overlay)
+      (delete-overlay teams4e--message-selection-overlay))
     (goto-char (car bounds))
-    (push-mark (cdr bounds) t t)))
+    (push-mark (cdr bounds) t t)
+    (setq teams4e--message-selection-overlay
+          (make-overlay (car bounds) (cdr bounds) (current-buffer) nil t))
+    (overlay-put teams4e--message-selection-overlay
+                 'face 'teams4e-message-selection)
+    (overlay-put teams4e--message-selection-overlay 'priority 100)))
+
+(defun teams4e--clear-inactive-message-selection ()
+  "Remove the message-selection overlay after its active region is gone."
+  (when (and (overlayp teams4e--message-selection-overlay)
+             (not (use-region-p)))
+    (delete-overlay teams4e--message-selection-overlay)
+    (setq teams4e--message-selection-overlay nil)))
 
 (defun teams4e--setup-message-expansion ()
   "Add a message-sized selection to this reader's expand-region candidates."

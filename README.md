@@ -223,6 +223,8 @@ headers buffer. They can be changed independently of the commands.
 | `teams4e-toggle-unread-filter` | `F` | Toggle unread-only within the current view |
 | `teams4e-recent-open` | `RET` | Open the selected conversation |
 | `teams4e-reply` / `teams4e-send` | `R` / `c` | Reply / compose |
+| `teams4e-find-chat` | `M` | Fuzzy-find any existing chat |
+| `teams4e-new-chat` | `N` | Start a direct or multi-person chat draft |
 | `teams4e-mark-read-later` | `r` or `i` | Queue mark-read |
 | `teams4e-execute-marks` | `x` | Apply queued actions |
 | `teams4e-snooze-quick` / `teams4e-snooze` | `z` / `Z` | Default snooze / choose a wake time |
@@ -366,11 +368,18 @@ RTL whenever a prose line contains Hebrew. English runs are never reversed.
 Generated display hints are stripped by ordinary region copying; source text
 and exports are unchanged. Mention styling uses the `teams4e-mention` face.
 
-Press `f` on a message to forward it. The recipient picker includes cached
-people and chats beyond the visible inbox; enter an unmatched name to search
-the server. Explicit directory search, older-chat search, and email entry are
-also available. Forwarding opens an editable draft and never sends immediately.
+Press `f` on a message to forward it. The recipient picker includes the same
+cache-first all-chat directory used by `M`, plus cached people. Choose any
+existing direct, group, or meeting chat; enter an unmatched person to search
+the server; or choose **New direct or group chat...** and select several people.
+Explicit older-chat search and email entry remain available. Forwarding opens
+an editable draft and never sends immediately.
 See [forwarding and recipient lookup](USAGE.md#composition).
+
+The complete message selected by `M-h` has a high-contrast block outline.
+Messages sent by the connected account have their own quieter full-block face,
+in addition to the `You` sender label, so authorship remains visible while
+navigating a long transcript.
 
 Background transcript updates preserve the message-relative cursor, selection,
 and scroll position. Opening a chat still selects the latest message; live
@@ -392,27 +401,37 @@ Scheduled file attachments are not yet supported.
 See [scheduled sending](SCHEDULED-SEND.md) for setup, keymaps, DST behavior,
 recovery, and limitations.
 
-## Find Older Chats
+## Find Or Start Any Chat
 
-`M-x teams4e-find-chat` (default **`M-f`** in the inbox and reader) finds
-existing chats outside your recents. Enter a group name, participant name/email,
-or several words such as `launch ada`; all words must match across the chat's
-name and membership. Choose a result with completion and press `RET` to open it
-in the normal reader. One-to-one, group, and meeting chats are included.
+Press **`M`** (`M-x teams4e-find-chat`) in the inbox or reader to fuzzy-select
+an existing one-to-one, group, or meeting chat. The chooser appears immediately
+from the private SQLite chat cache and then refreshes the complete account chat
+directory quietly. It ignores the current bookmark, inbox filter, and recents
+limit. `M-f` remains a compatibility binding. Use **`C-u M`** when you need to
+wait for an authoritative full refresh before choosing.
 
-This explicitly scans all pages of your chat metadata, ignoring inbox filters
-and the recent-chat limit, without fetching messages or calendars. Large chat
-collections can take longer. It uses the documented
+The refresh follows every page of chat metadata without fetching messages or
+calendars. It uses the documented
 [list-chats API](https://learn.microsoft.com/en-us/graph/api/chat-list?view=graph-rest-1.0)
-with expanded members; potentially truncated member lists are checked separately
-when needed. Failed membership lookups are reported as incomplete search rather
-than silently implying there is no matching group. It does not create chats,
-change the inbox snapshot, or add a separate persistent directory.
+with bounded expanded-member hints. If a typed value is absent from a cold
+cache, teams4e falls back to its exhaustive literal server search, resolving
+truncated membership when needed. The session directory references canonical
+chat objects and the existing SQLite resource rows; it is not another database
+or synchronized inbox representation.
+
+Press **`N`** (`M-x teams4e-new-chat`) for a genuinely new conversation. Select
+one or several comma-separated people with completion. Cached identities resolve
+locally; unmatched names search the tenant directory; an exact email/UPN is a
+fallback when directory search is restricted. For groups, teams4e asks for an
+optional topic. It creates or reuses the conversation and opens an unsent blank
+draft for review.
 
 Use `teams4e-server-search` for message contents and channel threads;
-`teams4e-search` searches only cached messages. Finding chats requires online
-mode and an updated backend as well as Lisp. `teams-find-chat` is an alias;
-the command is also available in the `H` command palette.
+`teams4e-search` searches only cached messages. A forced directory refresh or
+cold fallback requires online mode and an updated backend as well as Lisp.
+`teams-find-chat` and `teams-new-chat` are aliases; both commands are also in
+the `H` command palette. The lower-level `teams4e-create-chat` remains available
+for scripts that already know exact identifiers.
 
 ## History and Export
 

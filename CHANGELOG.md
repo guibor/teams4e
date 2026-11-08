@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Make `M` a cache-first fuzzy chooser over all existing direct, group, and
+  meeting chats, with a quiet complete-directory refresh and `C-u M` forced
+  refresh. Add `N` for a genuinely new one- or multi-person chat using cached
+  people, tenant lookup, and exact email/UPN fallback. Move row selection to
+  `m m` while retaining `T` for all visible rows.
+- Let forwarding target the same all-chat directory or create/reuse a new
+  multi-person destination through the shared people picker. Keep the editable
+  draft and explicit-send boundary. Add distinct full-block faces for the
+  selected message and messages sent by the connected account.
+
 - Make `b u` idempotently enable unread-only filtering instead of toggling it
   off when the overlay is already active. Keep `F`, `U`, and `M-F` as the
   reversible toggle commands, and repair legacy standalone unread-query state
@@ -99,7 +109,8 @@
 - Bind `f` in chat/channel readers (including Evil) to forwarding. Add a
   cache-first people/chat picker with explicit directory search, older-chat
   search, and email entry. Reuse private SQLite resources and persist directory
-  results; keep draft review and explicit send, with no automatic chat creation.
+  results; keep draft review and explicit send. The shared new-chat picker now
+  also permits an explicitly chosen new direct or group destination.
 
 - Give Hebrew/English message lines and quoted replies independent Unicode
   paragraph direction, unaffected by sender labels. Highlight declared

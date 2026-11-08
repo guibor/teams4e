@@ -26,6 +26,8 @@
       (kbd "G") #'teams4e-analyze-view
       (kbd "U") #'teams-unread-filter
       (kbd "F") #'teams-unread-filter
+      (kbd "M") #'teams4e-find-chat
+      (kbd "N") #'teams4e-new-chat
       (kbd "z") #'teams4e-snooze-quick
       (kbd "Z") #'teams4e-snooze)
     (evil-define-key* '(normal motion) teams4e-chat-mode-map
@@ -34,6 +36,8 @@
       (kbd "G") #'teams4e-analyze-view
       (kbd "U") #'teams4e-chat-run-headers-command
       (kbd "F") #'teams4e-chat-run-headers-command
+      (kbd "M") #'teams4e-chat-run-headers-command
+      (kbd "N") #'teams4e-chat-run-headers-command
       (kbd "z") #'teams4e-chat-run-headers-command
       (kbd "Z") #'teams4e-chat-run-headers-command)
     (when (derived-mode-p 'teams4e-recent-mode 'teams4e-chat-mode)
@@ -83,7 +87,8 @@
     (kbd "*") #'teams4e-toggle-favorite
     (kbd "M-u") #'teams4e-mark-unread
     (kbd "I") #'teams4e-mark-read-later
-    (kbd "M") #'teams4e-toggle-selection
+    (kbd "M") #'teams4e-find-chat
+    (kbd "N") #'teams4e-new-chat
     (kbd "T") #'teams4e-toggle-visible-selections
     (kbd "X") #'teams4e-bulk-action
     (kbd "!") #'teams4e-mark-read-later
@@ -131,6 +136,7 @@
     (kbd "M-u") #'teams4e-chat-run-headers-command
     (kbd "*") #'teams4e-chat-run-headers-command
     (kbd "M") #'teams4e-chat-run-headers-command
+    (kbd "N") #'teams4e-chat-run-headers-command
     (kbd "T") #'teams4e-chat-run-headers-command
     (kbd "X") #'teams4e-chat-run-headers-command
     (kbd "u") #'teams4e-chat-run-headers-command
@@ -175,7 +181,6 @@
     (kbd "d") #'teams4e-message-delete
     (kbd "A") #'teams4e-attachment-preview
     (kbd "M-a") #'teams4e-attachment-download
-    (kbd "N") #'teams4e-thread-next
     (kbd "P") #'teams4e-thread-previous
     (kbd "M-F") #'teams4e-chat-toggle-unread-filter
     (kbd "h") #'teams4e-chat-back-to-inbox

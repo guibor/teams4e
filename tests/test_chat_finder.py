@@ -13,6 +13,37 @@ from teams4e_mock import MockTenant
 
 
 class ChatFinderTests(unittest.TestCase):
+  def test_chat_directory_pages_all_chats_without_member_fanout(self):
+    pages = [
+        {"value": [{"id": "first", "members": [{"displayName": "Ada"}]}],
+         "@odata.nextLink": "https://graph.microsoft.com/v1.0/next"},
+        {"value": [{"id": "second", "members": [{}] * 25}]},
+    ]
+    with mock.patch.object(backend, "graph_json", side_effect=pages) as request:
+      result = backend.chat_directory("token")
+    self.assertEqual(["first", "second"], [chat["id"] for chat in result["chats"]])
+    self.assertEqual(2, result["scanned"])
+    self.assertTrue(result["complete"])
+    self.assertTrue(result["chats"][0]["membersLoaded"])
+    self.assertFalse(result["chats"][1]["membersLoaded"])
+    self.assertEqual(2, request.call_count)
+    self.assertIn("%24expand=members", request.call_args_list[0].args[0])
+    self.assertFalse(any("/members" in call.args[0] for call in request.call_args_list))
+
+  def test_command_routes_to_complete_chat_directory(self):
+    payload = {"chats": [{"id": "all"}], "scanned": 1, "complete": True}
+    with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+        "os.environ", {"TEAMS4E_CACHE": str(Path(directory) / "teams.sqlite3")}
+    ), mock.patch.object(backend, "mock_enabled", return_value=False), \
+         mock.patch.object(backend, "ensure_graph_token", return_value="token"), \
+         mock.patch.object(backend, "chat_directory", return_value=payload) as directory_call:
+      result, output = backend.execute(["teams", "chat", "directory", "--output", "json"])
+      cached = backend.dispatch_cache(["teams", "cache", "chat", "list"])
+    directory_call.assert_called_once_with("token")
+    self.assertEqual(payload, result)
+    self.assertEqual("json", output)
+    self.assertEqual(["all"], [chat["id"] for chat in cached])
+
   def test_all_pages_including_old_chat_not_only_first_300(self):
     chats = [{"id": str(i), "topic": "Other", "members": []} for i in range(351)]
     chats[-1].update(topic="Launch plan", chatType="group", members=[
@@ -96,3 +127,15 @@ class ChatFinderTests(unittest.TestCase):
       result = tenant.execute(["teams", "chat", "find", "--query", "old ada"])
       self.assertEqual(["old"], [chat["id"] for chat in result["chats"]])
       self.assertEqual(before, tenant.state)
+
+  def test_mock_directory_returns_every_chat_with_members(self):
+    with tempfile.TemporaryDirectory() as directory:
+      tenant = MockTenant(Path(directory) / "tenant.json")
+      tenant.state["chats"].append(
+          {"id": "old", "topic": "Old project", "chatType": "group"})
+      tenant.state["chatMembers"]["old"] = [{"displayName": "Ada"}]
+      result = tenant.execute(["teams", "chat", "directory"])
+      self.assertEqual(len(tenant.state["chats"]), result["scanned"])
+      old = next(chat for chat in result["chats"] if chat["id"] == "old")
+      self.assertEqual([{"displayName": "Ada"}], old["members"])
+      self.assertTrue(old["membersLoaded"])

@@ -946,6 +946,27 @@ def list_members(chat_id: str, access_token: str) -> list[dict[str, Any]]:
   return graph_collection(f"/chats/{quoted_id(chat_id)}/members", access_token)
 
 
+def chat_directory(access_token: str) -> dict[str, Any]:
+  """Return every existing chat with bounded member hints for local completion.
+
+  Graph paginates the chat collection and caps expanded membership.  The
+  directory needs complete chat coverage, not complete large-group rosters;
+  an individual row records whether its expanded member list is complete.
+  """
+  chats = graph_collection(collection_path(
+      "/me/chats", [("$top", "50"), ("$expand", "members")]), access_token)
+  for chat in chats:
+    members = chat.get("members")
+    if not isinstance(members, list):
+      chat["members"] = []
+    chat["membersLoaded"] = (
+        isinstance(members, list)
+        and len(members) < 25
+        and not bool(chat.get("members@odata.nextLink"))
+    )
+  return {"chats": chats, "scanned": len(chats), "complete": True}
+
+
 def find_chats(query: str, access_token: str) -> dict[str, Any]:
   """Find existing chats beyond recents by literal topic/member words.
 
@@ -956,8 +977,7 @@ def find_chats(query: str, access_token: str) -> dict[str, Any]:
   words = query.casefold().split()
   if not words:
     raise BackendError("Chat search query is empty")
-  chats = graph_collection(collection_path(
-      "/me/chats", [("$top", "50"), ("$expand", "members")]), access_token)
+  chats = chat_directory(access_token)["chats"]
   matches: dict[str, dict[str, Any]] = {}
   member_errors = 0
 
@@ -972,7 +992,8 @@ def find_chats(query: str, access_token: str) -> dict[str, Any]:
     if not chat.get("id"):
       continue
     members = chat.get("members")
-    incomplete = (not isinstance(members, list) or len(members) >= 25
+    incomplete = (chat.get("membersLoaded") is False
+                  or not isinstance(members, list) or len(members) >= 25
                   or bool(chat.get("members@odata.nextLink")))
     if not isinstance(members, list):
       chat["members"] = []
@@ -3775,6 +3796,15 @@ def execute(
     )
     with TeamsCache() as cache:
       cache.upsert_resources("chat", result)
+  elif args[:3] == ["teams", "chat", "directory"]:
+    result = chat_directory(access_token)
+    with TeamsCache() as cache:
+      cache.upsert_resources("chat", result["chats"])
+      for chat in result["chats"]:
+        cache.upsert_resources(
+            "member", chat.get("members", []),
+            parent_id=str(chat.get("id") or ""),
+        )
   elif args[:3] == ["teams", "chat", "find"]:
     result = find_chats(str(option(args, "--query")), access_token)
     with TeamsCache() as cache:
@@ -3979,6 +4009,8 @@ def execute(
         access_token,
         topic=option(args, "--topic", required=False),
     )
+    with TeamsCache() as cache:
+      cache.upsert_resources("chat", [result])
   elif args[:4] == ["teams", "chat", "topic", "set"]:
     result = set_chat_topic(
         str(option(args, "--chatId")),

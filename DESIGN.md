@@ -40,9 +40,12 @@ calendar events. The package keeps three intentionally narrow local stores:
   other small UI state.
 - `teams4e-draft-directory`: private recoverable compose drafts.
 
-A chat is represented once in `teams4e--chats`. Optional participant and
-meeting enrichment is merged into that alist. Filters and bookmarks select the
-same objects; they do not maintain synchronized inbox copies.
+A loaded chat is represented canonically in `teams4e--chats`. Optional
+participant and meeting enrichment is merged into that alist. The account-wide
+session directory in `teams4e--chat-directory` is only an index of canonical
+chat objects, including chats outside the bounded inbox; it is rebuilt from the
+existing SQLite resource rows and Graph. Filters and bookmarks select the same
+objects; they do not maintain synchronized inbox copies.
 
 Fresh cache or Graph chat rows are merged into the existing chat cons cell by
 chat ID, preserving object identity for the singleton reader. A linked event
@@ -117,6 +120,10 @@ Main entry points:
 - `teams4e-execute-marks`: apply deferred row actions serially.
 - `teams4e-bulk-action`: apply one operation to selected conversations.
 - `teams4e-sync`: refresh the local SQLite cache.
+- `teams4e-find-chat`: fuzzy-select any existing chat from an account-scoped,
+  cache-first directory; a prefix forces completion after a full Graph refresh.
+- `teams4e-new-chat`: resolve one or more people, create/reuse a conversation,
+  and open an unsent compose draft.
 - `teams4e-channels`: choose a team and channel.
 - `teams4e-export-current-thread`: fetch and write complete Markdown.
 - `teams4e-capture-current-summary`: capture compact conversation metadata.
@@ -169,6 +176,22 @@ Cache-first opening paints cached rows while Graph refreshes independently.
 Member and calendar completion callbacks mutate their established caches/attachments and
 request a shared short timer; adjacent completions therefore produce one
 tabulated-list redraw. Direct user actions still redraw immediately.
+
+Existing-chat selection follows the same ownership model. `M` reads chat rows
+from the established SQLite cache and opens completion immediately, while one
+background `teams chat directory` request follows every Graph chat page and
+merges rows by chat ID. `C-u M` waits for that request. Free completion text can
+invoke the older exhaustive literal search when a cold cache misses a chat.
+The directory has an account identity and is cleared on login changes; it adds
+no database, second inbox, message fetch, or calendar fetch.
+
+`N` and forwarding's **New direct or group chat** action share one participant
+resolver. It prefers cached users, resolves free names through tenant search,
+accepts exact email/UPN fallback values, de-duplicates stable identities, and
+passes repeated `--userId` arguments to chat creation. Creation is separate
+from sending: the result becomes the target of a blank or forwarded draft.
+Forwarding otherwise consumes the same complete chat directory, so direct,
+group, and meeting chats do not need separate destination implementations.
 
 ### `teams4e-meetings.el`
 
@@ -446,6 +469,13 @@ or channel replaces its contents. The linked headers buffer remains the owner
 of conversation selection, marks, filters, and bookmarks. Reader bindings such
 as `j`, `k`, `r`, `i`, and `b` delegate back to that owner, while `M-j` and
 `M-k` navigate messages inside the transcript.
+
+`teams4e-mark-message` creates one reader-local overlay over the exact message
+bounds and activates the matching region. The overlay uses the explicit
+selection face and disappears when the region deactivates. Rendering applies a
+separate low-emphasis face to the full block when `teams4e--message-own-p`
+matches the connected account; this does not alter source text, exports, or the
+message data model.
 
 ## Refile State
 
