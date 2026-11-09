@@ -419,12 +419,16 @@ truncated membership when needed. The session directory references canonical
 chat objects and the existing SQLite resource rows; it is not another database
 or synchronized inbox representation.
 
-Press **`N`** (`M-x teams4e-new-chat`) for a genuinely new conversation. Select
-one or several comma-separated people with completion. Cached identities resolve
-locally; unmatched names search the tenant directory; an exact email/UPN is a
-fallback when directory search is restricted. For groups, teams4e asks for an
-optional topic. It creates or reuses the conversation and opens an unsent blank
-draft for review.
+Press **`N`** (`M-x teams4e-new-chat`) for a genuinely new conversation. The
+participant chooser opens immediately from people already represented by loaded
+chats and messages, then merges the existing private SQLite recipient cache in
+the background. Pick people one at a time with fuzzy completion, choose
+**Done - create chat**, and optionally name a group. A sender from any cached
+chat or channel message remains discoverable even when old chat metadata lacks
+membership.
+Free text searches the tenant directory by name; exact email/UPN remains only a
+fallback when directory search is restricted. The command creates or reuses the
+conversation and opens an unsent blank draft for review.
 
 Use `teams4e-server-search` for message contents and channel threads;
 `teams4e-search` searches only cached messages. A forced directory refresh or

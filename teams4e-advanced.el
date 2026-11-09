@@ -3502,6 +3502,97 @@ destination is preserved, with the forward appended."
       (teams4e--get person 'mail)
       (teams4e--get person 'userPrincipalName)))
 
+(defun teams4e--recipient-person (value &optional member chat-id)
+  "Normalize recipient VALUE from a USER, MEMBER, or message sender.
+When MEMBER is non-nil, prefer `userId' over the membership object's `id'.
+CHAT-ID records a reusable one-to-one conversation when known."
+  (when (listp value)
+    (let ((id (if member
+                  (or (teams4e--get value 'userId)
+                      (teams4e--get value 'id))
+                (or (teams4e--get value 'id)
+                    (teams4e--get value 'userId))))
+          (mail (or (teams4e--get value 'mail)
+                    (teams4e--get value 'email)
+                    (teams4e--get value 'userPrincipalName))))
+      (when (or id mail)
+        `((id . ,id)
+          (displayName . ,(teams4e--get value 'displayName))
+          (mail . ,mail)
+          (userPrincipalName . ,(teams4e--get value 'userPrincipalName))
+          (jobTitle . ,(teams4e--get value 'jobTitle))
+          (chatId . ,(or chat-id (teams4e--get value 'chatId))))))))
+
+(defun teams4e--same-recipient-person-p (left right)
+  "Return non-nil when LEFT and RIGHT identify the same Teams person."
+  (let ((left-id (teams4e--get left 'id))
+        (right-id (teams4e--get right 'id))
+        (left-mail (or (teams4e--get left 'mail)
+                       (teams4e--get left 'userPrincipalName)))
+        (right-mail (or (teams4e--get right 'mail)
+                        (teams4e--get right 'userPrincipalName))))
+    (or (and (stringp left-id) (stringp right-id)
+             (string-equal (downcase left-id) (downcase right-id)))
+        (and (stringp left-mail) (stringp right-mail)
+             (string-equal (downcase left-mail) (downcase right-mail))))))
+
+(defun teams4e--merge-recipient-users (&rest groups)
+  "Merge recipient GROUPS without creating another persistent directory."
+  (let (result)
+    (dolist (person (apply #'append groups) (nreverse result))
+      (when (teams4e--new-chat-person-identifier person)
+        (if-let ((existing
+                  (seq-find (lambda (candidate)
+                              (teams4e--same-recipient-person-p candidate person))
+                            result)))
+            (dolist (field person)
+              (when (and (cdr field) (not (teams4e--get existing (car field))))
+                (push (copy-tree field) (cdr existing))))
+          (push (copy-tree person) result))))))
+
+(defun teams4e--known-recipient-users ()
+  "Return people already represented in this Emacs session.
+
+Loaded chat members and message senders make `teams4e-new-chat' useful before
+the on-disk recipient cache replies.  The SQLite cache remains authoritative
+across sessions; this function creates no second address book."
+  (let ((chats (append teams4e--chat-directory teams4e--chats))
+        (direct-ids (make-hash-table :test #'equal))
+        people)
+    (dolist (chat chats)
+      (let* ((chat-id (teams4e--chat-id chat))
+             (direct (and (equal (teams4e--get chat 'chatType) "oneOnOne")
+                          chat-id)))
+        (when direct (puthash chat-id t direct-ids))
+        (dolist (member (teams4e--get chat 'members))
+          (when-let ((person (teams4e--recipient-person member t direct)))
+            (push person people)))
+        (when-let ((person
+                    (teams4e--recipient-person
+                     (teams4e--dig chat 'lastMessagePreview 'from 'user)
+                     nil direct)))
+          (push person people))))
+    (maphash
+     (lambda (chat-id members)
+       (when (listp members)
+         (dolist (member members)
+           (when-let ((person
+                       (teams4e--recipient-person
+                        member t (and (gethash chat-id direct-ids) chat-id))))
+             (push person people)))))
+     teams4e--member-cache)
+    (when-let ((reader (get-buffer teams4e--read-buffer-name)))
+      (with-current-buffer reader
+        (let ((direct (and (equal (teams4e--get teams4e--chat 'chatType) "oneOnOne")
+                           (teams4e--chat-id teams4e--chat))))
+          (dolist (message (append teams4e--messages
+                                   teams4e-channel--messages))
+            (when-let ((person
+                        (teams4e--recipient-person
+                         (teams4e--dig message 'from 'user) nil direct)))
+              (push person people))))))
+    (teams4e--merge-recipient-users people)))
+
 (defun teams4e--new-chat-person-pairs (users)
   "Return unique completion pairs for cached directory USERS."
   (let ((seen (make-hash-table :test #'equal)) pairs)
@@ -3612,45 +3703,113 @@ search the tenant directory and ask the user to disambiguate only when needed."
      (teams4e--open-compose chat)
      (message "New Teams draft opened; nothing has been sent"))))
 
-(defun teams4e--choose-new-chat-people (users &optional callback)
-  "Choose one or more cached USERS and pass them to CALLBACK.
-Free text resolves through Graph.  CALLBACK defaults to creating a new draft."
-  (let* ((pairs (teams4e--new-chat-person-pairs users))
-         (crm-separator "[ \\t]*,[ \\t]*")
-         (entries
-          (delq nil
-                (mapcar
-                 (lambda (entry)
-                   (let ((trimmed (string-trim entry)))
-                     (unless (string-empty-p trimmed) trimmed)))
-                 (completing-read-multiple
-                  "New chat participants (comma-separated names/emails): "
-                  (mapcar #'car pairs) nil nil)))))
-    (unless entries (user-error "Choose at least one Teams participant"))
-    (teams4e--resolve-new-chat-entries
-     entries pairs (or callback #'teams4e--create-new-chat-for-people))))
+(defun teams4e--choose-new-chat-people (users &optional callback refresh)
+  "Choose people one at a time from fuzzy completion and call CALLBACK.
+
+USERS appear immediately.  Optional REFRESH receives a callback and may merge
+more cached people while completion is active.  Free text searches Graph, and
+an exact email/UPN remains available as a fallback.  CALLBACK defaults to
+creating a new unsent draft."
+  (let ((available (teams4e--merge-recipient-users users))
+        selected)
+    (cl-labels
+        ((accept-refresh
+          (incoming)
+          (setq available
+                (teams4e--merge-recipient-users available incoming)))
+         (selected-p
+          (person)
+          (seq-some (lambda (candidate)
+                      (teams4e--same-recipient-person-p candidate person))
+                    selected))
+         (candidate-pairs
+          ()
+          (seq-remove (lambda (pair) (selected-p (cdr pair)))
+                      (teams4e--new-chat-person-pairs available)))
+         (selected-label
+          ()
+          (mapconcat (lambda (person)
+                       (or (teams4e--get person 'displayName)
+                           (teams4e--new-chat-person-identifier person)))
+                     (nreverse (copy-sequence selected)) ", "))
+         (add-person
+          (person)
+          (setq available
+                (teams4e--merge-recipient-users available (list person)))
+          (unless (selected-p person) (push person selected))
+          (prompt))
+         (remove-person
+          ()
+          (let* ((pairs (teams4e--new-chat-person-pairs selected))
+                 (choice (completing-read "Remove participant: " pairs nil t)))
+            (setq selected (delq (cdr (assoc choice pairs)) selected))
+            (prompt)))
+         (search-person
+          (query)
+          (setq query (string-trim query))
+          (cond
+           ((string-empty-p query) (prompt))
+           ((teams4e--new-chat-email-p query)
+            (add-person `((displayName . ,query) (mail . ,query))))
+           (t (teams4e--search-user query #'add-person))))
+         (prompt
+          ()
+          (let* ((count (length selected))
+                 (done (format "Done - create chat (%d selected)" count))
+                 (search "Search company directory...")
+                 (remove "Remove a selected participant...")
+                 (collection
+                  (completion-table-dynamic
+                   (lambda (_input)
+                     (append (mapcar #'car (candidate-pairs))
+                             (when selected (list done remove))
+                             (list search)))))
+                 (choice
+                  (string-trim
+                   (completing-read
+                    (if selected
+                        (format "Add participant [%s]: " (selected-label))
+                      "Add participant: ")
+                    collection nil nil)))
+                 (person (cdr (assoc choice (candidate-pairs)))))
+            (cond
+             ((and selected (equal choice done))
+              (funcall (or callback #'teams4e--create-new-chat-for-people)
+                       (nreverse selected)))
+             ((and selected (equal choice remove)) (remove-person))
+             ((equal choice search)
+              (search-person (read-string "Search people by name: ")))
+             (person (add-person person))
+             ((string-empty-p choice)
+              (if selected
+                  (funcall (or callback #'teams4e--create-new-chat-for-people)
+                           (nreverse selected))
+                (user-error "Choose at least one Teams participant")))
+             (t (search-person choice))))))
+      (when refresh (funcall refresh #'accept-refresh))
+      (prompt))))
 
 ;;;###autoload
 (defun teams4e-new-chat ()
-  "Create a genuinely new direct or group chat through person completion.
+  "Create a genuinely new direct or group chat through fuzzy person completion.
 
-Cached people complete locally.  Free names search the tenant directory, and
-exact email/UPN values remain available when directory search is restricted.
-The command creates or reuses the chat and opens a blank draft without sending."
+Known participants appear immediately, then the existing private cache joins
+in the background.  Select people one at a time and choose Done; free names
+search the tenant directory, while exact email/UPN remains a fallback.  The
+command creates or reuses the chat and opens a blank draft without sending."
   (interactive)
   (teams4e--require-online)
   (let ((origin (current-buffer)))
-    (teams4e--run-json
-     '("teams" "cache" "recipient" "list")
-     (lambda (payload)
-       (when (buffer-live-p origin)
-         (with-current-buffer origin
-           (teams4e--choose-new-chat-people
-            (teams4e--get payload 'users)))))
-     (lambda (_status _detail)
-       (when (buffer-live-p origin)
-         (with-current-buffer origin
-           (teams4e--choose-new-chat-people nil)))))))
+    (teams4e--choose-new-chat-people
+     (teams4e--known-recipient-users) nil
+     (lambda (accept)
+       (teams4e--run-json
+        '("teams" "cache" "recipient" "list")
+        (lambda (payload)
+          (when (buffer-live-p origin)
+            (with-current-buffer origin
+              (funcall accept (teams4e--get payload 'users)))))
+        (lambda (_status _detail) nil))))))
 
 (defun teams4e-create-chat (participants topic)
   "Create a new chat with comma-separated PARTICIPANTS and optional TOPIC."

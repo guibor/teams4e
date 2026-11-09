@@ -608,6 +608,7 @@ Offline regression evidence:
   including wrapped lines, preview focus, cached opens and opt-out behavior.
 - Messages without Hebrew skip character-by-character Hebrew-direction analysis;
   mixed-language messages retain the existing direction rules and tests.
+
 - A held SQLite write transaction previously blocked an existing-cache reader
   for the entire two-second fixture hold. The reader now completes while the
   writer still holds its transaction.
@@ -625,3 +626,20 @@ Emacs whitelists those fields in the performance report. This distinguishes
 network latency from cache contention and rendering without collecting message
 content, identities or credentials. Installed module timestamps/sizes enter the
 worker fingerprint so an in-place backend update cannot leave old code running.
+
+## New Chat Recipient Discovery
+
+`teams4e-new-chat` never waits for a network or cache round trip before opening
+completion. `teams4e--known-recipient-users` projects people from the canonical
+in-memory chats, member cache, last-message previews, and singleton reader. The
+credential-free `teams cache recipient list` request then enriches that mutable
+completion collection in the background. The SQLite projection also scans
+cached chat and channel message senders, so a prior correspondent remains
+findable even if their old chat row did not retain expanded membership.
+
+The chooser is a small recursive interaction, not a contact database: each
+fuzzy selection is added to one pending participant list, `Done` creates or
+reuses the chat, and an explicit directory-search choice resolves names absent
+from local evidence. Removing a selected person is local and reversible before
+creation. The canonical Graph chat, resource cache, and member cache remain the
+only persistent and shared representations.

@@ -79,6 +79,32 @@ class GraphBackendTests(unittest.TestCase):
         cache.clear()
         self.assertEqual({"chats": [], "users": []}, cache.recipient_candidates())
 
+  def test_cached_message_sender_becomes_a_recipient_without_member_metadata(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      path = Path(directory) / "teams.sqlite3"
+      with TeamsCache(path) as cache:
+        cache.upsert_resources("chat", [{
+            "id": "old-direct", "chatType": "oneOnOne"
+        }])
+        cache.upsert_messages("chat", "old-direct", [{
+            "id": "message-1",
+            "createdDateTime": "2026-11-09T09:00:00Z",
+            "from": {"user": {"id": "ada", "displayName": "Ada"}},
+            "body": {"content": "Earlier conversation"},
+        }])
+        cache.upsert_messages("channel", "general", [{
+            "id": "message-2",
+            "createdDateTime": "2026-11-09T10:00:00Z",
+            "from": {"user": {"id": "grace", "displayName": "Grace"}},
+            "body": {"content": "Earlier channel conversation"},
+        }], team_id="team-1", channel_id="general")
+      with TeamsCache(path) as cache:
+        users = {user["id"]: user for user in cache.recipient_candidates()["users"]}
+      self.assertEqual({"ada", "grace"}, set(users))
+      self.assertEqual("Ada", users["ada"]["displayName"])
+      self.assertEqual("old-direct", users["ada"]["chatId"])
+      self.assertNotIn("chatId", users["grace"])
+
   def test_cached_recipient_dispatch_is_credential_free(self) -> None:
     with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
         os.environ, {"TEAMS4E_CACHE": str(Path(directory) / "teams.sqlite3")}

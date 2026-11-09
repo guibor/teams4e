@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Open `N` immediately from loaded participants, merge the private recipient
+  cache into live fuzzy completion, and add people one at a time with an explicit
+  Done action. Learn prior correspondents from cached chat and channel message
+  senders as well as chat membership, while retaining tenant-directory search
+  and email fallback.
+
 - Make `M` a cache-first fuzzy chooser over all existing direct, group, and
   meeting chats, with a quiet complete-directory refresh and `C-u M` forced
   refresh. Add `N` for a genuinely new one- or multi-person chat using cached

@@ -250,6 +250,15 @@ class TeamsCache:
     ):
       add(json.loads(row["payload"]), member=True,
           chat_id=row["parent_id"] if row["parent_id"] in direct_ids else None)
+    for row in self.connection.execute(
+        "SELECT scope_kind, scope_id, payload FROM messages ORDER BY cached_at DESC"
+    ):
+      message = json.loads(row["payload"])
+      sender = message.get("from") if isinstance(message, dict) else None
+      user = sender.get("user") if isinstance(sender, dict) else None
+      direct_chat = (row["scope_kind"] == "chat" and
+                     row["scope_id"] in direct_ids)
+      add(user, chat_id=row["scope_id"] if direct_chat else None)
     return {"chats": chats, "users": list(users.values())}
 
   def upsert_messages(
