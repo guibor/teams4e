@@ -278,13 +278,8 @@
 (defvar teams4e-channel--root)
 
 (defface teams4e-own-sender
-  '((t :inherit success :weight semi-bold))
-  "Face for the signed-in user's message header."
-  :group 'teams4e)
-
-(defface teams4e-own-message
-  '((t :inherit secondary-selection :extend t))
-  "Subtle full-block face for messages sent by the signed-in user."
+  '((t :weight bold))
+  "Face for the signed-in user's display name in message headers."
   :group 'teams4e)
 
 (defface teams4e-message-selection
@@ -3890,7 +3885,11 @@ Do not infer mentions from arbitrary names or @ characters."
          (images (teams4e--message-images message))
          (reactions (teams4e--reaction-summary message))
          (own (teams4e--message-own-p message)))
-    (insert (propertize (if own "You" sender)
+    (insert (propertize (if (and own
+                                 (string-blank-p
+                                  (or (teams4e--dig message 'from 'user 'displayName) "")))
+                            "You"
+                          sender)
                         'face (if own
                                   'teams4e-own-sender
                                 'teams4e-other-sender)))
@@ -3923,9 +3922,7 @@ Do not infer mentions from arbitrary names or @ characters."
     (insert "\n")
     (add-text-properties start (point)
                          (list 'teams4e-message message
-                               'rear-nonsticky '(teams4e-message)))
-    (when own
-      (add-face-text-property start (point) 'teams4e-own-message t))))
+                               'rear-nonsticky '(teams4e-message)))))
 
 (defun teams4e--event-date-time (event field)
   "Return EVENT's UTC dateTime string for FIELD."

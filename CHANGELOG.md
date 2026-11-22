@@ -15,8 +15,8 @@
   `m m` while retaining `T` for all visible rows.
 - Let forwarding target the same all-chat directory or create/reuse a new
   multi-person destination through the shared people picker. Keep the editable
-  draft and explicit-send boundary. Add distinct full-block faces for the
-  selected message and messages sent by the connected account.
+  draft and explicit-send boundary. Highlight the explicitly selected message.
+  Show your Teams display name in bold without shading the message body.
 
 - Make `b u` idempotently enable unread-only filtering instead of toggling it
   off when the overlay is already active. Keep `F`, `U`, and `M-F` as the

@@ -98,8 +98,8 @@ a complete message as an expansion step in chat and channel readers. `M-h`
 selects that message directly; `M-w` copies the selection, including in Evil.
 Date separators and neighboring messages are excluded. Selection uses the
 high-contrast `teams4e-message-selection` face. Messages from the connected
-account use the quieter `teams4e-own-message` full-block face, independently of
-selection, so `You` remains visually distinct in long transcripts.
+account emphasize only the sender's display name (or `You` if Teams supplies
+no name). Customize the `teams4e-own-sender` face to change that emphasis.
 
 ### Writing Messages
 

@@ -472,8 +472,8 @@ as `j`, `k`, `r`, `i`, and `b` delegate back to that owner, while `M-j` and
 
 `teams4e-mark-message` creates one reader-local overlay over the exact message
 bounds and activates the matching region. The overlay uses the explicit
-selection face and disappears when the region deactivates. Rendering applies a
-separate low-emphasis face to the full block when `teams4e--message-own-p`
+selection face and disappears when the region deactivates. Rendering emphasizes
+only the sender's display name when `teams4e--message-own-p`
 matches the connected account; this does not alter source text, exports, or the
 message data model.
 

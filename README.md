@@ -377,9 +377,8 @@ an editable draft and never sends immediately.
 See [forwarding and recipient lookup](USAGE.md#composition).
 
 The complete message selected by `M-h` has a high-contrast block outline.
-Messages sent by the connected account have their own quieter full-block face,
-in addition to the `You` sender label, so authorship remains visible while
-navigating a long transcript.
+Your messages show your Teams display name in bold. Only the name is
+emphasized; the body keeps the same background as the rest of the conversation.
 
 Background transcript updates preserve the message-relative cursor, selection,
 and scroll position. Opening a chat still selects the latest message; live
