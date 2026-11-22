@@ -665,7 +665,13 @@ See [Calendar setup, defaults, and boundaries](CALENDAR.md), including the
   agent tools, including Teams MCP when configured, are inherited unchanged;
   sends and other mutations require your request, not an inferred task.
   Update the installed Python backend along with the Lisp package for bounded
-  snapshots. Single-thread `a g` analysis and full Markdown export stay exhaustive.
+  snapshots. Use `C-u 7 a g` (or `C-u 7 g` with the Spacemacs shortcut) for
+  the last seven days of one chat. Use `C-u 7 G` for the same rolling window
+  in every chat in the current view, in a fresh discussion. Replace 7 with
+  any positive number of days. The message cap still applies; these overrides
+  do not change preferences. Plain `a g` and full Markdown export stay exhaustive.
+  Numeric snapshots require online chat history; channel-reply exports have
+  no bounded backend and will not silently download the entire channel thread.
 - `teams4e-companion` opens a reusable discussion of
   open requests, commitments, and possible next actions. Monitoring starts
   when you invoke it; it is bounded, visible, and pausable.

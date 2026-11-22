@@ -219,6 +219,30 @@ A separate command makes older backends fail instead of silently ignoring caps."
           (error "Backend did not confirm snapshot bounds; update the installed teams4e backend"))
         (teams4e--history-result payload)))))
 
+(defun teams4e-companion--analyze-recent-chat (days config)
+  "Start CONFIG on a verified rolling DAYS snapshot, never a full export."
+  (when teams4e-offline-mode (user-error "Bounded chat snapshots require online mode"))
+  (when (derived-mode-p 'teams4e-channel-thread-mode 'teams4e-channel-index-mode)
+    (user-error "The bounded snapshot backend supports chats, not channel replies"))
+  (let* ((teams4e-view-analysis-days days)
+         (bounds (teams4e-view-analysis--bounds))
+         (export
+          (lambda (chat)
+            (teams4e--run-json
+             (teams4e-view-analysis--history-args chat bounds)
+             (lambda (payload)
+               (let* ((result (teams4e-view-analysis--history-result payload bounds))
+                      (base (teams4e--export-path chat)))
+                 (make-directory (file-name-directory base) t)
+                 (let ((file (make-temp-file
+                              (format "%s-%dd-" (file-name-sans-extension base) days) nil ".md")))
+                   (teams4e--write-thread-export file chat (plist-get result :messages)
+                                                 (plist-get result :history))
+                   (teams4e--start-thread-analysis file config))))))))
+    (if-let ((chat (teams4e--chat-at-point)))
+        (funcall export chat)
+      (teams4e--select-chat export))))
+
 (defun teams4e-view-analysis--session-valid-p (session)
   "Whether SESSION still belongs to the current account and agent selection."
   (and (eq session teams4e-view-analysis--session)
@@ -361,6 +385,7 @@ discussion receives the recovered snapshot.  Requires the current Emacs session.
   "Add every chat in the current view to the ongoing Agent Shell discussion.
 Prefix NEW starts a fresh discussion and bypasses export reuse.  FORCE bypasses
 reuse without replacing the discussion, as in `teams4e-view-analysis-refresh'.
+A positive numeric prefix sets the lookback in days for this fresh discussion.
 Use all rows in the filtered headers, not only on-screen rows or marked chats.
 Freeze the list now; later bookmark/read-state changes do not expand it.
 Fetch recent histories serially within the configured date/message caps and
@@ -384,7 +409,9 @@ enabled. Use `teams4e-thread-analysis-agent' and
     (unless chats (user-error "No chats in the current Teams view"))
     (when (memq nil chats)
       (user-error "Chat headers changed; refresh the view before exporting"))
-    (teams4e-view-analysis--collect chats scope new force)))
+    (let ((teams4e-view-analysis-days
+           (or (teams4e--analysis-prefix-days new) teams4e-view-analysis-days)))
+      (teams4e-view-analysis--collect chats scope new force))))
 
 (defun teams4e-view-analysis--collect (chats scope &optional new force successes bounds)
   "Collect frozen CHATS in SCOPE; NEW/FORCE bypass reuse.

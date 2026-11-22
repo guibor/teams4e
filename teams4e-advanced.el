@@ -2461,14 +2461,26 @@ BACKGROUND starts a fresh session without focusing it, even on deferred insert."
              (map-elt config :identifier))
     shell-buffer))
 
-(defun teams4e-analyze-current-thread ()
-  "Export the complete current Teams thread and analyze it in a new agent-shell."
-  (interactive)
+(defun teams4e--analysis-prefix-days (prefix)
+  "Return a positive explicit numeric PREFIX, ignoring universal prefixes."
+  (cond ((or (eq prefix '-) (and (integerp prefix) (<= prefix 0)))
+         (user-error "Days back must be a positive integer"))
+        ((integerp prefix) prefix)))
+
+(declare-function teams4e-companion--analyze-recent-chat "teams4e-companion" (days config))
+
+(defun teams4e-analyze-current-thread (&optional days)
+  "Analyze the complete current thread, or with numeric prefix, its last DAYS."
+  (interactive (list (teams4e--analysis-prefix-days current-prefix-arg)))
   (let ((config (teams4e--thread-analysis-agent-config)))
-    (teams4e-export-current-thread
-     nil
-     (lambda (path)
-       (teams4e--start-thread-analysis path config)))))
+    (if days
+        (progn
+          (require 'teams4e-companion)
+          (teams4e-companion--analyze-recent-chat days config))
+      (teams4e-export-current-thread
+       nil
+       (lambda (path)
+         (teams4e--start-thread-analysis path config))))))
 
 (defun teams4e--channel-capture-context
     (team channel root &optional message)
