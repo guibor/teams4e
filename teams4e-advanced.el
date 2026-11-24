@@ -3308,7 +3308,8 @@ destination is preserved, with the forward appended."
       (when-let ((id (teams4e--chat-id chat)))
         (unless (gethash id seen)
           (puthash id t seen)
-          (push (cons (concat "Chat: " (teams4e--chat-choice chat)) (cons 'chat chat)) pairs))))
+          (push (cons (concat "Chat: " (teams4e--chat-directory-choice chat))
+                      (cons 'chat chat)) pairs))))
     (setq pairs (nreverse pairs))
     (let* ((choice (string-trim (completing-read
                                  "Forward to (name, chat, or search): "
