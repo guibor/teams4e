@@ -3441,10 +3441,7 @@ nonfatal unavailable label instead."
                                       'face 'shadow))
                 (teams4e--insert-loaded-image path name))
               (when message
-                (add-text-properties position (point)
-                                     (list 'teams4e-message message
-                                           'rear-nonsticky
-                                           '(teams4e-message))))))))))
+                (teams4e--tag-message position (point) message))))))))
   (set-marker marker nil))
 
 (defun teams4e--finish-image-process (buffer process)
@@ -3872,6 +3869,28 @@ Do not infer mentions from arbitrary names or @ characters."
             (add-face-text-property (- (point) (length label)) (point)
                                     'teams4e-mention t)))))))
 
+(defvar teams4e--message-action-keys
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "f") #'teams4e-forward-message)
+    map)
+  "Reader actions that also work on embedded links and attachment buttons.")
+
+(defun teams4e--tag-message (start end message)
+  "Associate the whole rendered range with MESSAGE, including embedded controls."
+  (add-text-properties start end (list 'teams4e-message message
+                                       'rear-nonsticky '(teams4e-message)))
+  ;; A renderer's text keymap takes precedence over the reader's mode map.
+  ;; Keep RET, mouse actions, and other bindings without modifying shared maps.
+  (dolist (property '(keymap local-map))
+    (let ((pos start))
+      (while (< pos end)
+        (let ((map (get-text-property pos property))
+              (next (next-single-property-change pos property nil end)))
+          (when (keymapp map)
+            (put-text-property pos next property
+                               (make-composed-keymap teams4e--message-action-keys map)))
+          (setq pos next))))))
+
 (defun teams4e--insert-message (message)
   "Insert one Teams MESSAGE into the current transcript."
   (let* ((rich (and (not (teams4e--get message 'deletedDateTime))
@@ -3920,9 +3939,7 @@ Do not infer mentions from arbitrary names or @ characters."
     (when (and reactions (not (string-empty-p reactions)))
       (insert (propertize (format "  Reactions: %s\n" reactions) 'face 'shadow)))
     (insert "\n")
-    (add-text-properties start (point)
-                         (list 'teams4e-message message
-                               'rear-nonsticky '(teams4e-message)))))
+    (teams4e--tag-message start (point) message)))
 
 (defun teams4e--event-date-time (event field)
   "Return EVENT's UTC dateTime string for FIELD."
@@ -4953,7 +4970,7 @@ the newest-message bound without applying the normal date window."
 (defun teams4e-message-at-point ()
   "Return the Teams message represented at point."
   (or (get-text-property (point) 'teams4e-message)
-      (and (> (point) (point-min))
+      (and (eobp) (> (point) (point-min))
            (get-text-property (1- (point)) 'teams4e-message))))
 
 (defun teams4e-message-bounds (&optional position)

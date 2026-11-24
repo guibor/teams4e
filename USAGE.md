@@ -29,7 +29,7 @@ turn the reader into a separate mini-application.
 | `N` | Start a new direct or multi-person chat draft |
 | `a` | Current-conversation action prefix |
 | `a a` / `a A` | Capture a summary / complete thread to Org |
-| `f` / `a f` | Forward the message at point to a person or chat for review |
+| `f` / `a f` | Forward the whole message under the cursor, including when on its body, quote, link or attachment. No selection needed. |
 | `a e` / `a y` | Export / copy complete Markdown |
 | `a g` | Export and analyze with Agent Shell |
 | `G` / `a G` | Export all chats in this view and discuss them in one Agent Shell |
