@@ -5978,4 +5978,26 @@
   (should (eq #'teams4e-chat-run-headers-command
               (lookup-key teams4e-chat-mode-map (kbd "m m")))))
 
+(ert-deftest teams4e-named-reactions-send-only-the-emoji ()
+  (dolist (case '((teams4e-message-react nil "🔥")
+                  (teams4e-message-react "CONFETTI" "🎉")
+                  (teams4e-message-react "star" "⭐")
+                  (teams4e-message-unreact "glowing star" "🌟")
+                  (teams4e-message-unreact "❤️" "❤️")
+                  (teams4e-message-react "👏" "👏")))
+    (pcase-let ((`(,command ,input ,expected) case))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt _collection _predicate _require _initial _history default)
+                   (should (equal default (when (eq command 'teams4e-message-react) "fire")))
+                   (or input default)))
+                ((symbol-function 'teams4e-current-message) (lambda () 'fixture))
+                ((symbol-function 'teams4e--run-message-action)
+                 (lambda (action message args inverse undo _label)
+                   (should (eq message 'fixture))
+                   (should (eq action (if (eq command 'teams4e-message-react) 'react 'unreact)))
+                   (should (eq inverse (if (eq action 'react) 'unreact 'react)))
+                   (should (equal args (list "--reaction" expected)))
+                   (should (equal args undo)))))
+        (call-interactively command)))))
+
 ;;; teams4e-tests.el ends here

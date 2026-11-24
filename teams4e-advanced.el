@@ -3092,15 +3092,24 @@ resolve the linked event.  This is the primary mu4e-style `a a' action."
          (with-current-buffer buffer (teams4e--refresh-current-view)))
        (message "%s" label)))))
 
-(defconst teams4e--reaction-choices
-  '("👍" "❤️" "😂" "😮" "😢" "😡")
-  "Common Unicode Graph reactions; arbitrary Unicode remains accepted.")
+(defun teams4e--read-reaction (&optional remove)
+  "Choose a named reaction or paste an emoji for adding or, if REMOVE, removal."
+  (let* ((completion-ignore-case t)
+         (completion-extra-properties
+          (list :annotation-function
+                (lambda (name) (concat "  " (cdr (assoc-string name teams4e-reactions t))))))
+         (default (unless remove (caar teams4e-reactions)))
+         (choice (string-trim
+                  (completing-read (cond (remove "Remove reaction: ")
+                                         (default (format "Reaction (default %s): " default))
+                                         (t "Reaction: "))
+                                   teams4e-reactions nil nil nil nil default))))
+    (when (string-empty-p choice) (user-error "Choose a reaction or paste an emoji"))
+    (or (cdr (assoc-string choice teams4e-reactions t)) choice)))
 
 (defun teams4e-message-react (reaction)
   "Set REACTION on the Teams message at point."
-  (interactive
-   (list (completing-read "Reaction: " teams4e--reaction-choices
-                          nil nil)))
+  (interactive (list (teams4e--read-reaction)))
   (let ((message (teams4e-current-message)))
     (teams4e--run-message-action
      'react message (list "--reaction" reaction)
@@ -3109,9 +3118,7 @@ resolve the linked event.  This is the primary mu4e-style `a a' action."
 
 (defun teams4e-message-unreact (reaction)
   "Remove REACTION from the Teams message at point."
-  (interactive
-   (list (completing-read "Remove reaction: "
-                          teams4e--reaction-choices nil nil)))
+  (interactive (list (teams4e--read-reaction t)))
   (let ((message (teams4e-current-message)))
     (teams4e--run-message-action
      'unreact message (list "--reaction" reaction)

@@ -431,6 +431,15 @@ view returned beside them."
     (error nil))
   "Standard send-confirmation value seen before this config load.")
 
+(defcustom teams4e-reactions
+  '(("fire" . "🔥") ("confetti" . "🎉") ("star" . "⭐") ("glowing star" . "🌟")
+    ("thumbs up" . "👍") ("heart" . "❤️") ("laugh" . "😂") ("surprised" . "😮")
+    ("sad" . "😢") ("angry" . "😡"))
+  "Named emoji offered when adding or removing a message reaction.
+The first entry is the default when adding.  Other emoji can be pasted."
+  :type '(alist :key-type string :value-type string)
+  :group 'teams4e)
+
 (defcustom teams4e-confirm-send nil
   "Whether to ask for confirmation before sending a Teams message."
   :type 'boolean

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Choose reactions by name in chats and channels. Add fire (default),
+  confetti, star and glowing star; keep direct emoji input and allow
+  customization via `teams4e-reactions`.
+
 - Open `N` immediately from loaded participants, merge the private recipient
   cache into live fuzzy completion, and add people one at a time with an explicit
   Done action. Learn prior correspondents from cached chat and channel message

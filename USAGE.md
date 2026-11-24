@@ -28,6 +28,7 @@ turn the reader into a separate mini-application.
 | `M` / `C-u M` | Find any existing chat from cache / force a full refresh first |
 | `N` | Start a new direct or multi-person chat draft |
 | `a` | Current-conversation action prefix |
+| `+` / `-` | Add / remove a reaction on the message. Choose by name or paste an emoji; fire is the default for adding. |
 | `a a` / `a A` | Capture a summary / complete thread to Org |
 | `f` / `a f` | Forward the whole message under the cursor, including when on its body, quote, link or attachment. No selection needed. |
 | `a e` / `a y` | Export / copy complete Markdown |
