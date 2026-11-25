@@ -26,10 +26,16 @@ class ScheduleTimeTests(unittest.TestCase):
         spec.update(extra)
         return schedule_time(spec, stamp(now))
 
-    def test_never_today_even_before_seven(self):
-        for hour in (0, 6, 7, 23):
-            got = self.next(f"2026-10-05T{hour:02}:00:00+00:00")
-            self.assertEqual(stamp("2026-10-06T07:00:00+00:00"), got["sendAt"])
+    def test_next_start_includes_today_only_before_opening(self):
+        for clock, day in (("00:00:00", 5), ("06:59:59", 5), ("07:00:00", 6), ("23:00:00", 6)):
+            with self.subTest(clock=clock):
+                got = self.next(f"2026-10-05T{clock}+00:00")
+                self.assertEqual(stamp(f"2026-10-{day:02}T07:00:00+00:00"), got["sendAt"])
+
+    def test_overnight_sunday_workweek_in_schedule_zone(self):
+        got = self.next("2026-10-10T23:00:00+00:00", zone="Asia/Jerusalem",
+                        days=[0, 1, 2, 3, 4], start="08:45")
+        self.assertEqual(stamp("2026-10-11T08:45:00+03:00"), got["sendAt"])
 
     def test_weekend_and_sunday_thursday(self):
         self.assertEqual(stamp("2026-10-12T07:00:00+00:00"), self.next("2026-10-09T10:00:00+00:00")["sendAt"])
@@ -40,7 +46,7 @@ class ScheduleTimeTests(unittest.TestCase):
     def test_year_boundary_leap_day_single_workday_and_custom_hour(self):
         self.assertEqual(stamp("2027-01-01T08:45:00+00:00"), self.next("2026-12-31T23:59:00+00:00", start="08:45")["sendAt"])
         self.assertEqual(stamp("2028-02-29T07:00:00+00:00"), self.next("2028-02-28T12:00:00+00:00")["sendAt"])
-        self.assertEqual(stamp("2026-10-12T07:00:00+00:00"), self.next("2026-10-05T05:00:00+00:00", days=[1])["sendAt"])
+        self.assertEqual(stamp("2026-10-12T07:00:00+00:00"), self.next("2026-10-05T07:00:00+00:00", days=[1])["sendAt"])
 
     def test_dst_and_sender_zone_not_utc_day(self):
         cases = [("2026-03-06T13:00:00+00:00", "2026-03-09T11:00:00+00:00"),
@@ -52,6 +58,9 @@ class ScheduleTimeTests(unittest.TestCase):
                          self.next("2026-10-05T01:00:00+00:00", zone="America/Los_Angeles")["sendAt"])
 
     def test_gap_advances_repeated_hour_uses_first(self):
+        # During the second 01:10 the day's first 01:30 start has passed.
+        self.assertEqual(stamp("2026-11-08T06:30:00+00:00"), self.next(
+            "2026-11-01T01:10:00-05:00", days=[0], start="01:30", zone="America/New_York")["sendAt"])
         self.assertEqual(stamp("2026-03-08T07:00:00+00:00"), self.next(
             "2026-03-07T12:00:00+00:00", days=[0], start="02:30", zone="America/New_York")["sendAt"])
         self.assertEqual(stamp("2026-11-01T05:30:00+00:00"), self.next(

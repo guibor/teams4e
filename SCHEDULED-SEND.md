@@ -30,8 +30,9 @@ For an ordinary unscheduled draft, `C-c C-c` still sends immediately.
 ## Workdays And Timezones
 
 By default, sending uses `teams4e-calendar-work-days` and the existing snooze
-setting `teams4e-workday-start` (`"07:00"`). NEXT always means a later calendar
-date: Monday at 06:00 schedules Tuesday, not Monday at 07:00. A custom
+setting `teams4e-workday-start` (`"07:00"`). NEXT means the first workday start
+strictly in the future: at 06:00 on a workday it schedules today at 07:00;
+at or after 07:00 it schedules the next configured workday. A custom
 Sunday-Thursday workweek is respected; no weekday pattern is hardcoded into
 the calculation. Public holidays are not inferred.
 

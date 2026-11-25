@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Overnight scheduled messages now use today's workday start if it is still
+  ahead in the scheduling timezone. Already queued delivery times do not move.
+
 - Cold chat opens show the inbox snippet while fetching the newest 20 messages
   first on the persistent backend. Fetch older pages in the same bounded
   request. Hidden readers defer transcript formatting until shown again.

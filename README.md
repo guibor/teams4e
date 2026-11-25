@@ -391,7 +391,8 @@ updates follow new arrivals only while you remain at the latest boundary.
 ## Scheduled Sending
 
 In a composer, `C-c C-s` queues the message for the **next configured workday**
-at `teams4e-workday-start` (07:00 by default); `C-c C-t` chooses a date/time.
+at `teams4e-workday-start` (07:00 by default), including today if its start
+is still ahead. `C-c C-t` chooses an explicit date/time.
 `M-x teams4e-reply-next-workday` opens a scheduled reply draft, and
 `M-x teams4e-outbox` lists pending deliveries with edit and cancel actions.
 Workdays and timezone are customizable; Org/Markdown source and reply identity

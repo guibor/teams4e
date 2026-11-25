@@ -24,7 +24,7 @@ Nil reuses `teams4e-calendar-work-days'; no separate Monday-Friday assumption."
   :type '(choice (const nil) (repeat integer)) :group 'teams4e)
 (defcustom teams4e-schedule-start-time nil
   "HH:MM for NEXT workday sending; nil reuses `teams4e-workday-start' (07:00).
-NEXT always skips today, even when it is before this time."
+Before this time on a configured workday, NEXT means today."
   :type '(choice (const nil) string) :group 'teams4e)
 (defcustom teams4e-outbox-late-grace 900
   "Seconds after scheduled time during which delivery is still allowed.

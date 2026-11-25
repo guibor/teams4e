@@ -41,6 +41,17 @@ def wall_times(wall, zone):
     return sorted(instants)
 
 
+def workday_start(day, hour, minute, zone):
+    """Resolve the earlier occurrence of a repeated start, or advance over a DST gap."""
+    wall = datetime(day.year, day.month, day.day, hour, minute)
+    for _ in range(181):
+        choices = wall_times(wall, zone)
+        if choices:
+            return choices[0]
+        wall += timedelta(minutes=1)
+    raise ValueError("No real workday start near the configured time")
+
+
 def schedule_time(spec, now=None):
     """Resolve civil time before storing an absolute instant, never adding 24h."""
     now = time.time() if now is None else now
@@ -54,22 +65,13 @@ def schedule_time(spec, now=None):
         if not isinstance(start, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", start):
             raise ValueError("Workday start must be HH:MM")
         date = datetime.fromtimestamp(now, zone).date()
-        for offset in range(1, 8):
+        hour, minute = map(int, start.split(":"))
+        for offset in range(8):
             day = date + timedelta(days=offset)
             if (day.weekday() + 1) % 7 in days:
-                break
-        hour, minute = map(int, start.split(":"))
-        wall = datetime(day.year, day.month, day.day, hour, minute)
-        # A DST gap moves forward to the first real local minute. Repeated
-        # hours use the earlier occurrence. Explicit times must disambiguate.
-        for _ in range(181):
-            choices = wall_times(wall, zone)
-            if choices:
-                instant = choices[0]
-                break
-            wall += timedelta(minutes=1)
-        else:
-            raise ValueError("No real workday start near the configured time")
+                instant = workday_start(day, hour, minute, zone)
+                if instant > now:
+                    break
     elif spec.get("mode") == "explicit":
         if not re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", spec.get("value", "")):
             raise ValueError("Specify both a date and time: YYYY-MM-DD HH:MM")
