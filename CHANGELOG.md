@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Assemble large persistent-backend responses without repeatedly copying the
+  unfinished JSON line. Bound ordinary live chat loads to 30 seconds by
+  default; keep visible messages and offer a manual retry after timeout.
+
 - Choose reactions by name in chats and channels. Add fire (default),
   confetti, star and glowing star; keep direct emoji input and allow
   customization via `teams4e-reactions`.

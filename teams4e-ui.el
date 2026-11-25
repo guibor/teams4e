@@ -835,16 +835,21 @@ suffix beginning with its top-level ID field."
 
 (defun teams4e--server-filter (server chunk)
   "Accumulate and dispatch newline-delimited responses from SERVER CHUNK."
-  (let* ((data (concat (or (process-get server 'teams4e-partial) "") chunk))
-         (start 0))
-    (while (string-match "\n" data start)
-      (let ((line (substring data start (match-beginning 0)))
-            (next-start (match-end 0)))
-        (unless (string-empty-p (string-trim line))
-          (teams4e--dispatch-server-line server line))
-        ;; Dispatch and user callbacks may run regexp searches of their own.
-        (setq start next-start)))
-    (process-put server 'teams4e-partial (substring data start))))
+  ;; Only scan new bytes. Joining the partial line on every chunk made a
+  ;; large JSON response quadratic before JSON parsing had even started.
+  (let ((parts (process-get server 'teams4e-partial))
+        (start 0) end lines)
+    ;; A running backend can survive a live Lisp package update.
+    (when (stringp parts) (setq parts (list parts)))
+    (while (setq end (string-search "\n" chunk start))
+      (let ((tail (substring chunk start end)))
+        (push (if parts (mapconcat #'identity (nreverse (cons tail parts)) "") tail)
+              lines))
+      (setq start (1+ end) parts nil))
+    (when (< start (length chunk)) (push (substring chunk start) parts))
+    (process-put server 'teams4e-partial parts)
+    (dolist (line (nreverse lines))
+      (teams4e--dispatch-server-line server line))))
 
 (defun teams4e--server-sentinel (server _event)
   "Handle termination of persistent backend SERVER."
@@ -4593,6 +4598,7 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
   (when (timerp teams4e--preview-timer)
     (cancel-timer teams4e--preview-timer))
   (setq teams4e--preview-timer nil)
+  (teams4e--clear-reader-deadline)
   (teams4e--cancel-process teams4e--process)
   (teams4e--cancel-process teams4e--meeting-process)
   (cl-incf teams4e--meeting-request-id)
@@ -4827,6 +4833,29 @@ complete history, and MESSAGE-ID is selected after that history renders."
        ;; Cache failure must not cancel or delay the independent live request.
        #'ignore))))
 
+(defvar-local teams4e--reader-deadline nil)
+
+(defun teams4e--clear-reader-deadline ()
+  (when (timerp teams4e--reader-deadline) (cancel-timer teams4e--reader-deadline))
+  (setq teams4e--reader-deadline nil))
+
+(defun teams4e--expire-reader-request (buffer generation)
+  "End a stalled ordinary read, without affecting another reader generation."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (and (derived-mode-p 'teams4e-chat-mode)
+                 (= generation teams4e--request-id)
+                 (teams4e--request-live-p teams4e--process))
+        (cl-incf teams4e--request-id)
+        (teams4e--clear-reader-deadline)
+        (teams4e--cancel-process teams4e--process)
+        (setq teams4e--process nil
+              header-line-format "Live thread request timed out; M-g to retry")
+        (unless teams4e--messages
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (insert "No thread messages loaded. Press M-g to retry.\n")))))))
+
 (defun teams4e-chat-refresh
     (&optional all request-limit ignore-date)
   "Refresh the current Teams chat.
@@ -4843,6 +4872,7 @@ date window while retaining that bound, which supports incremental loading."
            (not all)
            (not ignore-date))
       (teams4e--chat-refresh-cache-first all request-limit)
+    (teams4e--clear-reader-deadline)
     (teams4e--cancel-process teams4e--process)
     (cl-incf teams4e--request-id)
     (let* ((buffer (current-buffer))
@@ -4908,6 +4938,7 @@ date window while retaining that bound, which supports incremental loading."
                                        teams4e-message-limit))))
                   (when (and limit (> (length messages) limit))
                     (setq messages (last messages limit)))
+                  (teams4e--clear-reader-deadline)
                   (setq teams4e--messages messages
                         teams4e--process nil
                         teams4e--loaded-at (float-time)
@@ -4933,6 +4964,7 @@ date window while retaining that bound, which supports incremental loading."
                                 (and teams4e--chat
                                      (teams4e--chat-id
                                       teams4e--chat))))
+                (teams4e--clear-reader-deadline)
                 (setq teams4e--process nil
                       header-line-format
                       (if teams4e--messages
@@ -4942,7 +4974,15 @@ date window while retaining that bound, which supports incremental loading."
           (teams4e--report-error
            (teams4e--message-args
             chat all request-limit ignore-date)
-           status detail)))))))
+           status detail))))
+      (when (and (not all) (not ignore-date) (not teams4e-offline-mode)
+                 (not teams4e--pending-message-id)
+                 (or request-limit teams4e-message-limit)
+                 (> teams4e-reader-timeout 0)
+                 (teams4e--request-live-p teams4e--process))
+        (setq teams4e--reader-deadline
+              (run-at-time teams4e-reader-timeout nil #'teams4e--expire-reader-request
+                           buffer request-id))))))
 
 (defun teams4e-chat-load-all ()
   "Refresh the current chat with complete history."

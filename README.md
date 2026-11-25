@@ -464,6 +464,11 @@ live data. Unchanged live responses do not rebuild the transcript, preserving
 selection and loaded images. A failed refresh is shown in the header, never
 silently treated as fresh data.
 
+If an ordinary live chat request is still pending after 30 seconds, the reader
+stops waiting, keeps any messages already visible, and offers `M-g` to retry.
+Set `teams4e-reader-timeout` to change the deadline (zero disables it). Explicit
+history loads and exports do not use this deadline.
+
 Switching away cancels obsolete transcript pagination and retry waits in the
 bundled backend. An HTTP request already in flight may finish, but its result
 cannot replace the selected chat. Local cache reads have their own worker, so

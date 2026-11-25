@@ -304,6 +304,12 @@ move or scroll away.  Nil retains Emacs's normal point visibility behavior."
   :type 'boolean
   :group 'teams4e)
 
+(defcustom teams4e-reader-timeout 30
+  "Seconds allowed for a normal bounded chat request, or zero to disable.
+On timeout, keep any messages already shown. M-g explicitly retries.
+This deadline does not apply to load-more, full history, or exports."
+  :type 'natnum :group 'teams4e)
+
 (defcustom teams4e-preview-message-limit 50
   "Maximum recent messages fetched for an automatic inbox preview.
 
