@@ -2651,10 +2651,11 @@ def list_messages(
     modified_start: str | None = None,
     limit: int | None = None,
     first_page: Callable[[list[dict[str, Any]]], None] | None = None,
+    page_size: int = 50,
 ) -> list[dict[str, Any]]:
   """Read newest-created messages, or modified-date changes for sync/window queries."""
   parameters = [
-      ("$top", "50"),
+      ("$top", str(min(page_size if first_page and limit else 50, limit or 50, 50))),
       ("$orderby", "lastModifiedDateTime desc" if modified_start else "createdDateTime desc"),
   ]
   if modified_start:
@@ -3957,6 +3958,7 @@ def execute(
         option(args, "--modifiedStartDateTime", required=False),
         message_limit,
         first_page=progress,
+        page_size=integer_option(args, "--pageSize", 50, minimum=1),
     )
     with timed_stage("cacheMs"):
       with TeamsCache() as cache:

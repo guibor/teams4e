@@ -444,8 +444,13 @@ for scripts that already know exact identifiers.
 
 Opening a chat fetches the **newest 100 messages, without a date cutoff**.
 Automatic previews remain limited to 50. With the bundled persistent backend,
-the first live page appears before older pages finish, without extra Graph
-requests. Full-history loads and exports still wait for complete results.
+an empty reader asks Graph for the newest **20 messages first**. It shows
+that page while the backend follows the continuation for the rest of the
+configured window. Smaller pages can mean more requests in a busy chat.
+When available, the inbox snippet appears immediately as a labeled preview,
+not as a live message. If you hide the reader, it retains incoming data but
+defers transcript formatting until you return. Full-history loads and exports
+still wait for complete results. Update both Lisp and backend for smaller pages.
 
 Opening a transcript centers its newest end in the reading pane, leaving room
 below the final message in the default oldest-first order. This also works for

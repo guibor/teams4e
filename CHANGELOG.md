@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Cold chat opens show the inbox snippet while fetching the newest 20 messages
+  first on the persistent backend. Fetch older pages in the same bounded
+  request. Hidden readers defer transcript formatting until shown again.
+
 - Assemble large persistent-backend responses without repeatedly copying the
   unfinished JSON line. Bound ordinary live chat loads to 30 seconds by
   default; keep visible messages and offer a manual retry after timeout.

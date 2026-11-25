@@ -224,6 +224,8 @@
 (defvar-local teams4e--cached-reader-view nil
   "Reader position after cached content, until the first live response.")
 (defvar-local teams4e--chat-render-state nil)
+(defvar-local teams4e--reader-managed-display nil)
+(defvar-local teams4e--render-on-return nil)
 (defvar teams4e--recent-chat-cache nil
   "Bounded, disposable raw-message snapshots; live responses remain authoritative.")
 (defvar teams4e--request-progress-callback nil
@@ -546,8 +548,8 @@ stored or shown."
                 (replace-regexp-in-string
                  (regexp-quote value) "<content redacted>" redacted t t)))))))
 
-(defun teams4e--report-error (args status detail)
-  "Record a failed Teams backend invocation of ARGS with STATUS and DETAIL."
+(defun teams4e--report-error (args status detail &optional quiet)
+  "Record a failed invocation of ARGS with STATUS and DETAIL; QUIET only logs."
   (let ((buffer (get-buffer-create teams4e--error-buffer-name)))
     (with-current-buffer buffer
       (goto-char (point-max))
@@ -557,8 +559,9 @@ stored or shown."
       (unless (string-empty-p (string-trim detail))
         (insert (string-trim-right detail) "\n"))
       (insert "\n"))
-    (display-buffer buffer)
-    (message "Teams Graph command failed; see %s" teams4e--error-buffer-name)))
+    (unless quiet
+      (display-buffer buffer)
+      (message "Teams Graph command failed; see %s" teams4e--error-buffer-name))))
 
 (defun teams4e--cancel-process (process)
   "Cancel PROCESS or persistent request without reporting a failure."
@@ -4317,7 +4320,7 @@ When DATE-ONLY is non-nil, omit the time of day."
                 ;; If messages are still loading, their callback will render
                 ;; once with this context instead of rebuilding the buffer twice.
                 (when teams4e--loaded-at
-                  (teams4e--render-chat))))))
+                  (teams4e--update-chat-transcript))))))
         (lambda (status detail)
           (when (buffer-live-p buffer)
             (with-current-buffer buffer
@@ -4441,6 +4444,18 @@ When DATE-ONLY is non-nil, omit the time of day."
           (teams4e--message-order-label)
           (if teams4e--loaded-all " - complete" "")))
 
+(defun teams4e--hidden-managed-reader-p ()
+  (and teams4e--reader-managed-display (not (get-buffer-window (current-buffer) 'visible))))
+
+(defun teams4e--show-pending-transcript (&optional window)
+  "Render the latest accumulated state when the reader becomes visible."
+  (when (and teams4e--render-on-return
+             (or (null window) (eq (window-buffer window) (current-buffer)))
+             (not (teams4e--hidden-managed-reader-p)))
+    (let ((status header-line-format))
+      (teams4e--render-chat)
+      (setq teams4e--render-on-return nil header-line-format status))))
+
 (defun teams4e--update-chat-transcript ()
   "Rebuild only changed transcript content, preserving selection and images."
   (if (and (equal teams4e--chat-render-state (teams4e--chat-render-key))
@@ -4450,7 +4465,10 @@ When DATE-ONLY is non-nil, omit the time of day."
           (teams4e--goto-reader-latest))
         (setq teams4e--jump-to-bottom-on-render nil
               header-line-format (teams4e--chat-header)))
-    (teams4e--render-chat)))
+    (if (teams4e--hidden-managed-reader-p)
+        (setq teams4e--render-on-return t header-line-format (teams4e--chat-header))
+      (teams4e--render-chat)
+      (setq teams4e--render-on-return nil))))
 
 (defun teams4e--render-chat (&optional preserve-position)
   "Render the current chat and its cached messages.
@@ -4591,7 +4609,7 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
 (define-derived-mode teams4e-chat-mode teams4e-read-mode
   "Teams-Read"
   "Major mode for reading a Microsoft Teams chat."
-  nil)
+  (add-hook 'window-buffer-change-functions #'teams4e--show-pending-transcript nil t))
 
 (defun teams4e--cancel-buffer-process ()
   "Cancel the current Teams buffer's pending Graph request."
@@ -4707,7 +4725,8 @@ complete history, and MESSAGE-ID is selected after that history renders."
              (same-request-running
               (and preview same-chat
                    (teams4e--request-live-p teams4e--process))))
-        (setq teams4e--chat chat
+        (setq teams4e--reader-managed-display t
+              teams4e--chat chat
               teams4e--automatic-preview-p (not (null preview))
               teams4e--pending-message-id message-id
               teams4e--jump-to-bottom-on-render
@@ -4720,6 +4739,7 @@ complete history, and MESSAGE-ID is selected after that history renders."
           (setq teams4e--meeting-process nil)
           (teams4e--cancel-image-loads)
           (setq teams4e--messages nil
+                teams4e--render-on-return nil
                 teams4e--loaded-at nil
                 teams4e--loaded-update nil
                 teams4e--loaded-all nil
@@ -4730,8 +4750,11 @@ complete history, and MESSAGE-ID is selected after that history renders."
                 (teams4e--get chat 'meetingContext))
           (let ((inhibit-read-only t))
             (erase-buffer)
-            (insert (format "Loading %s...\n"
-                            (teams4e--chat-label chat))))
+            (insert (format "Loading %s...\n" (teams4e--chat-label chat)))
+            (when (and teams4e-cache-first (not all) (not message-id))
+              (let ((snippet (teams4e--chat-preview chat)))
+                (unless (string-empty-p snippet)
+                  (insert "\nInbox preview: " snippet "\n")))))
           (when (and teams4e-cache-first (> teams4e-recent-chat-cache-size 0)
                      (not all) (not message-id))
             (when-let ((messages
@@ -4759,6 +4782,7 @@ complete history, and MESSAGE-ID is selected after that history renders."
           (teams4e--load-meeting-context chat))))
     (teams4e--display-chat-buffer buffer preview)
     (with-current-buffer buffer
+      (teams4e--show-pending-transcript)
       ;; Cached or synchronous results can render before the pane exists.
       (when (and opening teams4e--messages)
         (teams4e--recenter-reader))
@@ -4822,8 +4846,10 @@ complete history, and MESSAGE-ID is selected after that history renders."
                  (when messages
                    (setq teams4e--messages messages
                          teams4e--loaded-all nil)
-                   (let ((teams4e-display-images nil))
-                     (teams4e--render-chat))
+                   (if (teams4e--hidden-managed-reader-p)
+                       (setq teams4e--render-on-return t)
+                     (let ((teams4e-display-images nil))
+                       (teams4e--render-chat)))
                    (setq teams4e--cached-reader-view (teams4e--reader-view-state))
                    (setq header-line-format
                          (if (and (stringp status)
@@ -4920,7 +4946,11 @@ date window while retaining that bound, which supports incremental loading."
       (setq
        teams4e--process
        (teams4e--run-json
-        (teams4e--message-args chat all request-limit ignore-date)
+        (append (teams4e--message-args chat all request-limit ignore-date)
+                (when (and teams4e--request-progress-callback
+                           (or request-limit teams4e-message-limit)
+                           (null teams4e--messages))
+                  '("--pageSize" "20")))
         (lambda (payload)
           (when (buffer-live-p buffer)
             (with-current-buffer buffer
@@ -4970,11 +5000,10 @@ date window while retaining that bound, which supports incremental loading."
                       (if teams4e--messages
                           (concat "Showing available Teams messages; live refresh "
                                   "failed - see *M365 Errors*")
-                        "Teams thread load failed - see *M365 Errors*")))))
-          (teams4e--report-error
-           (teams4e--message-args
-            chat all request-limit ignore-date)
-           status detail))))
+                        "Teams thread load failed - see *M365 Errors*"))
+                (teams4e--report-error
+                 (teams4e--message-args chat all request-limit ignore-date)
+                 status detail (teams4e--hidden-managed-reader-p))))))))
       (when (and (not all) (not ignore-date) (not teams4e-offline-mode)
                  (not teams4e--pending-message-id)
                  (or request-limit teams4e-message-limit)

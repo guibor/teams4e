@@ -377,6 +377,26 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual([newest], progress)
     self.assertEqual(2, calls.call_count)
 
+  def test_cold_reader_opens_small_then_follows_opaque_continuation(self) -> None:
+    newest = [{"id": str(i)} for i in range(40, 20, -1)]
+    older = [{"id": str(i)} for i in range(20, 0, -1)]
+    progress = []
+
+    def request(path, token, **kwargs):
+      if path == "/opaque-next":
+        self.assertEqual([newest], progress)
+        return {"value": older}
+      params = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
+      self.assertEqual(["20"], params["$top"])
+      self.assertEqual(["createdDateTime desc"], params["$orderby"])
+      return {"value": newest, "@odata.nextLink": "/opaque-next"}
+
+    with mock.patch.object(backend, "graph_json", side_effect=request) as calls:
+      result = backend.list_messages("chat", "token", limit=40, page_size=20,
+                                     first_page=progress.append)
+    self.assertEqual(newest + older, result)
+    self.assertEqual(2, calls.call_count)
+
   def test_first_page_for_every_bounded_request_including_single_page(self) -> None:
     for limit in (None, 1, 50):
       with self.subTest(limit=limit):
