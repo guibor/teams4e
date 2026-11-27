@@ -4631,6 +4631,19 @@ from producing an invalid Graph payload after a mention is edited or deleted."
        #'teams4e-channel-reply
      #'teams4e-reply)))
 
+(defun teams4e-copy-chat-name ()
+  "Copy the current conversation's display name to the kill ring."
+  (interactive)
+  (let ((name (cond
+               ((derived-mode-p 'teams4e-channel-index-mode 'teams4e-channel-thread-mode)
+                (teams4e--get teams4e-channel--channel 'displayName))
+               ((when-let ((chat (teams4e--chat-at-point)))
+                  (teams4e--chat-label chat))))))
+    (unless (and (stringp name) (not (string-blank-p name)))
+      (user-error "No conversation name here"))
+    (kill-new (substring-no-properties name))
+    (message "Copied: %s" name)))
+
 (defvar teams4e-action-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "a") #'teams4e-capture-current-summary)
@@ -4658,6 +4671,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
   "Conversation actions, with G for analysis of the whole filtered chat view.")
 
 ;; Keep source reloads useful when this prefix map already exists.
+(define-key teams4e-action-map (kbd "n") #'teams4e-copy-chat-name)
 (define-key teams4e-action-map (kbd "f") #'teams4e-forward-message)
 (define-key teams4e-action-map (kbd "g")
             #'teams4e-analyze-current-thread)
@@ -4692,6 +4706,7 @@ shared by the terminal Teams client."
             ("Toggle unread-only filter" .
              teams4e-toggle-unread-filter)
             ("Export complete Markdown" . teams4e-export-current-thread)
+            ("Copy conversation name" . teams4e-copy-chat-name)
             ("Copy complete Markdown" .
              teams4e-copy-current-thread-markdown)
             ("Analyze complete thread with agent" .

@@ -131,5 +131,22 @@
     (with-current-buffer outside
       (should-not (memq #'teams4e--remember-workspace pre-command-hook)))))
 
+(ert-deftest teams4e-copy-chat-name-uses-current-pane ()
+  (teams4e-navigation-test
+    (let ((kill-ring nil)
+          (interprogram-cut-function nil)
+          (teams4e--chats '(((id . "row") (topic . "Full conversation title")))))
+      (with-current-buffer headers
+        (should-error (teams4e-copy-chat-name) :type 'user-error)
+        (let ((inhibit-read-only t))
+          (insert (propertize "Full..." 'tabulated-list-id "row"))
+          (goto-char (point-min)))
+        (call-interactively (key-binding (kbd "a n")))
+        (should (equal (car kill-ring) "Full conversation title")))
+      (with-current-buffer reader
+        (setq-local teams4e--chat '((topic . "Another conversation")))
+        (call-interactively (key-binding (kbd "a n")))
+        (should (equal (car kill-ring) "Another conversation"))))))
+
 (provide 'teams4e-navigation-tests)
 ;;; teams4e-navigation-tests.el ends here
