@@ -33,6 +33,7 @@ turn the reader into a separate mini-application.
 | `f` / `a f` | Forward the whole message under the cursor, including when on its body, quote, link or attachment. No selection needed. |
 | `a e` / `a y` | Export / copy complete Markdown |
 | `a n` | Copy just the chat name from the current row or open conversation |
+| `a N` | Copy all chat names in the current headers view, in display order, separated by commas |
 | `a g` | Export and analyze with Agent Shell |
 | `G` / `a G` | Export all chats in this view and discuss them in one Agent Shell |
 | `a p` | Open participant availability |

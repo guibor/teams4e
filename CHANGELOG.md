@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Copy all chat names in the filtered headers view as a comma-separated list
+  with `a N`, from either the headers or the chat reader.
+
 - Bundle downloadable inline pictures and attached images with single-thread
   Markdown exports and Agent Shell handoffs. Mark unavailable pictures in place.
 

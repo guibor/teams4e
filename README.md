@@ -780,8 +780,9 @@ headers and chat reader, and an Org-capture alias under the action prefix:
               #'teams4e-capture-current-summary))
 ```
 
-These are examples, not additional package defaults. The last form adds
-`a n` alongside the default `a a` binding. Use `keymap-unset` if you
+These are examples, not additional package defaults. By default, `a n` copies
+one chat name and `a N` copies all names in the current view, separated by
+commas. The last form rebinds `a n` to capture. Use `keymap-unset` if you
 also want to remove an old binding. Your own interactive commands can be added
 to the same prefix map; this does not add them to the separate dispatcher menu.
 

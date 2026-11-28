@@ -148,5 +148,30 @@
         (call-interactively (key-binding (kbd "a n")))
         (should (equal (car kill-ring) "Another conversation"))))))
 
+(ert-deftest teams4e-copy-view-names-uses-ordered-full-labels ()
+  (teams4e-navigation-test
+    (let ((kill-ring '("Keep me"))
+          (interprogram-cut-function nil))
+      (with-current-buffer headers
+        (setq tabulated-list-entries nil)
+        (should-error (call-interactively (key-binding (kbd "a N"))) :type 'user-error)
+        (should (equal kill-ring '("Keep me"))))
+      (dolist (layout (list teams4e--recent-format teams4e--meeting-recent-format))
+        (with-current-buffer headers
+          (setq tabulated-list-format layout
+                tabulated-list-entries
+                (cl-loop for name in '("Zebra" "A long conversation title beyond the column width")
+                         for id from 1
+                         collect (list id (vconcat (mapcar
+                                                    (lambda (col)
+                                                      (if (equal (car col) "Conversation")
+                                                          (propertize name 'face 'bold) ""))
+                                                    layout))))))
+        (dolist (pane (list headers reader))
+          (with-current-buffer pane
+            (call-interactively (key-binding (kbd "a N")))
+            (should (equal (car kill-ring) "Zebra, A long conversation title beyond the column width"))
+            (should-not (text-properties-at 0 (car kill-ring)))))))))
+
 (provide 'teams4e-navigation-tests)
 ;;; teams4e-navigation-tests.el ends here

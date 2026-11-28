@@ -4678,6 +4678,24 @@ from producing an invalid Graph payload after a mention is edited or deleted."
     (kill-new (substring-no-properties name))
     (message "Copied: %s" name)))
 
+(defun teams4e-copy-view-chat-names ()
+  "Copy all conversation names in the current headers view, separated by commas.
+Use the full labels in display order, regardless of marks or scroll position."
+  (interactive)
+  (let ((headers (cond ((derived-mode-p 'teams4e-recent-mode) (current-buffer))
+                       ((derived-mode-p 'teams4e-chat-mode) (teams4e--recent-buffer)))))
+    (unless (buffer-live-p headers)
+      (user-error "Open the Teams chat headers or their reader first"))
+    (with-current-buffer headers
+      (unless tabulated-list-entries (user-error "No chats in the current Teams view"))
+      (let ((column (cl-position "Conversation" tabulated-list-format
+                                 :key #'car :test #'equal)))
+        (unless column (user-error "No conversation column in this view"))
+        (kill-new (mapconcat (lambda (row)
+                               (substring-no-properties (aref (cadr row) column)))
+                             tabulated-list-entries ", "))
+        (message "Copied %d chat names" (length tabulated-list-entries))))))
+
 (defvar teams4e-action-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "a") #'teams4e-capture-current-summary)
@@ -4706,6 +4724,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
 
 ;; Keep source reloads useful when this prefix map already exists.
 (define-key teams4e-action-map (kbd "n") #'teams4e-copy-chat-name)
+(define-key teams4e-action-map (kbd "N") #'teams4e-copy-view-chat-names)
 (define-key teams4e-action-map (kbd "f") #'teams4e-forward-message)
 (define-key teams4e-action-map (kbd "F") #'teams4e-forward-to-people)
 (define-key teams4e-action-map (kbd "g")
@@ -4742,6 +4761,7 @@ shared by the terminal Teams client."
              teams4e-toggle-unread-filter)
             ("Export complete Markdown" . teams4e-export-current-thread)
             ("Copy conversation name" . teams4e-copy-chat-name)
+            ("Copy all chat names in this view" . teams4e-copy-view-chat-names)
             ("Copy complete Markdown" .
              teams4e-copy-current-thread-markdown)
             ("Analyze complete thread with agent" .
