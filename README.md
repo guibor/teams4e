@@ -376,7 +376,9 @@ and exports are unchanged. Mention styling uses the `teams4e-mention` face.
 Press `f` on a message to forward it. The recipient picker includes the same
 cache-first all-chat directory used by `M`, plus cached people. Choose any
 existing direct, group, or meeting chat; enter an unmatched person to search
-the server; or choose **New direct or group chat...** and select several people.
+the server; or choose **Choose multiple people (one shared chat)...**. The
+shortcut `a F` goes directly to this picker. Select people one by one, then
+choose **Done** to prepare one forward for the group.
 Explicit older-chat search and email entry remain available. Forwarding opens
 an editable draft and never sends immediately.
 See [forwarding and recipient lookup](USAGE.md#composition).

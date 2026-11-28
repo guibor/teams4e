@@ -3248,16 +3248,17 @@ Attachment links are included; this does not copy protected attachment bytes."
    "\n"))
 
 ;;;###autoload
-(defun teams4e-forward-message ()
+(defun teams4e-forward-message (&optional multiple)
   "Choose a person or chat and compose an editable forward at point.
+With MULTIPLE, start by choosing people for one shared chat.
 Sending remains explicit with C-c C-c.  Any existing draft for the
 destination is preserved, with the forward appended."
-  (interactive)
+  (interactive "P")
   (let* ((source (teams4e-current-message))
          (text (teams4e--forward-text source (teams4e--current-web-url))))
     (when (teams4e--get source 'deletedDateTime)
       (user-error "Cannot forward a deleted message"))
-    (teams4e--select-forward-target
+    (funcall (if multiple #'teams4e--select-forward-people #'teams4e--select-forward-target)
      (lambda (target)
        (teams4e--open-compose target)
        (goto-char (point-max))
@@ -3276,6 +3277,22 @@ destination is preserved, with the forward appended."
             (insert text))))
        (teams4e-compose--save-draft)
        (message "Forward added to draft; review and send with C-c C-c")))))
+
+(defun teams4e-forward-to-people ()
+  "Pick participants for one shared forward draft, without sending."
+  (interactive)
+  (teams4e-forward-message t))
+
+(defun teams4e--select-forward-people (callback)
+  "Choose participants, then pass their shared chat to CALLBACK."
+  (let ((origin (current-buffer)))
+    (teams4e--pick-chat-people
+     (lambda (people)
+       (when (buffer-live-p origin)
+         (teams4e--create-chat-for-people
+          people (lambda (target)
+                   (when (buffer-live-p origin)
+                     (with-current-buffer origin (funcall callback target))))))))))
 
 (defun teams4e--forward-person-target (person callback)
   "Resolve PERSON's identity and pass a draft target to CALLBACK, without sending."
@@ -3303,7 +3320,7 @@ destination is preserved, with the forward appended."
   (let* ((search "Search people on server...")
          (older "Find older chat on server...")
          (email "Enter recipient email...")
-         (new-chat "New direct or group chat...")
+         (new-chat "Choose multiple people (one shared chat)...")
          (seen (make-hash-table :test #'equal)) pairs)
     (dolist (person users)
       (let ((id (or (teams4e--get person 'id) (teams4e--get person 'mail))))
@@ -3322,8 +3339,8 @@ destination is preserved, with the forward appended."
     (setq pairs (nreverse pairs))
     (let* ((choice (string-trim (completing-read
                                  "Forward to (name, chat, or search): "
-                                 (append (mapcar #'car pairs)
-                                         (list new-chat search older email))
+                                 (append (list new-chat) (mapcar #'car pairs)
+                                         (list search older email))
                                  nil nil)))
            (target (cdr (assoc choice pairs))))
       (cond
@@ -3820,10 +3837,14 @@ in the background.  Select people one at a time and choose Done; free names
 search the tenant directory, while exact email/UPN remains a fallback.  The
 command creates or reuses the chat and opens a blank draft without sending."
   (interactive)
+  (teams4e--pick-chat-people nil))
+
+(defun teams4e--pick-chat-people (callback)
+  "Start cached multi-person completion, delivering the selection to CALLBACK."
   (teams4e--require-online)
   (let ((origin (current-buffer)))
     (teams4e--choose-new-chat-people
-     (teams4e--known-recipient-users) nil
+     (teams4e--known-recipient-users) callback
      (lambda (accept)
        (teams4e--run-json
         '("teams" "cache" "recipient" "list")
@@ -4684,6 +4705,7 @@ from producing an invalid Graph payload after a mention is edited or deleted."
 ;; Keep source reloads useful when this prefix map already exists.
 (define-key teams4e-action-map (kbd "n") #'teams4e-copy-chat-name)
 (define-key teams4e-action-map (kbd "f") #'teams4e-forward-message)
+(define-key teams4e-action-map (kbd "F") #'teams4e-forward-to-people)
 (define-key teams4e-action-map (kbd "g")
             #'teams4e-analyze-current-thread)
 (define-key teams4e-action-map (kbd "G") #'teams4e-analyze-view)

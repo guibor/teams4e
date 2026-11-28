@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Forward a message to several people in one shared chat with `a F`, or
+  choose the multi-person option from the ordinary `f` picker.
+
 - Show who reacted beside each reaction count in chat and channel readers.
   Resolve ID-only users from the loaded conversation without network calls.
 

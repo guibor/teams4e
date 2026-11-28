@@ -95,11 +95,12 @@ and the forward is appended.
 The forwarding picker uses the cache-first complete chat directory, not only the
 current inbox or bookmark, and combines it with people from the existing private
 SQLite cache. Duplicate names show addresses and IDs. Type a missing name and
-press `RET` to search the tenant directory, or choose **New direct or group
-chat...**, **Search people on server...**, **Find older chat on server...**, or
-**Enter recipient email...**. The new-chat choice uses the same comma-separated
-multi-person completion as `N`, creates or reuses the destination, and then
-opens the forward draft. Nothing is sent until explicit draft submission.
+press `RET` to search the tenant directory. To forward to several people,
+press **`a F`** on the message, or choose **Choose multiple people (one shared
+chat)...** from `f`. Select each person with `RET`, then choose **Done**.
+Leave the optional group topic blank or give it a name. This opens **one shared
+chat draft**, not separate private messages. Review it and send with `C-c C-c`.
+To use an existing named group instead, pick its chat directly with `f`.
 
 Directory access and chat creation still depend on tenant permissions; no new
 permissions are requested. Older/custom backends fall back to loaded chats and
