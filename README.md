@@ -384,6 +384,8 @@ See [forwarding and recipient lookup](USAGE.md#composition).
 On a chat or channel message, press `+` to react by name: `fire` (the default),
 `confetti`, `star`, or `glowing star`, for example. Use `-` to remove your
 reaction. Customize `teams4e-reactions` for a different shortlist or default.
+The reaction line under each chat or channel message shows who reacted,
+grouped by reaction. No hover or extra command is needed.
 
 The complete message selected by `M-h` has a high-contrast block outline.
 Your messages show your Teams display name in bold. Only the name is

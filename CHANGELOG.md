@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Show who reacted beside each reaction count in chat and channel readers.
+  Resolve ID-only users from the loaded conversation without network calls.
+
 - Insert an inline image from disk (`C-c i`) or paste it from the clipboard
   (`C-c C-p`) in Org chat and channel drafts, including quoted replies.
 

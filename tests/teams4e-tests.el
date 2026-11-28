@@ -6021,6 +6021,24 @@
   (should (eq #'teams4e-chat-run-headers-command
               (lookup-key teams4e-chat-mode-map (kbd "m m")))))
 
+(ert-deftest teams4e-reader-shows-who-reacted-without-directory-lookups ()
+  (let* ((teams4e--member-cache (make-hash-table :test #'equal))
+         (teams4e--connected-user-id "self")
+         (chat '((id . "chat")))
+         (senders '(((from . ((user . ((id . "author") (displayName . "Sam"))))))))
+         (msg '((id . "message")
+                (reactions . (((reactionType . "like") (user . ((user . ((displayName . "Jo"))))))
+                              ((reactionType . "like") (user . ((user . ((id . "member"))))))
+                              ((reactionType . "heart") (user . ((user . ((id . "author"))))))
+                              ((reactionType . "heart") (user . ((user . ((id . "self"))))))
+                              ((reactionType . "laugh")))))))
+    (puthash "chat" '(((userId . "member") (displayName . "Ali"))) teams4e--member-cache)
+    (with-temp-buffer
+      (teams4e--insert-message msg (teams4e--reactor-index senders chat))
+      (should (search-backward "Reactions: heart 2 (Sam, You); laugh 1 (Unknown reactor); like 2 (Jo, Ali)"
+                               nil t)))
+    (should (equal "heart 2, laugh 1, like 2" (teams4e--reaction-summary msg)))))
+
 (ert-deftest teams4e-named-reactions-send-only-the-emoji ()
   (dolist (case '((teams4e-message-react nil "🔥")
                   (teams4e-message-react "CONFETTI" "🎉")

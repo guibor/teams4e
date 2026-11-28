@@ -3245,19 +3245,51 @@ omitting the newest exchange.  Filter creation dates after the newest page."
              (or (not time) (not (time-less-p time cutoff)))))
          messages)))))
 
-(defun teams4e--reaction-summary (message)
-  "Return a compact reaction summary for MESSAGE."
+(defun teams4e--reactor-index (messages &optional chat)
+  "Index names already available in MESSAGES and CHAT for this render."
+  (let ((names (make-hash-table :test #'equal)))
+    (cl-labels ((remember (person id-key)
+                  (let ((id (teams4e--get person id-key))
+                        (name (teams4e--get person 'displayName)))
+                    (when (and (stringp id) (stringp name) (not (string-blank-p name)))
+                      (puthash id name names)))))
+      (dolist (msg messages)
+        (remember (teams4e--dig msg 'from 'user) 'id))
+      (when chat
+        (dolist (member (append (teams4e--get chat 'members) (teams4e--chat-members chat)))
+          (remember member 'userId))))
+    names))
+
+(defun teams4e--reactor-name (reaction names)
+  "Identify the actor in REACTION, using local NAMES for ID-only users."
+  (let* ((actor (teams4e--get reaction 'user))
+         (name (teams4e--event-identity-name actor))
+         (id (teams4e--dig actor 'user 'id)))
+    (cond ((and (stringp name) (not (string-blank-p name))) name)
+          ((and (stringp id) (not (string-blank-p id)))
+           (or (gethash id names)
+               (and (equal id teams4e--connected-user-id) "You")
+               id))
+          (t "Unknown reactor"))))
+
+(defun teams4e--reaction-summary (message &optional names)
+  "Summarize MESSAGE reactions; include actors when given a NAMES index."
   (let ((reactions (teams4e--get message 'reactions)))
     (when (listp reactions)
-      (let ((counts (make-hash-table :test #'equal)))
+      (let ((groups (make-hash-table :test #'equal)))
         (dolist (reaction reactions)
           (let ((kind (or (teams4e--get reaction 'reactionType) "reaction")))
-            (puthash kind (1+ (gethash kind counts 0)) counts)))
+            (push reaction (gethash kind groups))))
         (let (parts)
-          (maphash (lambda (kind count)
-                     (push (format "%s %d" kind count) parts))
-                   counts)
-          (string-join (sort parts #'string<) ", "))))))
+          (maphash (lambda (kind group)
+                     (push (concat (format "%s %d" kind (length group))
+                                   (when names
+                                     (format " (%s)" (mapconcat
+                                                      (lambda (r) (teams4e--reactor-name r names))
+                                                      (reverse group) ", "))))
+                           parts))
+                   groups)
+          (string-join (sort parts #'string<) (if names "; " ", ")))))))
 
 (defun teams4e--graph-segment (value)
   "Encode opaque Graph path segment VALUE."
@@ -3906,7 +3938,7 @@ Do not infer mentions from arbitrary names or @ characters."
                                (make-composed-keymap teams4e--message-action-keys map)))
           (setq pos next))))))
 
-(defun teams4e--insert-message (message)
+(defun teams4e--insert-message (message &optional reactor-names)
   "Insert one Teams MESSAGE into the current transcript."
   (let* ((rich (and (not (teams4e--get message 'deletedDateTime))
                     (not (teams4e--system-event-p message))
@@ -3917,7 +3949,9 @@ Do not infer mentions from arbitrary names or @ characters."
          (body (if rich (teams4e--message-markdown-body message t)
                  (teams4e--message-body message)))
          (images (teams4e--message-images message))
-         (reactions (teams4e--reaction-summary message))
+         (reactions (when (teams4e--get message 'reactions)
+                      (teams4e--reaction-summary
+                       message (or reactor-names (teams4e--reactor-index (list message))))))
          (own (teams4e--message-own-p message)))
     (insert (propertize (if (and own
                                  (string-blank-p
@@ -4489,6 +4523,7 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
                    (zerop (buffer-size))
                    (teams4e--reader-at-latest-p))))
          (message-id teams4e--pending-message-id)
+         (reactor-names (teams4e--reactor-index teams4e--messages teams4e--chat))
          last-day)
     (teams4e--cancel-image-loads)
     (erase-buffer)
@@ -4512,7 +4547,7 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
             (unless (equal day last-day)
               (setq last-day day)
               (teams4e--insert-day-separator created))
-            (teams4e--insert-message message)))
+            (teams4e--insert-message message reactor-names)))
       (insert (propertize "No messages in the selected time window.\n" 'face 'shadow)))
     (setq teams4e--pending-message-id nil)
     (cond

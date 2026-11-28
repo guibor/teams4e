@@ -2141,6 +2141,7 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
                    (zerop (buffer-size))
                    (teams4e--reader-at-latest-p))))
          (message-id pending-message-id)
+         (reactor-names (teams4e--reactor-index teams4e-channel--messages))
          last-day)
     (teams4e--cancel-image-loads)
     (erase-buffer)
@@ -2162,7 +2163,7 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
         (unless (equal day last-day)
           (setq last-day day)
           (teams4e--insert-day-separator created))
-        (teams4e--insert-message message)))
+        (teams4e--insert-message message reactor-names)))
     (cond
      (message-id
       (goto-char (point-min))
