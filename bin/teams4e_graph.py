@@ -3089,6 +3089,36 @@ def quoted_reply_attachment(
   return attachment, marker
 
 
+def inline_image_payload(message, paths, content_type):
+  """Build Graph hostedContents only from separately supplied image files."""
+  if not paths and content_type != "html-inline":
+    return {}
+  if not paths or content_type != "html-inline":
+    raise BackendError("Inline images require an HTML image message")
+  hosted = []
+  remaining = 4 * 1024 * 1024
+  for index, file in enumerate(paths, 1):
+    if f'src="../hostedContents/{index}/$value"' not in message:
+      raise BackendError("Inline image reference missing from message")
+    path = Path(file)
+    if not path.is_file():
+      raise BackendError("Inline image file is missing")
+    with path.open("rb") as image:
+      data = image.read(remaining + 1)
+    if len(data) > remaining:
+      raise BackendError("Inline images exceed 4 MiB; resize or attach as files")
+    remaining -= len(data)
+    mime = next((mime for prefix, mime in (
+        (b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"),
+        (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
+                 if data.startswith(prefix)), None)
+    if not mime:
+      raise BackendError("Unsupported inline image; choose a PNG, JPEG or GIF")
+    hosted.append({"@microsoft.graph.temporaryId": str(index), "contentType": mime,
+                   "contentBytes": base64.b64encode(data).decode("ascii")})
+  return {"hostedContents": hosted}
+
+
 def send_message(
     chat_id: str,
     message: str,
@@ -3100,10 +3130,12 @@ def send_message(
     reply_sender_id: str = "",
     reply_sender_name: str = "",
     reply_preview: str = "",
+    inline_images: list[str] | None = None,
 ) -> dict[str, Any]:
   """Send MESSAGE to CHAT_ID, optionally with a native quote attachment."""
   if not message.strip() and not attachment_paths:
     raise BackendError("Message and attachment list are empty")
+  images = inline_image_payload(message, inline_images, content_type)
   attachments, attachment_tags = uploaded_reference_attachments(
       attachment_paths or [], access_token
   )
@@ -3115,11 +3147,11 @@ def send_message(
     attachment_tags.insert(0, marker)
   body, mentions = outgoing_body(
       message,
-      content_type=content_type,
+      content_type="html" if images else content_type,
       mention_specs=mention_specs or [],
       attachment_tags=attachment_tags,
   )
-  payload: dict[str, Any] = {"body": body}
+  payload: dict[str, Any] = {"body": body, **images}
   if attachments:
     payload["attachments"] = attachments
   if mentions:
@@ -3142,6 +3174,7 @@ def send_channel_message(
     attachment_paths: list[str] | None = None,
     mention_specs: list[str] | None = None,
     content_type: str = "text",
+    inline_images: list[str] | None = None,
 ) -> dict[str, Any]:
   """Send a channel root post or a reply."""
   if not message.strip() and not attachment_paths:
@@ -3150,16 +3183,17 @@ def send_channel_message(
       f"/teams/{quoted_id(team_id)}/channels/{quoted_id(channel_id)}/messages"
   )
   path = f"{base}/{quoted_id(reply_to_id)}/replies" if reply_to_id else base
+  images = inline_image_payload(message, inline_images, content_type)
   attachments, tags = uploaded_reference_attachments(
       attachment_paths or [], access_token
   )
   body, mentions = outgoing_body(
       message,
-      content_type=content_type,
+      content_type="html" if images else content_type,
       mention_specs=mention_specs or [],
       attachment_tags=tags,
   )
-  payload: dict[str, Any] = {"body": body}
+  payload: dict[str, Any] = {"body": body, **images}
   if attachments:
     payload["attachments"] = attachments
   if mentions:
@@ -3990,6 +4024,7 @@ def execute(
         str(option(args, "--replySenderId", required=False) or ""),
         str(option(args, "--replySenderName", required=False) or ""),
         str(option(args, "--replyPreview", required=False) or ""),
+        inline_images=options(args, "--inlineImage"),
     )
     with TeamsCache() as cache:
       cache.upsert_messages("chat", str(chat_id), [result])
@@ -4087,6 +4122,7 @@ def execute(
         access_token,
         reply_to_id=option(args, "--replyToId", required=False),
         attachment_paths=options(args, "--attachment"),
+        inline_images=options(args, "--inlineImage"),
         mention_specs=options(args, "--mention"),
         content_type=option(args, "--contentType", required=False) or "text",
     )

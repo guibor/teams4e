@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Insert an inline image from disk (`C-c i`) or paste it from the clipboard
+  (`C-c C-p`) in Org chat and channel drafts, including quoted replies.
+
 - Overnight scheduled messages now use today's workday start if it is still
   ahead in the scheduling timezone. Already queued delivery times do not move.
 

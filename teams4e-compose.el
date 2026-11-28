@@ -15,6 +15,68 @@
 (defvar evil-local-mode)
 (defvar teams4e-compose-edit-mode)
 
+(defvar teams4e-compose--register-image nil
+  "During immediate send, function mapping a local image path to a hosted ID.")
+
+(defun teams4e-compose--image-directory ()
+  "Return the directory for inline images owned by this draft."
+  (concat (or teams4e-compose--draft-file (teams4e-compose--path)) ".images"))
+
+(defun teams4e-compose--import-image (extension writer)
+  "Insert an Org image link after WRITER saves image bytes to a new file."
+  (unless (and (teams4e-compose-p) (derived-mode-p 'org-mode))
+    (user-error "Open an Org Teams draft to insert an inline image"))
+  (unless (member extension '("png" "jpg" "jpeg" "gif"))
+    (user-error "Choose a PNG, JPEG or GIF; use C-c C-a for other files"))
+  (let ((directory (teams4e-compose--image-directory)) path done)
+    (make-directory directory t)
+    (set-file-modes directory #o700)
+    (setq path (make-temp-file (expand-file-name "image-" directory) nil
+                               (concat "." extension)))
+    (unwind-protect
+        (progn
+          (funcall writer path)
+          ;; Terminal-only Emacs may not have an image decoder.
+          (unless (with-temp-buffer
+                    (set-buffer-multibyte nil)
+                    (insert-file-contents-literally path nil 0 8)
+                    (goto-char (point-min))
+                    (looking-at-p (regexp-opt '("\211PNG\r\n\032\n" "\377\330\377"
+                                                "GIF87a" "GIF89a"))))
+            (user-error "No PNG, JPEG or GIF image found; draft unchanged"))
+          (insert (org-link-make-string (concat "file:" path)))
+          (setq done t)
+          (when (display-images-p) (org-display-inline-images)))
+      (unless done (delete-file path)))))
+
+(defun teams4e-compose-insert-image (file)
+  "Insert a local image at point and keep a private copy with the Org draft."
+  (interactive "fInsert image: ")
+  (when (or (file-remote-p file) (not (file-regular-p file)))
+    (user-error "Choose a local image file"))
+  (teams4e-compose--import-image
+   (downcase (or (file-name-extension file) ""))
+   (lambda (path) (copy-file file path t) (set-file-modes path #o600))))
+
+(defun teams4e-compose-paste-inline-image ()
+  "Insert the desktop clipboard image at point in this Org draft."
+  (interactive)
+  (let* ((args (cond ((eq system-type 'darwin) '("pngpaste" "-"))
+                     ((getenv "WAYLAND_DISPLAY") '("wl-paste" "-t" "image/png"))
+                     ((getenv "DISPLAY") '("xclip" "-selection" "clipboard" "-t" "image/png" "-o"))
+                     (t (user-error "No desktop clipboard; use C-c i to insert a file"))))
+         (program (or (executable-find (car args))
+                      (user-error "Clipboard paste requires %s" (car args)))))
+    (teams4e-compose--import-image
+     "png" (lambda (path)
+             (with-temp-buffer
+               (set-buffer-multibyte nil)
+               (let ((coding-system-for-read 'no-conversion)
+                     (coding-system-for-write 'no-conversion))
+                 (unless (equal 0 (apply #'call-process program nil (list t nil) nil (cdr args)))
+                   (user-error "Could not read an image from the clipboard"))
+                 (write-region (point-min) (point-max) path nil 'silent)))))))
+
 (defcustom teams4e-compose-editor 'org
   "Editor for new Teams drafts.
 Org uses the built-in HTML exporter.  Markdown requires markdown-mode and
@@ -82,6 +144,10 @@ display if there is insufficient room to split."
   (let ((map (copy-keymap teams4e-compose-mode-map))
         (commands (make-sparse-keymap)))
     (set-keymap-parent map nil)
+    (when (derived-mode-p 'org-mode)
+      (define-key map (kbd "C-c i") #'teams4e-compose-insert-image)
+      (define-key map (kbd "C-c C-p") #'teams4e-compose-paste-inline-image)
+      (define-key commands [remap org-download-clipboard] #'teams4e-compose-paste-inline-image))
     (define-key map (kbd "C-<return>") #'teams4e-compose-send)
     (setq-local minor-mode-overriding-map-alist
                 (cons (cons 'teams4e-compose-edit-mode map)
@@ -351,7 +417,21 @@ The latter cannot recover old reply, attachment, mention or scheduling data."
     (when (bound-and-true-p evil-local-mode)
       (evil-insert-state))))
 
-(defun teams4e-compose--org-html (source)
+(defun teams4e-compose--html-link (link desc info)
+  "Render inline file images as hosted content; delegate other links to Org."
+  (if (and (equal "file" (org-element-property :type link))
+           (org-export-inline-image-p link org-html-inline-image-rules))
+      (progn
+        (unless teams4e-compose--register-image
+          (user-error "Inline images require immediate send; scheduled draft retained"))
+        (format "<img src=\"../hostedContents/%d/$value\" />"
+                (funcall teams4e-compose--register-image (org-element-property :path link))))
+    (org-html-link link desc info)))
+
+(org-export-define-derived-backend 'teams4e-message 'html
+  :translate-alist '((link . teams4e-compose--html-link)))
+
+(defun teams4e-compose--org-html (source &optional messagep)
   "Render SOURCE as a Teams HTML fragment without executing Org code.
 External includes, setup files, BIND/CALL directives and macros are not
 supported in messages.  Refuse them rather than silently reading files
@@ -370,7 +450,7 @@ or evaluating content pasted into a draft."
         (org-export-filter-final-output-functions nil)
         (org-html-htmlize-output-type nil))
     (org-export-string-as
-     source 'html t
+     source (if messagep 'teams4e-message 'html) t
      '(:with-toc nil :section-numbers nil :with-author nil :with-date nil
        :with-title nil :with-sub-superscript nil :with-latex nil
        :html-preamble nil :html-postamble nil))))
@@ -405,7 +485,7 @@ or evaluating content pasted into a draft."
     (user-error "Switch this draft back to Org, Markdown or Text mode before sending"))
   (pcase teams4e-compose--editor
     ('org (cons "html" (if (string-empty-p source) ""
-                        (teams4e-compose--org-html source))))
+                        (teams4e-compose--org-html source t))))
     ('markdown (cons "html" (if (string-empty-p source) ""
                              (teams4e-compose--markdown-html source))))
     (_ (cons teams4e-compose--content-type source))))

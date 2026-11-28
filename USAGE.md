@@ -67,6 +67,19 @@ Pending state is memory-only; restarting Emacs does not resume this batch.
 
 ### Composition
 
+In an **Org** draft, use `C-c i` to insert a PNG, JPEG or GIF from disk,
+or `C-c C-p` to paste a screenshot from the clipboard. Both insert an
+ordinary Org image link at point. Move or delete the link to move or remove
+the image. The draft keeps its own copy until sent or discarded; the
+original file is untouched. An existing inline Org file link works too;
+Teams4e asks before sending a file from outside the draft's image directory.
+
+Send with `C-c C-c`. Recipients see the image inline, including in replies.
+Update both the Emacs package and the Teams4e backend for this feature.
+The clipboard command needs `pngpaste` on macOS, `wl-paste` on Wayland,
+or `xclip` on X11. Inline images are limited to 4 MiB total per message
+and cannot be scheduled. Use `C-c C-a` for an ordinary file attachment.
+
 In a chat compose buffer, type `@` to choose one of the conversation's
 participants and insert a real Teams mention. `C-c C-m` invokes the same
 command. Use `C-q @` when you need a literal at-sign instead.

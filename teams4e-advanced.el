@@ -18,6 +18,7 @@
 (require 'xml)
 
 (declare-function teams4e-transient "advanced")
+(declare-function teams4e-compose-paste-inline-image "teams4e-compose" ())
 (declare-function teams4e-meeting-availability "teams4e-meetings")
 (declare-function teams4e-availability--submission-failed "teams4e-meetings" (buffer payload))
 (declare-function agent-shell--resolve-config-designator "agent-shell"
@@ -4170,7 +4171,10 @@ command creates or reuses the chat and opens a blank draft without sending."
   (when (and teams4e-compose--draft-file
              (file-exists-p teams4e-compose--draft-file))
     (delete-file teams4e-compose--draft-file))
-  (teams4e-compose--delete-clipboard-attachments))
+  (teams4e-compose--delete-clipboard-attachments)
+  (when (and teams4e-compose--target (fboundp 'teams4e-compose--image-directory))
+    (let ((dir (teams4e-compose--image-directory)))
+      (when (file-directory-p dir) (delete-directory dir t)))))
 
 (defun teams4e-compose--clipboard-directory ()
   "Return the private directory used for pasted compose images."
@@ -4213,8 +4217,14 @@ command creates or reuses the chat and opens a blank draft without sending."
     (teams4e-compose--schedule-draft)))
 
 (defun teams4e-compose-paste-image ()
-  "Save the macOS clipboard image and attach it to this Teams draft."
+  "Paste an inline image in Org, or attach the macOS clipboard in other editors."
   (interactive)
+  (if (derived-mode-p 'org-mode)
+      (teams4e-compose-paste-inline-image)
+    (teams4e-compose--attach-clipboard-image)))
+
+(defun teams4e-compose--attach-clipboard-image ()
+  "Save the macOS clipboard image as a file attachment."
   (unless (teams4e-compose-p)
     (user-error "Open a Teams compose buffer first"))
   (let ((program (executable-find "pngpaste")))

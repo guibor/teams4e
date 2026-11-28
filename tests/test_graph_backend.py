@@ -1591,6 +1591,27 @@ class GraphBackendTests(unittest.TestCase):
     self.assertEqual(1, len(mentions))
     self.assertEqual("ada-id", mentions[0]["mentioned"]["user"]["id"])
 
+  def test_inline_images_use_hosted_content_for_chat_and_channel_reply(self):
+    message = '<img src="../hostedContents/1/$value" />'
+    with tempfile.TemporaryDirectory() as tmp, mock.patch.object(backend, "graph_json") as post:
+      image = Path(tmp) / "image.png"
+      image.write_bytes(b"\x89PNG\r\n\x1a\nfixture")
+      opts = dict(inline_images=[str(image)], content_type="html-inline", reply_to_id="root")
+      backend.send_message("chat", message, "token", **opts)
+      backend.send_channel_message("team", "channel", message, "token", **opts)
+      for call in post.call_args_list:
+        payload = call.kwargs["payload"]
+        item, = payload["hostedContents"]
+        self.assertEqual("1", item["@microsoft.graph.temporaryId"])
+        self.assertEqual("image/png", item["contentType"])
+        self.assertEqual(image.read_bytes(), base64.b64decode(item["contentBytes"]))
+        self.assertEqual("html", payload["body"]["contentType"])
+        self.assertIn(message, payload["body"]["content"])
+      image.write_bytes(b"not an image")
+      with self.assertRaises(backend.BackendError):
+        backend.send_message("chat", message, "token", **opts)
+      self.assertEqual(post.call_count, 2)
+
   def test_channel_message_send_and_reply_use_documented_paths(self) -> None:
     with mock.patch.object(
         backend, "graph_json", return_value={"id": "result"}

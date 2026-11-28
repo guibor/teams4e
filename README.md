@@ -306,6 +306,11 @@ in Teams receive formatted text and clickable links, **not raw Org syntax**.
 Recipients do not need Emacs or Org. Org composition uses Emacs's built-in
 exporter; it does not require Pandoc or an AI service.
 
+In an Org draft, paste a screenshot at point with `C-c C-p`, or choose an
+image file with `C-c i`. Move or remove its Org link before sending; recipients
+see the image in that position. See [Composition](USAGE.md#composition) for
+clipboard helpers, supported formats and scheduled-send limitations.
+
 The major mode is intentionally `org-mode` (or `markdown-mode`):
 `teams4e-compose-edit-mode` supplies the Teams commands on top. Its command
 keys take precedence over Org/Evil bindings only in the draft, leaving normal

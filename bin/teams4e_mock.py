@@ -938,10 +938,15 @@ class MockTenant:
       body: str,
       *,
       attachments: list[str] | None = None,
+      inline_images: list[str] | None = None,
       reply_to: str | None = None,
       content_type: str = "text",
       mention_specs: list[str] | None = None,
   ) -> dict[str, Any]:
+    if content_type == "html-inline":
+      for index, item in enumerate(self._copy_attachments(inline_images or []), 1):
+        body = body.replace(f'../hostedContents/{index}/$value', item["contentUrl"])
+      content_type = "html"
     message = _message(
         f"mock-message-{uuid.uuid4().hex}",
         self.state["profile"],
@@ -1011,6 +1016,7 @@ class MockTenant:
     message = self._new_message(
         str(option(args, "--message")),
         attachments=options(args, "--attachment"),
+        inline_images=options(args, "--inlineImage"),
         reply_to=reply_to,
         content_type=option(args, "--contentType", required=False) or "text",
         mention_specs=options(args, "--mention"),
@@ -1037,6 +1043,7 @@ class MockTenant:
     message = self._new_message(
         str(option(args, "--message")),
         attachments=options(args, "--attachment"),
+        inline_images=options(args, "--inlineImage"),
         reply_to=reply_to,
         content_type=option(args, "--contentType", required=False) or "text",
         mention_specs=options(args, "--mention"),
