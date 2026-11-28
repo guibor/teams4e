@@ -62,6 +62,9 @@
 (defvar er/try-expand-list)
 (defvar teams4e--omit-markdown-images nil
   "When non-nil, omit HTML images from generated Markdown.")
+(defvar teams4e--export-image-function nil
+  "During file export, render an image using its source, label and message.")
+(defvar teams4e--export-message nil)
 (declare-function er/enable-mode-expansions "expand-region-core" (mode add-fn))
 
 ;; Defined as user options in config.el; declarations keep standalone byte
@@ -5759,7 +5762,10 @@ When COMMAND is nil, delegate to `browse-url'."
              ""
            (let ((url (dom-attr node 'src))
                  (alt (or (dom-attr node 'alt) "image")))
-             (if (stringp url) (format "![%s](%s)" alt url) ""))))
+             (cond (teams4e--export-image-function
+                    (funcall teams4e--export-image-function url alt teams4e--export-message nil))
+                   ((stringp url) (format "![%s](%s)" alt url))
+                   (t "")))))
         ('input
          (if (equal (downcase (or (dom-attr node 'type) "")) "checkbox")
              (if (dom-attr node 'checked) "[x] " "[ ] ")
@@ -5811,7 +5817,8 @@ image downloader."
 
 (defun teams4e--message-markdown (message)
   "Return one complete Teams MESSAGE as Markdown."
-  (let* ((sender (teams4e--message-sender message))
+  (let* ((teams4e--export-message message)
+         (sender (teams4e--message-sender message))
          (created (teams4e--get message 'createdDateTime))
          (body (teams4e--message-markdown-body message))
          (reference (teams4e--message-reference-text message))
@@ -5822,7 +5829,10 @@ image downloader."
         (let ((name (or (teams4e--get attachment 'name) "Attachment"))
               (url (or (teams4e--get attachment 'contentUrl)
                        (teams4e--get attachment 'webUrl))))
-          (push (if (stringp url) (format "[%s](%s)" name url) name)
+          (push (cond ((and teams4e--export-image-function (teams4e--image-attachment-p attachment))
+                       (funcall teams4e--export-image-function url name message t))
+                      ((stringp url) (format "[%s](%s)" name url))
+                      (t name))
                 attachments))))
     (concat
      (format "### %s - %s\n\n"
@@ -5919,11 +5929,110 @@ HISTORY labels verified full-chat pagination or an explicitly bounded snapshot."
 
 (defun teams4e--write-thread-export (path chat messages &optional history)
   "Write CHAT MESSAGES and HISTORY to Markdown PATH with private permissions."
+  (teams4e--save-export-markdown path (teams4e--thread-markdown chat messages history)))
+
+(defun teams4e--save-export-markdown (path markdown)
+  "Atomically publish complete MARKDOWN at PATH with private permissions."
   (make-directory (file-name-directory path) t)
-  (with-temp-file path
-    (insert (teams4e--thread-markdown chat messages history)))
-  (set-file-modes path #o600)
+  (let ((temp (make-temp-file (expand-file-name ".teams4e-" (file-name-directory path)))))
+    (unwind-protect
+        (progn (with-temp-file temp (insert markdown)) (rename-file temp path t))
+      (when (file-exists-p temp) (delete-file temp))))
   path)
+
+(defun teams4e--export-image-url (source chat msg attachment)
+  "Resolve a Teams image using the exported CHAT, never the active reader."
+  (let* ((channel (teams4e--get chat 'channelIdentity))
+         (root (teams4e--get chat 'rootId))
+         (teams4e--chat nil)
+         (teams4e-channel--team nil)
+         (teams4e-channel--channel nil)
+         (context (if channel
+                      (append `((chatId . nil) (channelIdentity . ,channel)
+                                (replyToId . ,(unless (equal root (teams4e--get msg 'id)) root)))
+                              msg)
+                    (cons (cons 'chatId (teams4e--chat-id chat)) msg)))
+         (url (teams4e--absolute-inline-image-url context source)))
+    (when (and url
+               (or (and (string-prefix-p "https://graph.microsoft.com/" url)
+                        (string-match-p "/hostedContents/[^/?#]+/\\$value\\(?:[?].*\\)?\\'" url))
+                   (and attachment (string-prefix-p "https://" url))
+                   (and teams4e-mock-mode (string-prefix-p "file:///" url)
+                        (file-in-directory-p
+                         (url-unhex-string (substring url 7))
+                         (concat (file-name-sans-extension teams4e-mock-state-file) ".attachments")))))
+      url)))
+
+(defun teams4e--export-image-suffix (path)
+  "Recognize raster image bytes even when Emacs has no image decoder."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally path nil 0 16)
+    (let ((bytes (buffer-string)))
+      (cond ((string-prefix-p "\211PNG\r\n\032\n" bytes) "png")
+            ((string-prefix-p "\377\330\377" bytes) "jpg")
+            ((or (string-prefix-p "GIF87a" bytes) (string-prefix-p "GIF89a" bytes)) "gif")
+            ((and (string-prefix-p "RIFF" bytes) (>= (length bytes) 12)
+                  (equal "WEBP" (substring bytes 8 12))) "webp")
+            ((string-prefix-p "BM" bytes) "bmp")
+            ((or (string-prefix-p "II*\0" bytes) (string-prefix-p "MM\0*" bytes)) "tif")))))
+
+(defun teams4e--export-with-images (path chat messages history done)
+  "Save a Markdown bundle at PATH.  Call DONE after all images settle."
+  (let ((files (make-hash-table :test #'equal))
+        directory
+        (account (teams4e--recent-chat-key chat))
+        queue)
+    (cl-labels
+        ((render (source alt msg attachment)
+           (let* ((url (teams4e--export-image-url source chat msg attachment))
+                  (label (replace-regexp-in-string "[][\\\n\r]" " " (or alt "image")))
+                  (file (and url (gethash url files))))
+             (when (and url (not file) (not teams4e-offline-mode))
+               (puthash url 'pending files)
+               (push url queue))
+             (if (stringp file)
+                 (format "![%s](%s/%s)" label
+                         (url-hexify-string (file-name-nondirectory directory)) file)
+               (format "[Image unavailable: %s]" label))))
+         (finish ()
+           (let ((teams4e--export-image-function #'render))
+             (teams4e--write-thread-export path chat messages history))
+           (funcall done path))
+         (next ()
+           (if (or (null queue) teams4e-offline-mode
+                   (not (equal account (teams4e--recent-chat-key chat))))
+               (finish)
+             (let* ((url (pop queue))
+                    (tmp (make-temp-file (expand-file-name ".download-" directory)))
+                    (settle
+                     (lambda (ok)
+                       (unwind-protect
+                           (when-let* ((suffix (and ok (teams4e--export-image-suffix tmp)))
+                                       (name (concat (secure-hash 'sha256 url) "." suffix)))
+                             (set-file-modes tmp #o600)
+                             (rename-file tmp (expand-file-name name directory) t)
+                             (puthash url name files))
+                         (when (file-exists-p tmp) (delete-file tmp))
+                         (run-at-time 0 nil #'next)))))
+               (condition-case nil
+                   (teams4e--run-json
+                    (list "teams" "attachment" "download" "--url" url "--destination" tmp)
+                    (lambda (_) (funcall settle t))
+                    (lambda (&rest _) (funcall settle nil)))
+                 (error (funcall settle nil)))))))
+      ;; Discover only images the Markdown renderer actually emits.
+      (let ((markdown (let ((teams4e--export-image-function #'render))
+                        (teams4e--thread-markdown chat messages history))))
+        (make-directory (file-name-directory path) t)
+        (if (null queue)
+            (progn
+              (teams4e--save-export-markdown path markdown)
+              (funcall done path))
+          ;; Keep concurrent/repeated exports from mixing attachments.
+          (setq directory (make-temp-file (concat (file-name-sans-extension path) ".assets-") t))
+          (message "Exporting %d Teams thread image(s)..." (length queue))
+          (next))))))
 
 (defun teams4e--finish-thread-export
     (chat messages open &optional after-export history)
@@ -5931,18 +6040,13 @@ HISTORY labels verified full-chat pagination or an explicitly bounded snapshot."
 
 When OPEN is non-nil, visit the file.  When AFTER-EXPORT is non-nil, call it
 with the absolute saved path after the mode-0600 file has been written."
-  (let* ((path (teams4e--export-path chat))
-         (saved-path
-          (teams4e--write-thread-export path chat messages history)))
-    (cond
-     (after-export
-      (funcall after-export saved-path))
-     (open
-      (find-file-other-window saved-path))
-     (t
-      (message "Exported Teams thread to %s"
-               (abbreviate-file-name saved-path))))
-    saved-path))
+  (teams4e--export-with-images
+   (teams4e--export-path chat) chat messages history
+   (lambda (saved-path)
+     (cond (after-export (funcall after-export saved-path))
+           (open (find-file-other-window saved-path))
+           (t (message "Exported Teams thread to %s" (abbreviate-file-name saved-path))))
+     saved-path)))
 
 (defun teams4e--copy-thread-markdown (chat messages &optional history)
   "Copy complete CHAT MESSAGES and HISTORY to the kill ring as Markdown."

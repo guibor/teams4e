@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bundle downloadable inline pictures and attached images with single-thread
+  Markdown exports and Agent Shell handoffs. Mark unavailable pictures in place.
+
 - Forward a message to several people in one shared chat with `a F`, or
   choose the multi-person option from the ordinary `f` picker.
 

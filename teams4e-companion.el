@@ -236,9 +236,9 @@ A separate command makes older backends fail instead of silently ignoring caps."
                  (make-directory (file-name-directory base) t)
                  (let ((file (make-temp-file
                               (format "%s-%dd-" (file-name-sans-extension base) days) nil ".md")))
-                   (teams4e--write-thread-export file chat (plist-get result :messages)
-                                                 (plist-get result :history))
-                   (teams4e--start-thread-analysis file config))))))))
+                   (teams4e--export-with-images
+                    file chat (plist-get result :messages) (plist-get result :history)
+                    (lambda (path) (teams4e--start-thread-analysis path config))))))))))
     (if-let ((chat (teams4e--chat-at-point)))
         (funcall export chat)
       (teams4e--select-chat export))))

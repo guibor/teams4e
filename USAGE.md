@@ -397,6 +397,13 @@ every Graph pagination link. The exported document records message count,
 page count, and oldest/newest timestamps. A partial offline cache is never
 presented as a complete transcript.
 
+Single-thread file exports (`a e`) and single-thread Agent Shell analysis
+(`a g`) also fetch Teams-hosted inline images and image attachments. Move
+the Markdown file **and its referenced sibling `.assets-...` folder** together
+to keep the pictures viewable offline. An inaccessible or unsupported image is
+marked unavailable in the transcript. External inline tracking URLs are not
+fetched. Copy-as-Markdown and the multi-chat `G` overview do not download files.
+
 ```elisp
 (setq teams4e-message-renderer 'auto
       teams4e-highlight-code-blocks t

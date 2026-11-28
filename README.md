@@ -518,6 +518,8 @@ It contains timings and counts, not message contents. Update both Lisp and
 the backend to get progressive loading; older/custom backends continue to
 work with their usual single final response.
 
+Single-thread exports save pictures beside the Markdown using relative links;
+keep the referenced image folder with the document when moving it.
 Export and agent analysis make a separate request that follows every Graph
 pagination link, records counts and the date range, and rejects incomplete
 results. "Complete" means everything the API makes available to your account,

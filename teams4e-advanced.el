@@ -2342,6 +2342,8 @@ PRESERVE-POSITION suppresses following the latest boundary when reordering."
          (root-id (teams4e--get root 'id))
          (pseudo-chat
           `((id . ,(format "%s/%s/%s" team-id channel-id root-id))
+            (channelIdentity . ((teamId . ,team-id) (channelId . ,channel-id)))
+            (rootId . ,root-id)
             (topic . ,(format "%s - %s"
                               (teams4e--channel-label channel)
                               (teams4e--channel-root-subject root)))
