@@ -3001,7 +3001,12 @@ singleton Teams reader with the newly selected chat."
       (user-error "No Teams headers command for this key"))
     (with-selected-window index-window
       (with-current-buffer index-buffer
-        (unless (teams4e--recent-goto-chat-id chat-id)
+        ;; Filters operate on the list, even when the last filter emptied it.
+        ;; Row actions must still target the chat displayed in the reader.
+        (unless (or (and chat-id (teams4e--recent-goto-chat-id chat-id))
+                    (memq resolved '(teams4e-bookmark-jump teams4e-bookmark-edit
+                                     teams4e-filter teams4e-select-view
+                                     teams-unread-filter teams4e-toggle-unread-filter)))
           (user-error "The open Teams chat is not in the current headers")))
       (let ((teams4e--inhibit-reader-follow t))
         (call-interactively resolved))
